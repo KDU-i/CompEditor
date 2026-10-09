@@ -1,0 +1,183 @@
+//
+//  SyntaxValidationView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2014-09-08.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2014-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import SyntaxFormat
+
+struct SyntaxValidationView: View {
+    
+    var errors: [Syntax.Error]
+    
+    @State private var selection: Int?
+    
+    
+    // MARK: View
+    
+    var body: some View {
+        
+        VStack(alignment: .leading) {
+            MessageView(count: self.errors.count)
+            
+            if !self.errors.isEmpty {
+                List(self.errors.enumerated(), id: \.offset, selection: $selection) { _, error in
+                    ErrorView(error: error)
+                }
+                .clipShape(.rect(cornerRadius: 7, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(.separator))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+    
+    
+    // MARK: Subviews
+    
+    private struct MessageView: View {
+        
+        var count: Int
+        
+        
+        var body: some View {
+            
+            Label {
+                Text(self.message)
+            } icon: {
+                StatusImage(status: (self.count == 0) ? .available : .unavailable)
+            }
+        }
+        
+        
+        private var message: LocalizedStringResource {
+            
+            (self.count == 0)
+                ? .init("No errors found.", table: "SyntaxEditor",
+                        comment: "message in the Validation pane")
+                : .init("\(self.count) errors found.", table: "SyntaxEditor",
+                        comment: "message in the Validation pane")
+        }
+    }
+    
+    
+    private struct ErrorView: View {
+        
+        var error: Syntax.Error
+        
+        
+        var body: some View {
+            
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("\(self.error.scope.label):", tableName: "SyntaxEditor")
+                            .fontWeight(.medium)
+                        Text(self.error.value)
+                            .help(self.error.value)
+                            .lineLimit(1)
+                    }
+                    Text(self.error.code.descriptionResource)
+                        .controlSize(.small)
+                        .foregroundStyle(.secondary)
+                }
+                .textSelection(.enabled)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle")
+                    .symbolVariant(.fill)
+                    .symbolRenderingMode(.multicolor)
+            }.padding(.vertical, 2)
+        }
+    }
+}
+
+
+extension Syntax.Error.Code {
+    
+    var descriptionResource: LocalizedStringResource {
+        
+        switch self {
+            case .duplicated:
+                .init("Syntax.Error.Code.duplicated",
+                      defaultValue: "The same word is registered multiple times.",
+                      table: "SyntaxEditor")
+            case .regularExpression:
+                .init("Syntax.Error.Code.regularExpression",
+                      defaultValue: "Invalid regular expression.",
+                      table: "SyntaxEditor")
+            case .blockComment:
+                .init("Syntax.Error.Code.blockComment",
+                      defaultValue: "Block comment needs both begin and end delimiters.",
+                      table: "SyntaxEditor")
+            case .nestableBlockComment:
+                .init("Syntax.Error.Code.nestableBlockComment",
+                      defaultValue: "Nestable block comment must use different begin and end delimiters.",
+                      table: "SyntaxEditor")
+            case .invalidEscapeCharacter:
+                .init("Syntax.Error.Code.invalidEscapeCharacter",
+                      defaultValue: "The escape character must be a single character in UTF-16 code unit.",
+                      table: "SyntaxEditor")
+        }
+    }
+}
+
+
+private extension Syntax.Error.Scope {
+    
+    var label: LocalizedStringResource {
+        
+        switch self {
+            case .highlight(let syntaxType):
+                syntaxType.label
+            case .outline:
+                SyntaxEditView.Pane.outline.label
+            case .blockComment:
+                SyntaxEditView.Pane.comments.label
+            case .stringDelimiter:
+                SyntaxType.strings.label
+            case .characterDelimiter:
+                SyntaxType.characters.label
+        }
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview {
+    let errors: [Syntax.Error] = [
+        .init(.duplicated, scope: .highlight(.values), value: "bb"),
+        .init(.regularExpression, scope: .outline, value: "[]"),
+        .init(.blockComment, scope: .blockComment, value: "bb"),
+        .init(.nestableBlockComment, scope: .blockComment, value: "/*"),
+    ]
+    
+    SyntaxValidationView(errors: errors)
+        .scenePadding()
+        .frame(width: 400)
+}
+
+#Preview("No Error") {
+    SyntaxValidationView(errors: [])
+        .scenePadding()
+        .frame(width: 400)
+}

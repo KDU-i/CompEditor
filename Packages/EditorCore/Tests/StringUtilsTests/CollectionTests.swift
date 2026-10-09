@@ -1,0 +1,102 @@
+//
+//  CollectionTests.swift
+//  StringUtilsTests
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2024-07-09.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2024-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import Testing
+@testable import StringUtils
+
+struct CollectionTests {
+    
+    @Test(arguments: 0..<10)
+    func partitioningIndex(_: Int) {
+        
+        let array = (0..<20).map { _ in Int.random(in: 0..<100) }.sorted()
+        
+        for _ in 0..<10 {
+            let threshold = Int.random(in: 0..<100)
+            #expect(array.partitioningIndex(where: { $0 > threshold }) ==
+                    (array.firstIndex(where: { $0 > threshold }) ?? array.endIndex))
+        }
+    }
+    
+    
+    @Test func partitioningIndexInRange() {
+        
+        let array = [0, 1, 2, 3, 4, 5]
+        
+        #expect(array.partitioningIndex(where: { $0 >= 4 }) == 4)
+        #expect(array.partitioningIndex(in: 2..<5, where: { $0 >= 4 }) == 4)
+        #expect(array.partitioningIndex(where: { $0 > 10 }) == array.endIndex)
+    }
+    
+    @Test func unique() {
+        
+        #expect([String]().uniqued.isEmpty)
+        #expect(["dog"].uniqued == ["dog"])
+        #expect(["dog", "dog", "cat", "cow", "cat", "dog"].uniqued == ["dog", "cat", "cow"])
+    }
+    
+    
+    @Test func uniqueHashableCollision() {
+        
+        struct HashCollision: Hashable {
+            
+            let value: Int
+            
+            func hash(into hasher: inout Hasher) {
+                
+                hasher.combine(0)
+            }
+        }
+        
+        let values = [HashCollision(value: 1), HashCollision(value: 2), HashCollision(value: 1)]
+        
+        #expect(values.uniqued == [HashCollision(value: 1), HashCollision(value: 2)])
+    }
+    
+    
+    @Test func uniqueMutatingForHashableArray() {
+        
+        var values = ["dog", "dog", "cat", "dog", "cow"]
+        values.unique()
+        
+        #expect(values == ["dog", "cat", "cow"])
+    }
+    
+    
+    @Test func compareCount() {
+        
+        #expect("".compareCount(with: 0) == .equal)
+        #expect("".compareCount(with: 1) == .less)
+        
+        #expect("a".compareCount(with: 1) == .equal)
+        #expect("🐕".compareCount(with: 1) == .equal)
+        #expect("🐕‍🦺".compareCount(with: 1) == .equal)
+        
+        #expect("🐶🐱".compareCount(with: 3) == .less)
+        #expect("🐶🐱".compareCount(with: 2) == .equal)
+        #expect("🐶🐱".compareCount(with: 1) == .greater)
+    }
+}

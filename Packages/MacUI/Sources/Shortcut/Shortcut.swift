@@ -1,0 +1,552 @@
+//
+//  Shortcut.swift
+//  Shortcut
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2014-04-20.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2004-2007 nakamuxu
+//  © 2014-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+public import AppKit.NSEvent
+import Foundation
+
+// SpecialKey would be just a simple struct (2024-01, FB13703826).
+extension NSEvent.SpecialKey: @retroactive @unchecked Sendable { }
+
+
+public struct Shortcut: Sendable {
+    
+    public var keyEquivalent: String
+    public var modifiers: NSEvent.ModifierFlags
+    
+    
+    // MARK: Lifecycle
+    
+    /// Initializes Shortcut directly from a key equivalent string and modifiers.
+    ///
+    /// - Parameters:
+    ///   - keyEquivalent: The key equivalent character.
+    ///   - modifiers: The modifier flags.
+    /// - Note: This initializer accepts the Fn key while the others not.
+    public init?(_ keyEquivalent: String, modifiers: NSEvent.ModifierFlags) {
+        
+        guard !keyEquivalent.isEmpty else { return nil }
+        
+        self.keyEquivalent = Self.menuKeyEquivalent(for: keyEquivalent)
+        self.modifiers = modifiers
+    }
+    
+    
+    /// Initializes Shortcut from a special key and modifiers.
+    ///
+    /// - Parameters:
+    ///   - specialKey: The special key.
+    ///   - modifiers: The modifier flags.
+    public init(_ specialKey: NSEvent.SpecialKey, modifiers: NSEvent.ModifierFlags) {
+        
+        self.keyEquivalent = Self.menuKeyEquivalent(for: specialKey)
+        self.modifiers = modifiers
+    }
+    
+    
+    /// Initializes Shortcut from a stored string.
+    ///
+    /// - Note: Uses the Cocoa key-binding notation. A leading backslash after the modifiers quotes the key string.
+    ///
+    /// - Parameter keySpecChars: The storable representation.
+    public init?(keySpecChars: String) {
+        
+        guard !keySpecChars.isEmpty else { return nil }
+        
+        // Keep a final modifier character as a key for compatibility with older CotEditor settings.
+        let keySpecCharCandidates = ModifierKey.keySpecCases.map(\.keySpecChar)
+        let modifierCharacters = keySpecChars.unicodeScalars.dropLast().prefix(while: keySpecCharCandidates.contains)
+        var keyEquivalent = String(keySpecChars.unicodeScalars.dropFirst(modifierCharacters.count))
+        if keyEquivalent.first == "\\", keyEquivalent.count > 1 {
+            keyEquivalent.removeFirst()
+        }
+        let modifiers = ModifierKey.keySpecCases
+            .filter { modifierCharacters.contains($0.keySpecChar) }
+            .mask
+        
+        self.init(keyEquivalent, modifiers: modifiers)
+    }
+    
+    
+    /// Initializes Shortcut from a display representation.
+    ///
+    /// - Note: Display symbols can be ambiguous; preserve the original shortcut when editing an existing value.
+    ///
+    /// - Parameter string: The shortcut string to display in GUI.
+    public init?(symbolRepresentation string: String) {
+        
+        var keySymbol = string[...]
+        var modifiers: NSEvent.ModifierFlags = []
+        
+        while let modifier = ModifierKey.displayCases.first(where: { keySymbol.hasPrefix($0.symbol) }) {
+            let remainder = keySymbol.dropFirst(modifier.symbol.count)
+            guard remainder.first?.isWhitespace == true else { break }
+            modifiers.insert(modifier.mask)
+            keySymbol = remainder.dropFirst()
+        }
+        
+        guard !keySymbol.isEmpty else { return nil }
+        
+        let keyEquivalent = Self.menuKeyEquivalent(forSymbol: String(keySymbol))
+            ?? ((keySymbol.count == 1) ? keySymbol.lowercased() : String(keySymbol))
+        
+        self.init(keyEquivalent, modifiers: modifiers)
+    }
+    
+    
+    /// Initializes Shortcut from a key down event.
+    ///
+    /// - Parameter event: The key down event.
+    public init?(keyDownEvent event: NSEvent) {
+        
+        assert(event.type == .keyDown)
+        
+        guard
+            let charactersIgnoringModifiers = event.charactersIgnoringModifiers,
+            !charactersIgnoringModifiers.isEmpty
+        else { return nil }
+        
+        // correct deletion keys for the NSMenuItem key equivalent
+        let keyEquivalent = if charactersIgnoringModifiers.unicodeScalars.count == 1,
+                               let specialKey = event.specialKey
+        {
+            Self.menuKeyEquivalent(for: specialKey)
+        } else {
+            charactersIgnoringModifiers
+        }
+        
+        // remove unwanted Shift
+        let ignoresShift = keyEquivalent.count == 1 && "`~!@#$%^&()_{}|\":<>?=/*-+.'".contains(keyEquivalent)
+        let modifiers = event.modifierFlags
+            .intersection(ModifierKey.displayCases.mask)
+            .subtracting(ignoresShift ? .shift : [])
+        
+        self.keyEquivalent = keyEquivalent
+        self.modifiers = modifiers
+    }
+    
+    
+    // MARK: Public Methods
+    
+    /// The Cocoa key-binding string to store in plist.
+    public var keySpecChars: String {
+        
+        let shortcut = self.normalized
+        let modifierCharacters = ModifierKey.keySpecCases
+            .filter { shortcut.modifiers.contains($0.mask) }
+            .map { String($0.keySpecChar) }
+            .joined()
+        
+        if let first = shortcut.keyEquivalent.unicodeScalars.first,
+           ModifierKey.keySpecCases.contains(where: { $0.keySpecChar == first }) || first == "\\"
+        {
+            return modifierCharacters + "\\" + shortcut.keyEquivalent
+        }
+        
+        return modifierCharacters + shortcut.keyEquivalent
+    }
+    
+    
+    /// The shortcut string to display.
+    public var symbol: String {
+        
+        let shortcut = self.normalized
+        
+        return (shortcut.modifierSymbols + [shortcut.keyEquivalentSymbol]).joined(separator: .thinSpace)
+    }
+    
+    
+    /// Whether the key combination meets the basic requirements for shortcut assignment.
+    public var isAssignable: Bool {
+        
+        guard
+            !self.keyEquivalent.isEmpty,
+            !self.modifiers.contains(.function)
+        else { return false }
+        
+        if Self.singleKeys.map(\.unicodeScalar).map(String.init).contains(self.keyEquivalent) {
+            return true
+        }
+        
+        guard !self.modifiers.isEmpty else { return false }
+        
+        return self.modifiers.isSubset(of: [.control, .option, .shift, .command])
+    }
+    
+    
+    /// Modifier key strings to display.
+    public var modifierSymbols: [String] {
+        
+        ModifierKey.displayCases
+            .filter { self.modifiers.contains($0.mask) }
+            .map(\.symbol)
+    }
+    
+    
+    /// The SF Symbol names for modifier keys to display.
+    public var modifierSymbolNames: [String] {
+        
+        ModifierKey.displayCases
+            .filter { self.modifiers.contains($0.mask) }
+            .map(\.symbolName)
+    }
+    
+    
+    /// The key equivalent to display.
+    public var keyEquivalentSymbol: String {
+        
+        let scalars = self.keyEquivalent.unicodeScalars
+        
+        guard
+            scalars.count == 1,
+            let scalar = scalars.first,
+            let symbol = Self.keyEquivalentSymbols[scalar]
+        else { return self.keyEquivalent.uppercased() }
+        
+        return symbol
+    }
+    
+    
+    /// The SF Symbol name for key equivalent, if exists.
+    public var keyEquivalentSymbolName: String? {
+        
+        let scalars = self.keyEquivalent.unicodeScalars
+        
+        guard scalars.count == 1, let scalar = scalars.first else { return nil }
+        
+        return Self.keyEquivalentSymbolNames[scalar]
+    }
+    
+    
+    /// The normalized Shortcut by preferring to use the Shift key rather than an upper key equivalent character.
+    ///
+    /// According to the AppKit's specification, Command-Shift-c and Command-C should be considered to be identical.
+    /// Multi-character key strings retain their original case and modifiers.
+    public var normalized: Self {
+        
+        guard self.keyEquivalent.count == 1 else { return self }
+        
+        let needsShift = self.keyEquivalent.last?.isUppercase == true
+        
+        let keyEquivalent = self.keyEquivalent.lowercased()
+        let modifiers = self.modifiers.union(needsShift ? .shift : [])
+        
+        return Shortcut(keyEquivalent, modifiers: modifiers) ?? self
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// Some special keys allowed to assign without modifier keys.
+    private static let singleKeys: [NSEvent.SpecialKey] = [
+        .home,
+        .end,
+        .pageUp,
+        .pageDown,
+        .f1,
+        .f2,
+        .f3,
+        .f4,
+        .f5,
+        .f6,
+        .f7,
+        .f8,
+        .f9,
+        .f10,
+        .f11,
+        .f12,
+        .f13,
+        .f14,
+        .f15,
+        .f16,
+        .f17,
+        .f18,
+        .f19,
+        .f20,
+        .f21,
+        .f22,
+        .f23,
+        .f24,
+        .f25,
+        .f26,
+        .f27,
+        .f28,
+        .f29,
+        .f30,
+        .f31,
+        .f32,
+        .f33,
+        .f34,
+        .f35,
+    ]
+    
+    
+    /// Returns the key equivalent character for an `NSMenuItem` from a special key.
+    ///
+    /// `NSMenuItem` uses different characters from `NSEvent` key-down events for deletion keys:
+    /// Backspace uses `NSBackspaceCharacter` (0x08), while Forward Delete uses `NSDeleteCharacter` (0x7F).
+    /// On the event side, Backspace arrives as `.delete`, and Forward Delete arrives as `.deleteForward`.
+    ///
+    /// The location of keys:
+    /// - Backspace: The key above the Return.
+    /// - Forward Delete: The key labeled Delete near the numeric keypad.
+    /// cf. https://developer.apple.com/documentation/appkit/nsmenuitem/1514842-keyequivalent
+    ///
+    /// - Parameter specialKey: The special key to convert.
+    /// - Returns: The corresponding key equivalent character.
+    private static func menuKeyEquivalent(for specialKey: NSEvent.SpecialKey) -> String {
+        
+        switch specialKey {
+            case .delete, .backspace:
+                String(NSEvent.SpecialKey.backspace.unicodeScalar)
+            case .deleteForward:
+                String(NSEvent.SpecialKey.delete.unicodeScalar)
+            default:
+                String(specialKey.unicodeScalar)
+        }
+    }
+    
+    
+    /// Returns the canonical key equivalent character for an `NSMenuItem`.
+    ///
+    /// This normalizes key equivalents that still contain the `NSEvent` Forward Delete character
+    /// (`NSDeleteFunctionKey`, 0xF728) to the `NSMenuItem` key equivalent character
+    /// (`NSDeleteCharacter`, 0x7F).
+    ///
+    /// - Parameter keyEquivalent: The key equivalent character to normalize.
+    /// - Returns: The corresponding key equivalent character.
+    private static func menuKeyEquivalent(for keyEquivalent: String) -> String {
+        
+        (keyEquivalent == String(NSEvent.SpecialKey.deleteForward.unicodeScalar))
+            ? String(NSEvent.SpecialKey.delete.unicodeScalar)
+            : keyEquivalent
+    }
+    
+    
+    /// Returns the key equivalent character for the given display symbol.
+    ///
+    /// The Forward Delete symbol is displayed as "⌦", but its `NSMenuItem` key equivalent must be
+    /// `NSDeleteCharacter` (0x7F), not the `NSEvent` Forward Delete character.
+    ///
+    /// - Parameter symbol: The key equivalent symbol.
+    /// - Returns: The corresponding key equivalent character.
+    private static func menuKeyEquivalent(forSymbol symbol: String) -> String? {
+        
+        if symbol == "⌦" {
+            return String(NSEvent.SpecialKey.delete.unicodeScalar)
+        }
+        
+        return Self.keyEquivalentSymbols
+            .first { $0.value == symbol }
+            .map(\.key)
+            .map(String.init)
+    }
+    
+    
+    /// The table for key equivalents that have special symbols to display.
+    private static let keyEquivalentSymbols: [Unicode.Scalar: String] = [
+        NSEvent.SpecialKey
+        .backspace: "⌫",
+        .carriageReturn: "↩",
+        .newline: "↩",
+        .enter: "⌅",
+        .delete: "⌦",
+        .deleteForward: "⌦",
+        .tab: "⇥",
+        .backTab: "⇤",
+        .upArrow: "↑",
+        .downArrow: "↓",
+        .leftArrow: "←",
+        .rightArrow: "→",
+        .pageUp: "⇞",
+        .pageDown: "⇟",
+        .home: "↖",
+        .end: "↘",
+        .clearDisplay: "⌧",
+        .clearLine: "⌧",
+        .help: "Help",
+        .escape: "⎋",
+        .f1: "F1",
+        .f2: "F2",
+        .f3: "F3",
+        .f4: "F4",
+        .f5: "F5",
+        .f6: "F6",
+        .f7: "F7",
+        .f8: "F8",
+        .f9: "F9",
+        .f10: "F10",
+        .f11: "F11",
+        .f12: "F12",
+        .f13: "F13",
+        .f14: "F14",
+        .f15: "F15",
+        .f16: "F16",
+        .f17: "F17",
+        .f18: "F18",
+        .f19: "F19",
+        .f20: "F20",
+        .f21: "F21",
+        .f22: "F22",
+        .f23: "F23",
+        .f24: "F24",
+        .f25: "F25",
+        .f26: "F26",
+        .f27: "F27",
+        .f28: "F28",
+        .f29: "F29",
+        .f30: "F30",
+        .f31: "F31",
+        .f32: "F32",
+        .f33: "F33",
+        .f34: "F34",
+        .f35: "F35",
+        .space: String(localized: "Space", bundle: .module, comment: "keyboard key name"),
+        .mic: "🎤︎",  // U+1F3A4, U+FE0E
+    ].mapKeys(\.unicodeScalar)
+    
+    
+    /// The table for key equivalents that have SF Symbols to display.
+    static let keyEquivalentSymbolNames: [Unicode.Scalar: String] = [
+        NSEvent.SpecialKey
+        .backspace: "delete.backward",
+        .carriageReturn: "return",
+        .newline: "return",
+        .enter: "projective",
+        .delete: "delete.forward",
+        .deleteForward: "delete.forward",
+        .tab: "arrow.right.to.line.compact",
+        .backTab: "arrow.left.to.line.compact",
+        .upArrow: "arrowtriangle.up.fill",
+        .downArrow: "arrowtriangle.down.fill",
+        .leftArrow: "arrowtriangle.left.fill",
+        .rightArrow: "arrowtriangle.right.fill",
+        .pageUp: "arrow.up",
+        .pageDown: "arrow.down",
+        .home: "arrow.up.to.line.compact",
+        .end: "arrow.down.to.line.compact",
+        .clearDisplay: "clear",
+        .clearLine: "clear",
+        .formFeed: "arrow.down",
+        .help: "questionmark.circle",
+        .escape: "escape",
+        .mic: "mic",
+    ].mapKeys(\.unicodeScalar)
+}
+
+
+private extension NSEvent.SpecialKey {
+    
+    static let space = Self(rawValue: 0x20)
+    static let escape = Self(rawValue: 0x1b)
+    static let mic = Self(rawValue: 0x1f3a4)
+}
+
+
+extension Shortcut: Equatable {
+    
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        
+        let lhs = lhs.normalized
+        let rhs = rhs.normalized
+        
+        return lhs.modifiers == rhs.modifiers && lhs.keyEquivalent == rhs.keyEquivalent
+    }
+}
+
+
+extension Shortcut: CustomDebugStringConvertible {
+    
+    public var debugDescription: String {
+        
+        self.symbol
+    }
+}
+
+
+extension Shortcut: Hashable {
+    
+    public func hash(into hasher: inout Hasher) {
+        
+        let shortcut = self.normalized
+        
+        hasher.combine(shortcut.keyEquivalent)
+        hasher.combine(shortcut.modifiers.rawValue)
+    }
+}
+
+
+extension Shortcut: Codable {
+    
+    public init(from decoder: any Decoder) throws {
+        
+        let container = try decoder.singleValueContainer()
+        let string = try container.decode(String.self)
+        
+        guard let shortcut = Shortcut(keySpecChars: string) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid shortcut format: \(string)")
+        }
+        
+        self = shortcut
+    }
+    
+    
+    public func encode(to encoder: any Encoder) throws {
+        
+        var container = encoder.singleValueContainer()
+        
+        try container.encode(self.keySpecChars)
+    }
+}
+
+
+private extension String {
+    
+    static let thinSpace = "\u{2009}"
+}
+
+
+private extension Dictionary {
+    
+    /// Returns a new dictionary containing the keys transformed by the given closure with the values of this dictionary.
+    ///
+    /// - Parameter transform: A closure that transforms a key. Every transformed key must be unique.
+    /// - Returns: A dictionary containing transformed keys and the values of this dictionary.
+    func mapKeys<T>(_ transform: (Key) throws -> T) rethrows -> [T: Value] {
+        
+        try self.reduce(into: [:]) { $0[try transform($1.key)] = $1.value }
+    }
+    
+    
+    /// Returns a new dictionary containing the keys transformed by the given keyPath with the values of this dictionary.
+    ///
+    /// - Parameter keyPath: The keyPath to the value to transform key. Every transformed key must be unique.
+    /// - Returns: A dictionary containing transformed keys and the values of this dictionary.
+    func mapKeys<T>(_ keyPath: KeyPath<Key, T>) -> [T: Value] {
+        
+        self.mapKeys { $0[keyPath: keyPath] }
+    }
+}

@@ -1,0 +1,297 @@
+//
+//  IncompatibleCharactersView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2024-02-03.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2024-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import Combine
+import AppKit.NSTextStorage
+import CharacterInfo
+import FileEncoding
+import LineEnding
+import StringUtils
+import ValueRange
+
+struct IncompatibleCharactersView: View {
+    
+    @MainActor @Observable final class Model {
+        
+        typealias Item = ValueRange<IncompatibleCharacter>
+        
+        enum State: Equatable {
+            
+            case idle
+            case scanning(initial: Bool)
+        }
+        
+        
+        var items: [Item] = []
+        var sortOrder: [KeyPathComparator<Item>] = []  { didSet { self.items.sort(using: self.sortOrder) } }
+        private(set) var state: State = .idle
+        
+        private var document: Document?
+        private var scanRevision = 0
+        
+        private var task: Task<Void, any Error>?
+        private var encodingObserver: Task<Void, Never>?
+        private var textEditingObserver: AnyCancellable?
+    }
+    
+    
+    var document: Document?
+    
+    @State var model = Model()
+    
+    @State private var selection: Model.Item.ID?
+    @State private var sortOrder: [KeyPathComparator<Model.Item>] = []
+    
+    
+    var body: some View {
+        
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Incompatible Characters", tableName: "Document",
+                 comment: "section title in inspector")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityRemoveTraits(.isHeader)
+            
+            if self.model.state == .scanning(initial: true) {
+                Text("Scanning incompatible characters…", tableName: "Document")
+            } else if !self.model.items.isEmpty {
+                Text("Found \(self.model.items.count) incompatible characters.", tableName: "Document",
+                     comment: "%lld is the number of characters.")
+            } else {
+                Text("No issues found.", tableName: "Document")
+                    .foregroundStyle(.secondary)
+            }
+            
+            if !self.model.items.isEmpty {
+                Table(self.model.items, selection: $selection, sortOrder: $sortOrder) {
+                    TableColumn(.init("Line", table: "Document", comment: "noun; table column header"), value: \.lowerBound) {
+                        // calculate the line number first at this point to postpone the high cost processing as much as possible
+                        if let line = self.model.lineNumber(at: $0.lowerBound) {
+                            Text(line, format: .number)
+                                .monospacedDigit()
+                        }
+                    }
+                    .alignment(.trailing)
+                    
+                    TableColumn(.init("Character", table: "Document", comment: "noun; table column header"), value: \.value.character) {
+                        let character = $0.value.character
+                        let invisibleCategories: Set<Unicode.GeneralCategory> = [
+                            .control,
+                            .spaceSeparator,
+                            .lineSeparator,
+                            .paragraphSeparator,
+                        ]
+                        
+                        if let unicode = character.unicodeScalars.first,
+                           invisibleCategories.contains(unicode.properties.generalCategory) {
+                            Text(unicode.codePoint)
+                                .foregroundStyle(.tertiary)
+                        } else {
+                            Text(String(character))
+                        }
+                    }
+                    
+                    TableColumn(.init("Converted", table: "Document", comment: "noun; table column header for converted character"), sortUsing: KeyPathComparator(\.value.converted)) {
+                        if let converted = $0.value.converted {
+                            Text(converted)
+                        }
+                    }
+                }
+                .tableStyle(.bordered)
+                .padding(-1)  // remove border
+                .clipShape(.rect(cornerRadius: 8, style: .continuous))
+                .onChange(of: self.selection) { _, newValue in
+                    self.model.selectItem(id: newValue)
+                }
+                .onChange(of: self.sortOrder) { _, newValue in
+                    withAnimation {
+                        self.model.sortOrder = newValue
+                    }
+                }
+            }
+        }
+        .onDisappear {
+            self.selection = nil
+            self.model.updateDocument(nil)
+        }
+        .onChange(of: self.document, initial: true) { _, newValue in
+            self.selection = nil
+            self.model.updateDocument(newValue)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(.init("Incompatible Characters", table: "Document"))
+        .controlSize(.small)
+        .frame(maxWidth: .infinity, minHeight: self.model.items.isEmpty ? 60 : 120, alignment: .topLeading)
+    }
+}
+
+
+private extension IncompatibleCharactersView.Model {
+    
+    /// Selects correspondence range of the item in the editor.
+    ///
+    /// - Parameter id: The `id` of the item to select.
+    func selectItem(id: Item.ID?) {
+        
+        guard
+            let item = self.items[id: id],
+            let textView = self.document?.textView,
+            textView.string.length >= item.range.upperBound
+        else { return }
+        
+        textView.selectedRange = item.range
+        textView.centerSelectionInVisibleArea(self)
+    }
+    
+    
+    /// Returns the line number at the character location.
+    ///
+    /// - Parameter location: The character location.
+    /// - Returns: A line number.
+    func lineNumber(at location: Int) -> Int? {
+        
+        self.document?.lineEndingScanner.lineNumber(at: location)
+    }
+    
+    
+    /// Updates the document.
+    ///
+    /// - Parameter document: The new document.
+    func updateDocument(_ document: Document?) {
+        
+        guard self.document !== document else { return }
+        
+        self.clearScanResult()
+        self.document = document
+        self.invalidateObservation()
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// Updates observations.
+    private func invalidateObservation() {
+        
+        self.textEditingObserver?.cancel()
+        self.encodingObserver?.cancel()
+        
+        guard let document else { return }
+        
+        self.invalidateIncompatibleCharacters(initial: true)
+        
+        self.textEditingObserver = NotificationCenter.default.publisher(for: NSTextStorage.didProcessEditingNotification, object: document.textStorage)
+            .map { $0.object as! NSTextStorage }
+            .filter { $0.editedMask.contains(.editedCharacters) }
+            .debounce(for: .seconds(0.3), scheduler: RunLoop.current)
+            .sink { [weak self] _ in self?.invalidateIncompatibleCharacters() }
+        self.encodingObserver = Task { [weak self] in
+            for await _ in Observations({ document.fileEncoding.encoding }) {
+                self?.invalidateIncompatibleCharacters()
+            }
+        }
+    }
+    
+    
+    /// Clears current scan result and editor highlights.
+    private func clearScanResult() {
+        
+        self.task?.cancel()
+        self.scanRevision += 1
+        
+        if !self.items.isEmpty {
+            // clear the incompatible-character highlights
+            self.document?.textView?.updateBackgroundColor(.unemphasizedSelectedTextBackgroundColor, ranges: [])
+        }
+        
+        self.items.removeAll()
+        self.state = .idle
+    }
+    
+    
+    /// Updates incompatible characters.
+    ///
+    /// - Parameter initial: Whether this is an initial scan. If `false`, the previous result is kept visible during the rescan.
+    private func invalidateIncompatibleCharacters(initial: Bool = false) {
+        
+        guard
+            let document,
+            !document.fileEncoding.encoding.isUnicodeEncoding,
+            document.textStorage.length > 0
+        else {
+            self.clearScanResult()
+            return
+        }
+        
+        self.task?.cancel()
+        self.state = .scanning(initial: initial)
+        self.scanRevision += 1
+        let scanRevision = self.scanRevision
+        
+        let string = document.textStorage.string.immutable
+        let encoding = document.fileEncoding.encoding
+        
+        self.task = Task {
+            defer {
+                if self.scanRevision == scanRevision {
+                    self.state = .idle
+                }
+            }
+            
+            let items = try await { @concurrent () async throws(CancellationError) -> [Item] in
+                try string.charactersIncompatible(with: encoding)
+            }()
+            
+            guard !Task.isCancelled else { throw CancellationError() }
+            
+            guard
+                self.scanRevision == scanRevision,
+                self.document === document
+            else { return }
+            
+            self.items = items.sorted(using: self.sortOrder)
+            document.textView?.updateBackgroundColor(.unemphasizedSelectedTextBackgroundColor, ranges: items.map(\.range))
+        }
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview(traits: .fixedLayout(width: 240, height: 300)) {
+    let model = IncompatibleCharactersView.Model()
+    model.items = [
+        .init(value: .init(character: "~", converted: "-"), range: .notFound),
+        .init(value: .init(character: " ", converted: "?"), range: .notFound),
+    ]
+    
+    return IncompatibleCharactersView(model: model)
+        .padding(12)
+}
+
+#Preview("Empty", traits: .fixedLayout(width: 240, height: 300)) {
+    IncompatibleCharactersView()
+        .padding(12)
+}

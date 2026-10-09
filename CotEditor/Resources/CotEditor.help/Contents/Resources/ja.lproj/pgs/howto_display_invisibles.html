@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="不可視文字, 制御文字, スペース, タブ, 改行">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>MacのCotEditorで不可視文字を表示する</title>
+</head>
+
+<body>
+<a name="howto_display_invisibles"></a>
+
+<h1>MacのCotEditorで不可視文字を表示する</h1>
+
+<p>書類中の見えない文字（不可視文字）を代替記号で描画し、どこにどんな文字があるか見えるようにできます。</p>
+
+<p>不可視文字の色は<a href="howto_customize_theme.html">テーマ</a>で設定されます。</p>
+
+
+<section>
+<h2>不可視文字表示のデフォルト設定を変更する</h2>
+
+<ol>
+	<li><p>MacでCotEditorアプリ<img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt="">に移動します。</p></li>
+	<li><p>「CotEditor」＞「設定」と選択してから、「ウインドウ」をクリックします。</p></li>
+	<li><p>不可視文字を表示するかどうかを変更するには、「表示」セクションの「不可視文字」をオンまたはオフにします。</p>
+		<p>表示する不可視文字の種類を変更するには、「表示」セクションの「不可視文字」の下の各種類のチェックボックスを選択します。</p>
+		
+		<p>設定できる不可視文字の種類はそれぞれ以下の文字に対応しています:</p>
+		
+<table>
+	<colgroup>
+		<col>
+		<col>
+		<col style="width:20em">
+		<col>
+	</colgroup>
+	
+	<thead>
+		<tr><th>名称</th><th>記号</th><th>対象文字 (コードポイント)</th><th>説明</th></tr>
+	</thead>
+	
+	<tbody>
+		<tr>
+			<th>改行</th>
+			<td><span class="invisible">↩</span></td>
+			<td><ul>
+				<li>U+000A <small>(LINE FEED)</small></li>
+				<li>U+000D <small>(CARRIAGE RETURN)</small></li>
+				<li>U+0085 <small>(NEW LINE)</small></li>
+				<li>U+2028 <small>(LINE SEPARATOR)</small></li>
+				<li>U+2029 <small>(PARAGRAPH SEPARATOR)</small></li>
+			</ul></td>
+			<td><p>改行を表す制御文字です。CRLF (<code>U+000D</code>と<code>U+000A</code>の組み合わせ)も1つの改行文字として扱います。</p></td>
+		</tr>
+		
+		<tr>
+			<th>タブ</th>
+			<td><span class="invisible">→</span></td>
+			<td><ul>
+				<li>U+0009 <small>(HORIZONTAL TABULATION)</small></li>
+			</ul></td>
+			<td><p>ある特定の位置まで次の文字を送る柔軟な幅を持つ空白文字です。プログラム上ではしばしば、1文字で複数個分のスペース幅を持つ文字としてインデントに用いられます。</p></td>
+		</tr>
+		
+		<tr>
+			<th>スペース</th>
+			<td><span class="invisible">·</span></td>
+			<td><ul>
+				<li>U+0020 <small>(SPACE)</small></li>
+			</ul></td>
+			<td><p>一般的なスペースです。</p></td>
+		</tr>
+		
+		<tr>
+			<th rowspan="3">その他の空白</th>
+			<td><span class="invisible">·̂</span></td>
+			<td><ul>
+				<li>U+00A0 <small>(NO-BREAK SPACE)</small></li>
+				<li>U+2007 <small>(FIGURE SPACE)</small></li>
+				<li>U+202F <small>(NARROW NO-BREAK SPACE)</small></li>
+			</ul></td>
+			<td><p>この文字の前後での改行を許さない特殊なスペースです。</p></td>
+		</tr>
+		
+		<tr>
+			<td><span class="invisible">□</span></td>
+			<td><ul>
+				<li>U+3000 <small>(IDEOGRAPHIC SPACE)</small></li>
+			</ul></td>
+			<td><p>いわゆる全角スペースです。主にCJK言語で使われます。</p></td>
+		</tr>
+		
+		<tr>
+			<td><span class="invisible">⹀</span></td>
+			<td><ul>
+				<li>U+2000..U+200A <small>(様々なスペース)</small></li>
+				<li>U+205F <small>(MEDIUM MATHEMATICAL SPACE)</small></li>
+			</ul></td>
+			<td><p>様々な幅・用途の空白文字です。UnicodeのカテゴリZs (space separator) に含まれる空白文字の残りすべてに対応しています。</p></td>
+		</tr>
+		
+		<tr>
+			<th>その他の制御文字</th>
+			<td><span class="invisible">�</span></td>
+			<td><ul>
+				<li>U+0000..U+001F <small>(C0)</small></li>
+				<li>U+007F <small>(DELETE)</small></li>
+				<li>U+0080..U+009F <small>(C1)</small></li>
+				<li>U+200B <small>(ZERO WIDTH SPACE)</small></li>
+				<li>U+200C <small>(ZERO WIDTH NON-JOINER)</small></li>
+				<li>U+2060 <small>(WORD JOINER)</small></li>
+				<li>U+FEFF <small>(ZERO WIDTH NO-BREAK SPACE)</small></li>
+				<li>U+061C, U+200E..U+200F, U+202A..U+202E, U+2066..U+206F <small>(bidi制御文字群)</small></li>
+				<li>U+2061..U+2065 <small>(不可視演算子群)</small></li>
+				<li>U+FFF9..U+FFFB <small>(ルビ制御文字群)</small></li>
+			</ul></td>
+			<td><p>通常の文字として表示されず文書のフォーマットなどに用いられる特殊な文字です。UnicodeのカテゴリCcすべてと一部のCfに対応しています。</p></td>
+		</tr>
+	</tbody>
+</table>
+</li>
+</ol>
+</section>
+
+
+<section>
+<h2>現在の書類の不可視文字表示を一時的に変更する</h2>
+
+<ol>
+	<li><p>MacのCotEditorアプリ<img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt="">で、書類を開きます。</p></li>
+	<li><p>以下のいずれかの操作を行います:</p>
+		<ul>
+			<li><p>「フォーマット」＞「不可視文字を表示」または「不可視文字を非表示」と選択</p></li>
+			<li><p>ウインドウツールバーの「不可視文字」ボタンをクリック（「不可視文字」ボタンはツールバーをカスタマイズして追加できます）</p></li>
+		</ul>
+		<p>ここでの変更はCotEditorのデフォルトの設定を上書きしません。</p>
+	</li>
+</ol>
+</section>
+
+
+<section>
+<h2>プリントに不可視文字を含める</h2>
+
+<p>不可視文字をプリントに含めるかどうかは、<a href="howto_print.html">プリントダイアログ</a>から設定できます。</p>
+</section>
+
+
+<section id="cf">
+<h2>関連項目</h2>
+<ul>
+	<li><a href="settings_window.html">MacのCotEditorで「ウインドウ」設定を変更する</a></li>
+</ul>
+</section>
+
+</body>
+</html>

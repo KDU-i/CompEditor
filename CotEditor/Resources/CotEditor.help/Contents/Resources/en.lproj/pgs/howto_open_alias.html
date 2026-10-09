@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="symlink, symbolic link, alias">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Open aliases or symlinks in CotEditor on Mac</title>
+</head>
+
+<body>
+<a name="howto_open_alias"></a>
+
+<h1>Open aliases or symlinks in CotEditor on Mac</h1>
+
+<p>You can open the original file or folder at the target of an alias or a symlink as a document.</p>
+
+
+<p>Because CotEditor is sandboxed, it can’t open documents or folders outside the sandbox directly from the file browser in the sidebar. Therefore, CotEditor may show an Open dialog to request access when you try to open the original item. Once permission is granted, CotEditor can open the original item again without showing the dialog until you quit the app.</p>
+
+
+<section>
+<h2>Open the original document or folder directly</h2>
+
+<p>When you open an alias or a symlink in the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac, the app opens its original file or folder just like opening a regular document.</p>
+</section>
+
+
+<section>
+<h2>Open the original document from the file browser</h2>
+
+<ol>
+	<li><p>In the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac, open a folder document.</p></li>
+	<li><p>Select an alias or a symlink to a file in the file browser on the sidebar.</p>
+		<p>If permission hasn’t been granted yet, or if the original item doesn’t appear to be a text file, a preview is shown in the document pane.</p>
+	</li>
+	<li><p>Click Open Original.</p>
+		<p>The Open dialog appears.</p></li>
+	<li><p>Click Open.</p></li>
+</ol>
+</section>
+
+
+<section>
+<h2>Open the original folder from the file browser</h2>
+
+<ol>
+	<li><p>In the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac, open a folder document.</p></li>
+	<li><p>Select an alias or a symlink to a folder in the file browser on the sidebar.</p>
+		<p>A preview is shown in the document pane.</p>
+	</li>
+	<li><p>Click Open in New Window.</p>
+		<p>If permission hasn’t been granted yet, the Open dialog appears.</p>
+	</li>
+	<li><p>Click Open.</p></li>
+</ol>
+
+<p><em class="note">Note:</em> CotEditor can’t expand the original folder of an alias or a symlink directly inside the file browser. Instead, it opens the original folder in a new window.</p>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="howto_open_folder.html">Open folders in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

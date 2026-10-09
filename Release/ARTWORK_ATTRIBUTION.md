@@ -1,0 +1,9 @@
+# Original CotEditor artwork attribution
+
+CompEditor is an unofficial fork maintained for Java/Python semantic features. It is not endorsed by the CotEditor Project. Its original CotEditor application icon and retained image resources are used unchanged, at the owner's explicit direction. No adapted artwork or new artwork license is claimed.
+
+Attribution: CotEditor Project and the original credited creators, including 1024jp. Original copyright/creator notices and source files remain intact. Material source: https://github.com/coteditor/CotEditor/tree/efd522f9fc9362a5211aef528b96a87dcad11335 . Upstream license: https://github.com/coteditor/CotEditor/blob/efd522f9fc9362a5211aef528b96a87dcad11335/LICENSE .
+
+Images are under **Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International**, https://creativecommons.org/licenses/by-nc-nd/4.0/ ; full terms https://creativecommons.org/licenses/by-nc-nd/4.0/legalcode.en . Preserve this attribution, the original notices and links when redistributing the images. Distribution of these image resources must be noncommercial; do not redistribute adapted images. Technical compilation/format packaging uses the original assets without artistic changes. The materials are supplied as-is without warranties under the linked license. Trademark rights and official endorsement are not granted by that license.
+
+The CompEditor distribution containing this artwork is intended for noncommercial sharing. No purchase, donation or advertising flow is enabled for the fork. This artwork condition does not relicense the Apache-2.0 source code or its separately licensed dependencies. Do not represent the entire package as Apache-2.0 artwork, remove creator attribution, or imply official CotEditor status, including when the optional in-app CotEditor label is selected.

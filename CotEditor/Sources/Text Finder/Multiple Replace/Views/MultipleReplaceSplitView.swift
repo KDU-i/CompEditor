@@ -1,0 +1,116 @@
+//
+//  MultipleReplaceSplitView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2017-03-17.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2017-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import OSLog
+import Defaults
+import TextFind
+
+struct MultipleReplaceSplitView: View {
+    
+    private let manager: ReplacementManager = .shared
+    
+    @AppStorage(.selectedMultipleReplaceSettingName) private var selection: String?
+    @State private var settingName: String?
+    @State private var setting: MultipleReplace = .init()
+    @State private var error: SettingFileError?
+    
+    @State private var settingUpdateObserver: NotificationCenter.ObservationToken?
+    
+    
+    var body: some View {
+        
+        NavigationSplitView(columnVisibility: .constant(.all)) {
+            MultipleReplaceListView(selection: $selection, manager: self.manager)
+                .environment(\.sidebarRowSize, .medium)
+                .navigationSplitViewColumnWidth(min: 80, ideal: 200)
+        } detail: {
+            MultipleReplaceView(settingName: self.settingName, setting: $setting) { name, setting in
+                if name == self.settingName {
+                    self.setting = setting
+                }
+                self.save(setting: setting, name: name)
+            }
+        }
+        .onChange(of: self.selection, initial: true) { _, newValue in
+            guard let newValue else {
+                self.settingName = nil
+                self.setting = .init()
+                return
+            }
+            self.changeSetting(to: newValue)
+        }
+        .onAppear {
+            self.settingUpdateObserver = NotificationCenter.default.addObserver(of: self.manager, for: DidManagerUpdateSettingMessage.self) { message in
+                guard let name = message.change.new, name == self.selection else { return }
+                self.changeSetting(to: name)
+            }
+        }
+        .onDisappear {
+            self.settingUpdateObserver = nil
+        }
+        .alert(error: $error)
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// Saves the given setting as the passed-in name.
+    ///
+    /// - Parameters:
+    ///   - setting: The setting to save.
+    ///   - name: The name under which to save the setting.
+    private func save(setting: MultipleReplace, name: String) {
+        
+        do {
+            try self.manager.save(setting: setting, name: name)
+        } catch {
+            Logger.app.error("\(error.localizedDescription)")
+        }
+    }
+    
+    
+    /// Changes the editor to the setting of the passed-in name.
+    ///
+    /// - Parameter name: The name of the setting.
+    private func changeSetting(to name: String) {
+        
+        let setting: MultipleReplace
+        do {
+            setting = try self.manager.setting(name: name)
+        } catch {
+            self.settingName = nil
+            self.setting = .init()
+            self.error = error
+            return
+        }
+        
+        guard name != self.settingName || setting != self.setting else { return }
+        
+        self.settingName = name
+        self.setting = setting
+        self.error = nil
+    }
+}

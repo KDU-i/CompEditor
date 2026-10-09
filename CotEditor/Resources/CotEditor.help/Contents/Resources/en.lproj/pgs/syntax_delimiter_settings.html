@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="comment, comment-out, uncomment, string, character, indentation, escape">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Define delimiters in CotEditor on Mac</title>
+</head>
+
+<body>
+<a name="syntax_delimiter_settings"></a>
+
+<h1>Define delimiters in CotEditor on Mac</h1>
+
+<p>In CotEditor, you can configure delimiter-related settings for each syntax. These settings affect editor behavior while typing and regular-expression-based syntax highlighting.</p>
+
+<p>To define delimiters for a syntax, select Delimiters in the list on the left side of the syntax editor, then configure options on the right. See <a href="syntax_definition.html">Define a syntax</a> for how to open the syntax editor.</p>
+
+
+<section>
+<h2>Define comment delimiters</h2>
+
+<p>Define comment delimiters so CotEditor can use Comment Out and Uncomment for this syntax. In regular-expression-based syntax definitions, they are also used for comment highlighting.</p>
+
+<h3>Inline comment</h3>
+<p>Inline comments treat text from the Begin String to the end of the line as a comment.</p>
+
+<table>
+	<thead>
+		<tr><th>Field</th><th>Description</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>Begin String</th><td><p>Delimiter that starts an inline comment. Text from this delimiter to the end of the line is treated as a comment.</p></td></tr>
+		<tr><th>Line Start Only</th><td><p>If selected, the Begin String matches only at the start of a line, after any leading spaces.</p></td></tr>
+	</tbody>
+</table>
+
+<h3>Block comment</h3>
+<p>Block comments treat text enclosed by Begin String and End String as a comment. To use block comments, set both fields.</p>
+
+<table>
+	<thead>
+		<tr><th>Field</th><th>Description</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>Begin String</th><td><p>Delimiter that starts a block comment. Text from this delimiter to the corresponding End String is treated as one comment range.</p></td></tr>
+		<tr><th>End String</th><td><p>Delimiter that ends a block comment.</p></td></tr>
+		<tr><th>Nest</th><td><p>When enabled, CotEditor resolves block comment ranges with nesting. When disabled, a block comment closes at the first matching end delimiter.</p></td></tr>
+	</tbody>
+</table>
+
+<p>When both inline and block comment delimiters are defined, the Comment Out command uses inline delimiters first. If multiple delimiters are defined, the first one in the list is used.</p>
+</section>
+
+
+<section>
+<h2>Define string delimiters</h2>
+
+<p>String delimiters are used to determine string ranges for the Strings element in regular-expression-based syntax highlighting. They are also used for paired-symbol matching in the editor. Text enclosed by the Begin String and End String is treated as a string.</p>
+
+<table>
+	<thead>
+		<tr><th>Field</th><th>Description</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>Begin String</th><td><p>Delimiter that starts a string.</p></td></tr>
+		<tr><th>End String</th><td><p>Delimiter that ends a string.</p></td></tr>
+		<tr><th>Multiline</th><td><p>If selected, strings can span across line breaks.</p></td></tr>
+		<tr><th>Escape Character</th><td><p>The character used to escape the end delimiter inside the string. Leave empty for no escaping.</p></td></tr>
+		<tr><th>Prefixes</th><td><p>Comma-separated list of prefix strings that must immediately precede the Begin String for the delimiter to match. For example, set <code>r,f,b</code> to match <code>r&quot;…&quot;</code>, <code>f&quot;…&quot;</code>, and <code>b&quot;…&quot;</code>. When prefixes are set, the delimiter matches only when one of them is present. Leave empty to match without any prefix.</p></td></tr>
+		<tr><th>Description</th><td><p>A note for your reference (optional).</p></td></tr>
+	</tbody>
+</table>
+
+<p>If you define multiple string delimiters, you can support different quote styles in the same syntax (for example, <code>&quot;…&quot;</code> and <code>&quot;&quot;&quot;…&quot;&quot;&quot;</code>).</p>
+</section>
+
+
+<section>
+<h2>Define character delimiters</h2>
+
+<p>Character delimiters are used to determine character-literal ranges for the Characters element in regular-expression-based syntax highlighting. They are also used for paired-symbol matching in the editor. Text enclosed by the Begin String and End String is treated as a character literal.</p>
+
+<table>
+	<thead>
+		<tr><th>Field</th><th>Description</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>Begin String</th><td><p>Delimiter that starts a character literal.</p></td></tr>
+		<tr><th>End String</th><td><p>Delimiter that ends a character literal.</p></td></tr>
+		<tr><th>Escape Character</th><td><p>The character used to escape the end delimiter inside the character literal. Leave empty for no escaping.</p></td></tr>
+		<tr><th>Description</th><td><p>A note for your reference (optional).</p></td></tr>
+	</tbody>
+</table>
+</section>
+
+
+<section>
+<h2>Define indentation delimiters</h2>
+
+<p>Block delimiters are used for automatic indentation while typing. When the token at the end of a line matches a Begin String, pressing the <kbd>Return</kbd> key inserts one additional indentation level on the new line.</p>
+
+<table>
+	<thead>
+		<tr><th>Field</th><th>Description</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>IC</th><td><p>Ignore case. Enable this only for case-insensitive languages.</p></td></tr>
+		<tr><th>Begin String</th><td><p>Token that starts an indentation block.</p></td></tr>
+		<tr><th>End String</th><td><p>Token that closes the block. You can leave this empty for begin-only rules (for example, a trailing <code>:</code>).</p></td></tr>
+		<tr><th>Description</th><td><p>A note for your reference (optional).</p></td></tr>
+	</tbody>
+</table>
+
+<p>If both Begin String and End String are set and the End String is immediately after the insertion point, CotEditor inserts an extra blank line and keeps the closing line at the original indentation level.</p>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="syntax_definition.html">Define a syntax in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

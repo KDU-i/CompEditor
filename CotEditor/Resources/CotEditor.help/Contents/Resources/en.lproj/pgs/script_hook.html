@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="Script Menu, script, script bundle, hook">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Run script on specific events in CotEditor on Mac</title>
+</head>
+
+<body>
+
+<h1>Run script on specific events in CotEditor on Mac</h1>
+
+<p>With scripting hooks, you can automatically run CotEditor scripts in response to specific events.</p>
+
+<p>To support the scripting hooks, the script must be written in AppleScript or JavaScript for Automation (JXA), and stored in the form of a script bundle (.scptd).</p>
+
+<p>CotEditor supports hooks for the following events:</p>
+
+<table>
+	<thead>
+		<tr><th>Event handler</th><th>Description</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<th><code>document opened</code></th>
+			<td><p>After the document is opened and the content is loaded.</p></td>
+		</tr>
+		
+		<tr>
+			<th><code>document saved</code></th>
+			<td><p>After the document is explicitly saved and the content is stored.</p></td>
+		</tr>
+	</tbody>
+</table>
+
+<p>You can find this specification in Script Editor, which is built into macOS, under the CotEditor Event Handler Suite section of CotEditor’s AppleScript dictionary.</p>
+
+
+<section>
+<h2>Declare hooks in the script bundle</h2>
+
+<p>A script bundle is a package with the following folder structure:</p>
+
+<figure>
+    <object type="image/svg+xml" data="../../Shared/gfx/topic_script_hook.svg">
+        <pre>
+HookingScript.scptd
+└── Contents
+    ├── Info.plist
+    └── Resources
+        ├── Scripts
+        │   └── main.scpt
+        └── description.rtfd</pre>
+    </object>
+</figure>
+
+<p><em class="tip">Tip:</em> You can use Script Editor, which is built into macOS, to create scripts in the script bundle format.</p>
+
+<p>To support scripting hooks, list the events to subscribe to in Contents/Info.plist. Info.plist is a property list that stores bundle metadata in XML, like the following example:</p>
+
+<pre class="source">
+<code><span class="type">&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;</span>
+<span class="type">&lt;!DOCTYPE plist PUBLIC &quot;-//Apple//DTD PLIST 1.0//EN&quot; &quot;http://www.apple.com/DTDs/PropertyList-1.0.dtd&quot;&gt;</span>
+<span class="tag">&lt;plist</span> <span class="attribute">version=</span><span class="string">&quot;1.0&quot;</span><span class="tag">&gt;</span>
+  <span class="tag">&lt;dict&gt;</span>
+    <span class="tag">&lt;key&gt;</span>CFBundleIdentifier<span class="tag">&lt;/key&gt;</span>
+    <span class="tag">&lt;string&gt;</span>com.coteditor.hooking-script<span class="tag">&lt;/string&gt;</span>
+    <span class="tag">&lt;key&gt;</span>CFBundleName<span class="tag">&lt;/key&gt;</span>
+    <span class="tag">&lt;string&gt;</span>Hooking Script<span class="tag">&lt;/string&gt;</span>
+    <span class="tag">&lt;key&gt;</span>CFBundleShortVersionString<span class="tag">&lt;/key&gt;</span>
+    <span class="tag">&lt;string&gt;</span>1.0<span class="tag">&lt;/string&gt;</span>
+  <span class="tag">&lt;/dict&gt;</span>
+<span class="tag">&lt;/plist&gt;</span>
+</code></pre>
+
+<p>Store the events to subscribe to in the <code>CotEditorHandlers</code> key as an array of strings. For example, to run a script automatically when a document is opened or saved, write:</p>
+
+<pre class="source">
+<code><span class="tag">&lt;key&gt;</span>CotEditorHandlers<span class="tag">&lt;/key&gt;</span>
+<span class="tag">&lt;array&gt;</span>
+  <span class="tag">&lt;string&gt;</span>document opened<span class="tag">&lt;/string&gt;</span>
+  <span class="tag">&lt;string&gt;</span>document saved<span class="tag">&lt;/string&gt;</span>
+<span class="tag">&lt;/array&gt;</span>
+</code></pre>
+</section>
+
+
+<section>
+<h2>Describe event handling</h2>
+
+<p>An event handler is a block of code that receives specific events triggered by the app and performs actions in response. This section shows how to write event handlers using a simple example that writes messages to the console when a document is opened or saved.</p>
+
+<h3>AppleScript</h3>
+
+<p>In AppleScript, handlers are written by combining a <code>using terms from</code> block with <code>on</code> handlers.</p>
+
+<pre class="source">
+<code><span class="keyword">using terms from</span> <span class="type">application</span> <span class="string">&quot;CotEditor&quot;</span>
+	<span class="keyword">on</span> <span class="command">document opened</span> <span class="variable">theDocument</span>
+		<span class="command">write to console</span> <span class="string">&quot;Opened &quot;</span> &amp; (<span class="variable">theDocument's</span> <span class="attribute">name</span>)
+	<span class="keyword">end</span> <span class="command">document opened</span>
+
+	<span class="keyword">on</span> <span class="command">document saved</span> <span class="variable">theDocument</span>
+		<span class="command">write to console</span> <span class="string">&quot;Saved &quot;</span> &amp; (<span class="variable">theDocument's</span> <span class="attribute">name</span>)
+	<span class="keyword">end</span> <span class="command">document saved</span>
+<span class="keyword">end</span> <span class="keyword">using terms from</span>
+</code></pre>
+
+<h3>JavaScript for Automation (JXA)</h3>
+
+<p>In JavaScript for Automation, use global <code>function</code> declarations to create handlers.</p>
+
+<pre class="source">
+<code><span class="variable">CotEditor</span> = <span class="variable">Application</span>.<span class="command">currentApplication</span>()
+<span class="variable">CotEditor</span>.<span class="attribute">includeStandardAdditions</span> = <span class="value">true</span>
+
+<span class="keyword">function</span> <span class="command">documentOpened</span>(<span class="variable">document</span>) {
+  <span class="variable">CotEditor</span>.<span class="command">writeToConsole</span>(<span class="string">&quot;Opened &quot;</span> + <span class="variable">document</span>.<span class="command">name</span>())
+}
+
+<span class="keyword">function</span> <span class="command">documentSaved</span>(<span class="variable">document</span>) {
+  <span class="variable">CotEditor</span>.<span class="command">writeToConsole</span>(<span class="string">&quot;Saved &quot;</span> + <span class="variable">document</span>.<span class="command">name</span>())
+}
+</code></pre>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="script_overview.html">Automate tasks with scripting in CotEditor on Mac</a></li>
+	<li><a href="script_menu.html">Customize the Script menu in CotEditor on Mac</a></li>
+	<li><a href="script_osascript.html">Automate tasks using AppleScript in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

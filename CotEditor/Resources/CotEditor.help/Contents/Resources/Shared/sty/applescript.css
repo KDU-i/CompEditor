@@ -1,0 +1,51 @@
+@charset "UTF-8";
+
+/*
+ Additional Style Sheet for AppleScript Dictionary
+ 
+ CotEditor
+ https://coteditor.com
+ 
+ © 2016-2025 1024jp
+*/
+
+p.type {
+	font-size: 0.9rem;
+	color: -apple-system-secondary-label;
+	margin-block-end: 0;
+}
+h2 {
+	font-size: 1.2rem;
+}
+
+.added {
+	color: var(--accent-green);
+}
+.deprecated {
+	color: -apple-system-brown;
+}
+.separator {
+	font-weight: 200;
+	color: -apple-system-secondary-label;
+}
+
+dl dd {
+	margin-inline-start: 0;
+}
+dl ul li {
+	list-style-type: '– ';
+}
+dl ul li::marker {
+	color: -apple-system-secondary-label;
+	font-weight: 200;
+}
+dl ul li p {
+	margin-block: 0.2em;
+}
+dl ul li em {
+	font-weight: normal !important;
+	font-style: inherit;
+}
+dl ul li em code {
+	font-weight: bold;
+}

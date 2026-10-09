@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="encoding, text encoding, reinterpretation">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Open a document with a specified encoding in CotEditor on Mac</title>
+</head>
+
+<body>
+<a name="howto_interpret_encoding"></a>
+
+<h1>Open a document with a specified encoding in CotEditor on Mac</h1>
+
+<p>You can open a document by interpreting it with a specified text encoding. This is useful when a document doesn’t appear correctly or appears garbled.</p>
+
+
+<p><em class="tip">Tip:</em> If you don’t see the encoding you want in the Text Encoding menu, you may be able to add it by customizing the list. For details, see <a href="howto_customize_encoding_order.html">Change the priority of text encodings</a>.</p>
+
+
+<section>
+<h2>Specify the encoding when opening a document</h2>
+
+<ol>
+	<li><p>Go to the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac.</p></li>
+	<li><p>Choose File &gt; Open.</p></li>
+	<li><p>Select the document you want to open.</p></li>
+	<li><p>Open the Text Encoding pop-up menu, then select the encoding you want to use.</p></li>
+	<li><p>Click Open.</p></li>
+</ol>
+
+<p>The default setting is Automatic. When Automatic is selected, CotEditor chooses the most appropriate encoding based on the document’s content. For details, see <a href="about_autodetect_encoding.html">Detect a document’s text encoding</a>.</p>
+
+<p>If you open a document by dragging it to the CotEditor’s app icon, CotEditor uses an automatically detected encoding. If you need to open a document with a specific encoding, use the Open dialog.</p>
+</section>
+
+
+<section>
+<h2>Reinterpret a document using a different encoding</h2>
+
+<p>If a document doesn’t appear correctly, you may be able to fix the issue by reinterpreting it using a different encoding.</p>
+
+<p>To reinterpret an open document using another encoding, do the following:</p>
+
+<ol>
+	<li><p>In the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac, open a document.</p></li>
+	<li><p>Click the Text Encoding button in the status bar, or choose Format &gt; Text Encoding.</p></li>
+	<li><p>From the list, select the encoding you want to use.</p></li>
+	<li><p>In the “Text encoding change” dialog that appears, click Reinterpret.</p></li>
+</ol>
+
+<p><em class="note">Note:</em> When reinterpreting a document using a different encoding, any unsaved changes are lost. To preserve the content, save a copy beforehand.</p>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="faq_cannot_display.html">If a document appears garbled in CotEditor on Mac</a></li>
+	<li><a href="howto_inspect_usedchar.html">Find characters incompatible with the document encoding in CotEditor on Mac</a></li>
+	<li><a href="howto_customize_encoding_order.html">Customize text encoding priorities in CotEditor on Mac</a></li>
+	<li><a href="howto_open_document.html">Create or open documents in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="アウトライン">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>MacのCotEditorでアウトライン抽出ルールを定義する</title>
+</head>
+
+<body>
+<a name="syntax_outline_settings"></a>
+
+<h1>MacのCotEditorでアウトライン抽出ルールを定義する</h1>
+
+<p>CotEditorの<a href="howto_show_outlinemenu.html">アウトライン機能</a>を使うと、書類内の構造を一覧で表示して、すばやく移動できます。アウトラインメニューに表示するテキストの抽出方法や表示形式は、アウトライン抽出ルールとして定義できます。</p>
+
+
+<section>
+<h2>アウトライン抽出ルールを定義する</h2>
+
+<p>シンタックスのアウトラインの抽出ルールを定義するには、シンタックスエディタの左のリストから「アウトライン」を選択し、右側のリストに条件を追加します。シンタックスエディタの開き方は、<a href="syntax_definition.html">シンタックスを定義する</a>を参照してください。</p>
+
+<p>アウトライン設定の各項目の内容は次の通りです。</p>
+
+<table>
+	<thead>
+		<tr><th>項目</th><th>説明</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>IC</th><td><p>チェックがオンのとき、大文字/小文字を区別しません（Ignore Caseの略）。例えば、開始文字列を「abc」として「IC」にチェックを入れると、「ABC」「abc」「Abc」などに一致します。</p></td></tr>
+		<tr><th>種類</th><td><p>アウトライン項目の種類を設定します。タイトルの前につくアイコンに使われます。</p></td></tr>
+		<tr><th>正規表現パターン</th><td><p>ここで設定した正規表現に一致する部分がアウトラインとしてリストアップされます。この項目は必須です。</p></td></tr>
+		<tr><th>表示パターン</th><td><p>アウトライン項目の書式を設定します。「正規表現」で一致したテキストとこのパターンからタイトルが決定されます。</p></td></tr>
+		<tr><th>説明</th><td><p>登録する語句にメモがあるときにこのフィールドを使用できます。この項目は抽出に影響せず、空でも構いません。</p></td></tr>
+	</tbody>
+</table>
+
+<p>表示パターンには以下のメタ文字が使えます:</p>
+
+<table>
+	<thead>
+		<tr><th>メタ文字</th><th>説明</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>（記述なし）</th><td><p>「正規表現」で一致したすべてのテキスト</p></td></tr>
+		<tr><th><code>$0</code></th><td><p>「正規表現」で一致したすべてのテキスト</p></td></tr>
+		<tr><th><code>$1</code> 〜 <code>$9</code></th><td><p>「正規表現」で一致した部分テキストのうち、最初〜9番目に一致した部分</p></td></tr>
+	</tbody>
+</table>
+
+<p>「$0」などのメタ文字をそのままメニューに表示させるには、「$」の直前に「&#x005C;（半角バックスラッシュ）」を置いてください。メニュー項目では「&#x005C;」は表示されません。</p>
+
+<p>表示パターンを適用したあと、アウトラインのタイトル先頭のインデントや余分な空白は、見やすいように整えられます。</p>
+</section>
+
+
+<section>
+<h2>アウトライン項目にアイコンを付ける</h2>
+
+<p>抽出ルールでアイコンを選択すると、アウトラインのタイトルの横にアイコンを表示できます。</p>
+
+<table>
+	<col/>
+	<col/>
+	<col style="width:25%;">
+	<thead>
+		<tr>
+			<th>種類</th>
+			<th>説明</th>
+			<th>例</th>
+		</tr>
+	</thead>
+	
+	<tbody>
+		<tr>
+			<th>コンテナ</th>
+			<td>他の項目を含むことができる名前付きの構造ブロック</td>
+			<td><code>class</code>、<code>struct</code>、<code>enum</code>、<code>protocol</code>、<code>extension</code>、<code>namespace</code></td>
+		</tr>
+		<tr>
+			<th>値</th>
+			<td>プロパティ、フィールド、変数、定数などの値を表すシンボル</td>
+			<td><code>property</code>、<code>enum case</code>、<code>const</code></td>
+		</tr>
+		<tr>
+			<th>関数</th>
+			<td>関数やメソッドなど、呼び出し可能なシンボル</td>
+			<td>function、method、<code>def</code>、<code>init</code></td>
+		</tr>
+		<tr>
+			<th>タイトル</th>
+			<td>文書や図表の名前</td>
+			<td><code>title</code>、<code>figcaption</code></td>
+		</tr>
+		<tr>
+			<th>見出し</th>
+			<td>セクションの階層構造を定義する書類の見出し。見出しレベル（1〜7）を指定すると、折りたたみ可能な階層アウトラインを作成できます。</td>
+			<td><code>h1</code>–<code>h6</code>、<code>section{}</code>/<code>subsection{}</code> (LaTeX)</td>
+		</tr>
+		<tr>
+			<th>マーク</th>
+			<td>正式な見出しではないものの、セクションを視覚的に区切ったり注釈を付けたりするために人が記述するマーカー</td>
+			<td><code>MARK:</code>、<code>#pragma mark</code>、<code>region</code>/<code>endregion</code></td>
+		</tr>
+		<tr>
+			<th>区切り線</th>
+			<td>アウトライン項目を見やすくグループ化するための、選択できない区切り線</td>
+			<td><code>&lt;hr&gt;</code>、<code>---</code>、<code>MARK: -</code></td>
+		</tr>
+		<tr>
+			<th><span class="na">なし</span></th>
+			<td>意味的な種類が割り当てられていない項目</td>
+			<td></td>
+		</tr>
+	</tbody>
+</table>
+</section>
+
+
+<section id="cf">
+<h2>関連項目</h2>
+<ul>
+	<li><a href="howto_show_outlinemenu.html">書類のアウトラインを一覧する</a></li>
+	<li><a href="syntax_definition.html">シンタックスを定義する</a></li>
+	<li><a href="about_regex.html">正規表現を使う</a></li>
+</ul>
+</section>
+
+</body>
+</html>

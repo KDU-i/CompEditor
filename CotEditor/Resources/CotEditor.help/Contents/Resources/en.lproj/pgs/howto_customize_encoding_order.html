@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="text encoding, detection">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Customize text encoding priorities in CotEditor on Mac</title>
+</head>
+
+<body>
+<a name="howto_customize_encoding_order"></a>
+
+<h1>Customize text encoding priorities in CotEditor on Mac</h1>
+
+<p>CotEditor supports all text encodings available on macOS. However, the priority of text encodings can vary depending on the language and use case. By customizing the text encoding priority list, you can give higher priority to the encodings you use most often.</p>
+
+<p>CotEditor has a powerful <a href="about_autodetect_encoding.html">automatic detection feature</a> that determines the text encoding of a document when you open it. During automatic detection, CotEditor tries encodings in order from the top of the customizable priority list. By rearranging the list, you can prioritize specific encodings during automatic detection. You can also insert separators, add special encodings, or remove encodings that you don’t want to use for automatic detection.</p>
+
+<p>The text encoding priority list is also used to determine the order of items displayed in the Text Encoding menus in the Format menu and the status bar.</p>
+
+<figure>
+	<img src="../gfx/encodingPriority@2x.png" width="500" alt="Screenshot of the encoding priority setting dialog">
+</figure>
+
+
+<section>
+<h2>Customize the text encoding priority list</h2>
+
+<ol>
+	<li><p>Go to the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac.</p></li>
+	<li><p>Choose CotEditor &gt; Settings, then click Format.</p></li>
+	<li><p>Click the Edit List button in the “Encoding priorities” section.</p></li>
+	<li><p>Do any of the following:</p><ul>
+		<li><p><em>Change priority:</em> Move up the encodings you use frequently.</p></li>
+		<li><p><em>Add a text encoding or a separator:</em> Select the item at the location to insert, click the Add + button, then choose the item to add.</p></li>
+		<li><p><em>Remove items in the list:</em> Select the items to remove, then click the Delete - button.</p></li>
+		<li><p><em>Restore the list to the default:</em> Click Restore Defaults.</p></li>
+	</ul></li>
+	<li><p>Click OK.</p></li>
+</ol>
+
+<p>Encodings not on this list aren’t considered candidates for the automatic encoding detection when opening documents. Keep encodings on the list that you want to use as candidates for encoding detection, even if you don’t use them directly.</p>
+
+<p>“Unicode (UTF-8)” and “Unicode (UTF-8) with BOM” can’t be removed from the list and are always handled as a set. Because the BOM (byte order mark) is taken into account when interpreting data as UTF-8, there is no effect on the detection precision that the order of these two encodings is fixed.</p>
+
+<p>Place “Unicode (UTF-16)” after other commonly used encodings, because UTF-16 can represent a wide range of characters and may match text more easily than expected.</p>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="about_shiftjis.html">Use four kinds of Shift JIS properly in CotEditor on Mac</a></li>
+	<li><a href="settings_format.html">Change Format settings in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

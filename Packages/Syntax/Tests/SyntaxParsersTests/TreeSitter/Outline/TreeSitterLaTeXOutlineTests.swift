@@ -1,0 +1,153 @@
+//
+//  TreeSitterLaTeXOutlineTests.swift
+//  SyntaxParsersTests
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2026-04-01.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import Foundation
+import Testing
+import SyntaxFormat
+@testable import SyntaxParsers
+
+struct TreeSitterLaTeXOutlineTests {
+    
+    private let registry: LanguageRegistry = .shared
+    
+    
+    @Test func outlineKeepsParenthesizedCaptionTextTogether() async throws {
+        
+        let source = #"""
+            \section{Devices (Portable)}
+            \begin{figure}
+              \caption{MacBook Pro (Late 2020).}
+            \end{figure}
+            """#
+        let nsSource = source as NSString
+        
+        let outline = try await self.parseOutline(in: source)
+        
+        #expect(outline.map(\.title) == [
+            "Devices (Portable)",
+            "MacBook Pro (Late 2020).",
+        ])
+        #expect(outline.map(\.kind) == [
+            .heading(nil),
+            .title,
+        ])
+        #expect(outline.map(\.indent.level) == [0, 1])
+        #expect(nsSource.substring(with: outline[0].range) == "Devices (Portable)")
+        #expect(nsSource.substring(with: outline[1].range) == "MacBook Pro (Late 2020).")
+    }
+    
+    
+    @Test func outlineSkipsSubfigureCaptions() async throws {
+        
+        let source = #"""
+            \section{Gallery}
+            \begin{figure}
+              \caption{Overview}
+              \begin{subfigure}{.45\textwidth}
+                \caption{Left}
+              \end{subfigure}
+              \begin{subfigure}{.45\textwidth}
+                \caption{Right}
+              \end{subfigure}
+            \end{figure}
+            """#
+        
+        let outline = try await self.parseOutline(in: source)
+        
+        #expect(outline.map(\.title) == [
+            "Gallery",
+            "Overview",
+        ])
+        #expect(outline.map(\.kind) == [
+            .heading(nil),
+            .title,
+        ])
+        #expect(outline.map(\.indent.level) == [0, 1])
+    }
+    
+    
+    @Test func outlineSkipsSubtableCaptions() async throws {
+        
+        let source = #"""
+            \section{Results}
+            \begin{table}
+              \caption{Summary}
+              \begin{subtable}{.45\textwidth}
+                \caption{Group A}
+              \end{subtable}
+              \begin{subtable}{.45\textwidth}
+                \caption{Group B}
+              \end{subtable}
+            \end{table}
+            """#
+        
+        let outline = try await self.parseOutline(in: source)
+        
+        #expect(outline.map(\.title) == [
+            "Results",
+            "Summary",
+        ])
+        #expect(outline.map(\.kind) == [
+            .heading(nil),
+            .title,
+        ])
+        #expect(outline.map(\.indent.level) == [0, 1])
+    }
+    
+    
+    @Test func outlineSkipsEnvironmentDefinitions() async throws {
+        
+        let source = #"""
+            \newenvironment{publicationlist}[1]{%
+              \begin{list}{[#1]}{}%
+            }{%
+              \end{list}%
+            }
+            \renewenvironment{description}{%
+              \begin{list}{}{}%
+            }{%
+              \end{list}%
+            }
+            \section{Publications}
+            """#
+        
+        let outline = try await self.parseOutline(in: source)
+        
+        #expect(outline.map(\.title) == ["Publications"])
+        #expect(outline.map(\.kind) == [.heading(nil)])
+    }
+    
+    
+    // MARK: Private Methods
+    
+    private func parseOutline(in source: String) async throws -> [OutlineItem] {
+        
+        let config = try self.registry.configuration(for: .latex)
+        let client = try TreeSitterClient(languageConfig: config, languageProvider: self.registry.languageProvider, syntax: .latex)
+        
+        return try await client.parseOutline(in: source)
+    }
+}

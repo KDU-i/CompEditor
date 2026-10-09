@@ -1,0 +1,571 @@
+//
+//  StringLineProcessingTests.swift
+//  TextEditingTests
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2020-03-16.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2020-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import Foundation
+import Testing
+import StringUtils
+@testable import TextEditing
+
+struct StringLineProcessingTests {
+    
+    @Test func moveLineUp() throws {
+        
+        let string = """
+            aa
+            bbbb
+            ccc
+            d
+            eee
+            """
+        var context: EditingContext
+        
+        context = try #require(string.moveLineUp(in: [NSRange(4, 1)]))
+        #expect(context.strings == ["bbbb\naa\n"])
+        #expect(context.ranges == [NSRange(0, 8)])
+        #expect(context.selectedRanges == [NSRange(1, 1)])
+        
+        context = try #require(string.moveLineUp(in: [NSRange(4, 1), NSRange(6, 0)]))
+        #expect(context.strings == ["bbbb\naa\n"])
+        #expect(context.ranges == [NSRange(0, 8)])
+        #expect(context.selectedRanges == [NSRange(1, 1), NSRange(3, 0)])
+        
+        context = try #require(string.moveLineUp(in: [NSRange(4, 1), NSRange(9, 0), NSRange(15, 1)]))
+        #expect(context.strings == ["bbbb\nccc\naa\neee\nd"])
+        #expect(context.ranges == [NSRange(0, 17)])
+        #expect(context.selectedRanges == [NSRange(1, 1), NSRange(6, 0), NSRange(13, 1)])
+        
+        context = try #require(string.moveLineUp(in: [NSRange(4, 6)]))
+        #expect(context.strings == ["bbbb\nccc\naa\n"])
+        #expect(context.ranges == [NSRange(0, 12)])
+        #expect(context.selectedRanges == [NSRange(1, 6)])
+        
+        // a move that does not touch the first line replaces only the affected range
+        context = try #require(string.moveLineUp(in: [NSRange(9, 0)]))
+        #expect(context.strings == ["ccc\nbbbb\n"])
+        #expect(context.ranges == [NSRange(3, 9)])
+        #expect(context.selectedRanges == [NSRange(4, 0)])
+        
+        #expect(string.moveLineUp(in: [NSRange(2, 1)]) == nil)
+    }
+    
+    
+    @Test func moveLineDown() throws {
+        
+        let string = """
+            aa
+            bbbb
+            ccc
+            d
+            eee
+            """
+        var context: EditingContext
+        
+        context = try #require(string.moveLineDown(in: [NSRange(4, 1)]))
+        #expect(context.strings == ["ccc\nbbbb\n"])
+        #expect(context.ranges == [NSRange(3, 9)])
+        #expect(context.selectedRanges == [NSRange(8, 1)])
+        
+        context = try #require(string.moveLineDown(in: [NSRange(4, 1), NSRange(6, 0)]))
+        #expect(context.strings == ["ccc\nbbbb\n"])
+        #expect(context.ranges == [NSRange(3, 9)])
+        #expect(context.selectedRanges == [NSRange(8, 1), NSRange(10, 0)])
+        
+        context = try #require(string.moveLineDown(in: [NSRange(4, 1), NSRange(9, 0), NSRange(13, 1)]))
+        #expect(context.strings == ["eee\nbbbb\nccc\nd"])
+        #expect(context.ranges == [NSRange(3, 14)])
+        #expect(context.selectedRanges == [NSRange(8, 1), NSRange(13, 0), NSRange(17, 1)])
+        
+        context = try #require(string.moveLineDown(in: [NSRange(4, 6)]))
+        #expect(context.strings == ["d\nbbbb\nccc\n"])
+        #expect(context.ranges == [NSRange(3, 11)])
+        #expect(context.selectedRanges == [NSRange(6, 6)])
+        
+        #expect(string.moveLineDown(in: [NSRange(14, 1)]) == nil)
+    }
+    
+    
+    @Test func moveLineUpWithDocumentEndCaret() throws {
+        
+        // the caret on the trailing empty line must stay in place instead of being dropped
+        var context = try #require("aa\nbb\ncc\n".moveLineUp(in: [NSRange(3, 1), NSRange(9, 0)]))
+        
+        #expect(context.strings == ["bb\naa\n"])
+        #expect(context.ranges == [NSRange(0, 6)])
+        #expect(context.selectedRanges == [NSRange(0, 1), NSRange(9, 0)])
+        
+        // ... and must not be relocated into the moved text
+        context = try #require("aa\nbb\n".moveLineUp(in: [NSRange(3, 0), NSRange(6, 0)]))
+        #expect(context.selectedRanges == [NSRange(0, 0), NSRange(6, 0)])
+        
+        // moving the trailing empty line itself remains possible
+        context = try #require("aa\nbb\n".moveLineUp(in: [NSRange(6, 0)]))
+        #expect(context.selectedRanges == [NSRange(3, 0)])
+    }
+    
+    
+    @Test func moveLineDownWithDocumentEndCaret() throws {
+        
+        // the caret on the trailing empty line must stay in place
+        // instead of being shifted out of the string bounds
+        let string = "aa\nbb\ncc\n"
+        var context = try #require(string.moveLineDown(in: [NSRange(3, 0), NSRange(9, 0)]))
+        
+        #expect(context.strings == ["cc\nbb\n"])
+        #expect(context.ranges == [NSRange(3, 6)])
+        #expect(context.selectedRanges == [NSRange(6, 0), NSRange(9, 0)])
+        
+        // the caret on the trailing empty line must not be dropped
+        context = try #require("aa\nbb\ncc\ndd\n".moveLineDown(in: [NSRange(3, 0), NSRange(12, 0)]))
+        #expect(context.selectedRanges == [NSRange(6, 0), NSRange(12, 0)])
+    }
+    
+    
+    @Test func moveLineUpWithCRLF() throws {
+        
+        // CR+LF is treated as a single Character; offsets must use UTF-16 lengths.
+        let string = "aa\r\nbbbb\r\nccc\r\nd\r\neee"
+        var context: EditingContext
+        
+        context = try #require(string.moveLineUp(in: [NSRange(5, 1)]))
+        #expect(context.strings == ["bbbb\r\naa\r\n"])
+        #expect(context.ranges == [NSRange(0, 10)])
+        #expect(context.selectedRanges == [NSRange(1, 1)])
+        
+        // last line without trailing line break
+        let trailingString = "aa\r\nbbbb"
+        context = try #require(trailingString.moveLineUp(in: [NSRange(5, 1)]))
+        #expect(context.strings == ["bbbb\r\naa"])
+        #expect(context.ranges == [NSRange(0, 8)])
+        #expect(context.selectedRanges == [NSRange(1, 1)])
+    }
+    
+    
+    @Test func moveLineDownWithCRLF() throws {
+        
+        let string = "aa\r\nbbbb\r\nccc\r\nd\r\neee"
+        var context: EditingContext
+        
+        context = try #require(string.moveLineDown(in: [NSRange(5, 1)]))
+        #expect(context.strings == ["ccc\r\nbbbb\r\n"])
+        #expect(context.ranges == [NSRange(4, 11)])
+        #expect(context.selectedRanges == [NSRange(10, 1)])
+        
+        // last line without trailing line break — needs to account for CRLF utf16 length (2)
+        let trailingString = "aa\r\nbbbb"
+        context = try #require(trailingString.moveLineDown(in: [NSRange(0, 1)]))
+        #expect(context.strings == ["bbbb\r\naa"])
+        #expect(context.ranges == [NSRange(0, 8)])
+        #expect(context.selectedRanges == [NSRange(6, 1)])
+    }
+    
+    
+    @Test func sortLinesAscending() throws {
+        
+        let string = """
+            ccc
+            aa
+            bbbb
+            """
+        var context: EditingContext
+        
+        #expect(string.sortLinesAscending(in: NSRange(4, 1)) == nil)
+        
+        context = try #require(string.sortLinesAscending(in: string.range))
+        #expect(context.strings == ["aa\nbbbb\nccc"])
+        #expect(context.ranges == [NSRange(0, 11)])
+        #expect(context.selectedRanges == [NSRange(0, 11)])
+        
+        context = try #require("aa\nbbbb\nccc".sortLinesAscending(in: NSRange(0, 11)))
+        #expect(context.strings == ["aa\nbbbb\nccc"])
+        #expect(context.ranges == [NSRange(0, 11)])
+        #expect(context.selectedRanges == [NSRange(0, 11)])
+        
+        context = try #require(string.sortLinesAscending(in: NSRange(2, 4)))
+        #expect(context.strings == ["aa\nccc\n"])
+        #expect(context.ranges == [NSRange(0, 7)])
+        #expect(context.selectedRanges == [NSRange(0, 6)])
+    }
+    
+    
+    @Test func sortLinesAscendingWithCRLF() throws {
+        
+        let string = "ccc\r\naa\r\nbbbb"
+        let context = try #require(string.sortLinesAscending(in: string.range))
+        
+        #expect(context.strings == ["aa\r\nbbbb\r\nccc"])
+        #expect(context.ranges == [NSRange(0, 13)])
+        #expect(context.selectedRanges == [NSRange(0, 13)])
+    }
+    
+    
+    @Test func sortLinesAscendingWithMixedLineEndings() throws {
+        
+        let string = "b\r\na\nc"
+        var context = try #require(string.sortLinesAscending(in: string.range))
+        
+        #expect(context.strings == ["a\nb\r\nc"])
+        #expect(context.ranges == [NSRange(0, 6)])
+        #expect(context.selectedRanges == [NSRange(0, 6)])
+        
+        let trailingString = "b\r\na\n"
+        context = try #require(trailingString.sortLinesAscending(in: trailingString.nsRange))
+        #expect(context.strings == ["a\nb\r\n"])
+        #expect(context.ranges == [NSRange(0, 5)])
+        #expect(context.selectedRanges == [NSRange(0, 3)])
+        
+        let missingLineEndingString = "c\r\nb\na"
+        context = try #require(missingLineEndingString.sortLinesAscending(in: missingLineEndingString.nsRange, baseLineEnding: "\r"))
+        #expect(context.strings == ["a\rb\nc"])
+        #expect(context.ranges == [NSRange(0, 6)])
+        #expect(context.selectedRanges == [NSRange(0, 5)])
+    }
+    
+    
+    @Test func reverseLines() throws {
+        
+        let string = """
+            aa
+            bbbb
+            ccc
+            """
+        var context: EditingContext
+        
+        #expect(string.reverseLines(in: NSRange(4, 1)) == nil)
+        
+        context = try #require(string.reverseLines(in: string.range))
+        #expect(context.strings == ["ccc\nbbbb\naa"])
+        #expect(context.ranges == [NSRange(0, 11)])
+        #expect(context.selectedRanges == [NSRange(0, 11)])
+        
+        context = try #require("aa\naa\n".reverseLines(in: NSRange(0, 6)))
+        #expect(context.strings == ["aa\naa\n"])
+        #expect(context.ranges == [NSRange(0, 6)])
+        #expect(context.selectedRanges == [NSRange(0, 5)])
+        
+        context = try #require(string.reverseLines(in: NSRange(2, 4)))
+        #expect(context.strings == ["bbbb\naa\n"])
+        #expect(context.ranges == [NSRange(0, 8)])
+        #expect(context.selectedRanges == [NSRange(0, 7)])
+    }
+    
+    
+    @Test func reverseLinesWithCRLF() throws {
+        
+        let string = "aa\r\nbbbb\r\nccc"
+        let context = try #require(string.reverseLines(in: string.range))
+        
+        #expect(context.strings == ["ccc\r\nbbbb\r\naa"])
+        #expect(context.ranges == [NSRange(0, 13)])
+        #expect(context.selectedRanges == [NSRange(0, 13)])
+    }
+    
+    
+    @Test func reverseLinesWithMixedLineEndings() throws {
+        
+        let string = "b\r\na\nc"
+        var context = try #require(string.reverseLines(in: string.range))
+        
+        #expect(context.strings == ["c\r\na\nb"])
+        #expect(context.ranges == [NSRange(0, 6)])
+        #expect(context.selectedRanges == [NSRange(0, 6)])
+        
+        let trailingString = "a\r\nb\n"
+        context = try #require(trailingString.reverseLines(in: trailingString.nsRange))
+        #expect(context.strings == ["b\na\r\n"])
+        #expect(context.ranges == [NSRange(0, 5)])
+        #expect(context.selectedRanges == [NSRange(0, 3)])
+        
+        let missingLineEndingString = "a\r\nb\nc"
+        context = try #require(missingLineEndingString.reverseLines(in: missingLineEndingString.nsRange, baseLineEnding: "\r"))
+        #expect(context.strings == ["c\rb\na"])
+        #expect(context.ranges == [NSRange(0, 6)])
+        #expect(context.selectedRanges == [NSRange(0, 5)])
+    }
+    
+    
+    @Test func shuffleLines() throws {
+        
+        let string = """
+            aa
+            bbbb
+            ccc
+            """
+        
+        #expect(string.shuffleLines(in: NSRange(4, 1)) == nil)
+        
+        let context = try #require(string.shuffleLines(in: string.range))
+        let shuffledLines = context.strings[0].split(separator: "\n")
+        let originalLines = string.split(separator: "\n")
+        
+        #expect(shuffledLines.sorted() == originalLines.sorted())
+        #expect(context.ranges == [NSRange(0, 11)])
+        #expect(context.selectedRanges == [NSRange(0, 11)])
+        
+        #expect("aa\naa\n".shuffleLines(in: NSRange(0, 6)) != nil)
+    }
+    
+    
+    @Test func shuffleLinesWithCRLF() throws {
+        
+        let string = "aa\r\nbbbb\r\nccc"
+        let context = try #require(string.shuffleLines(in: string.range))
+        let shuffledString = context.strings[0]
+        let shuffledLines = shuffledString.lineContentsRanges()
+            .map { (shuffledString as NSString).substring(with: $0) }
+        
+        #expect(shuffledLines.sorted() == ["aa", "bbbb", "ccc"])
+        #expect(context.ranges == [NSRange(0, 13)])
+        #expect(context.selectedRanges == [NSRange(0, 13)])
+    }
+    
+    
+    @Test func deleteDuplicateLine() throws {
+        
+        let string = """
+            aa
+            bbbb
+            ccc
+            ccc
+            bbbb
+            """
+        var context: EditingContext
+        
+        #expect(string.deleteDuplicateLine(in: [NSRange(4, 1)]) == nil)
+        
+        context = try #require(string.deleteDuplicateLine(in: [string.range]))
+        #expect(context.strings == ["", ""])
+        #expect(context.ranges == [NSRange(12, 4), NSRange(16, 4)])
+        #expect(context.selectedRanges == nil)
+        
+        context = try #require(string.deleteDuplicateLine(in: [NSRange(10, 4)]))
+        #expect(context.strings == [""])
+        #expect(context.ranges == [NSRange(12, 4)])
+        #expect(context.selectedRanges == nil)
+        
+        context = try #require(string.deleteDuplicateLine(in: [NSRange(9, 1), NSRange(11, 0), NSRange(13, 2)]))
+        #expect(context.strings == [""])
+        #expect(context.ranges == [NSRange(12, 4)])
+        #expect(context.selectedRanges == nil)
+    }
+    
+    
+    @Test func duplicateLine() throws {
+        
+        let string = """
+            aa
+            bbbb
+            ccc
+            """
+        var context: EditingContext
+        
+        context = try #require(string.duplicateLine(in: [NSRange(4, 1)], lineEnding: "\n"))
+        #expect(context.strings == ["bbbb\n"])
+        #expect(context.ranges == [NSRange(3, 0)])
+        #expect(context.selectedRanges == [NSRange(9, 1)])
+        
+        context = try #require(string.duplicateLine(in: [NSRange(4, 1), NSRange(6, 4)], lineEnding: "\n"))
+        #expect(context.strings == ["bbbb\nccc\n"])
+        #expect(context.ranges == [NSRange(3, 0)])
+        #expect(context.selectedRanges == [NSRange(13, 1), NSRange(15, 4)])
+        
+        context = try #require(string.duplicateLine(in: [NSRange(4, 1), NSRange(6, 1), NSRange(10, 0)], lineEnding: "\n"))
+        #expect(context.strings == ["bbbb\n", "ccc\n"])
+        #expect(context.ranges == [NSRange(3, 0), NSRange(8, 0)])
+        #expect(context.selectedRanges == [NSRange(9, 1), NSRange(11, 1), NSRange(19, 0)])
+    }
+    
+    
+    @Test func deleteLine() throws {
+        
+        let string = """
+            aa
+            bbbb
+            ccc
+            """
+        var context: EditingContext
+        
+        context = try #require(string.deleteLine(in: [NSRange(4, 1)]))
+        #expect(context.strings == [""])
+        #expect(context.ranges == [NSRange(3, 5)])
+        #expect(context.selectedRanges == [NSRange(3, 0)])
+        
+        context = try #require(string.deleteLine(in: [NSRange(4, 1), NSRange(6, 1), NSRange(10, 0)]))
+        #expect(context.strings == ["", ""])
+        #expect(context.ranges == [NSRange(3, 5), NSRange(8, 3)])
+        #expect(context.selectedRanges == [NSRange(3, 0)])
+    }
+    
+    
+    @Test func joinLinesIn() throws {
+        
+        let string = """
+            aa
+              bbbb
+            ccc
+            d
+            """
+        let context = string.joinLines(in: [NSRange(1, 6), NSRange(10, 1)])
+        
+        #expect(context.strings == ["a bb", "c"])
+        #expect(context.ranges == [NSRange(1, 6), NSRange(10, 1)])
+        #expect(context.selectedRanges == [NSRange(1, 4), NSRange(8, 1)])
+        
+        #expect(string.joinLines(in: [NSRange(1, 1)]).strings == ["a"])
+    }
+    
+    
+    @Test func joinLinesAfter() {
+        
+        let string = """
+            aa
+              bbbb
+            ccc
+            d
+            """
+        let context = string.joinLines(after: [NSRange(1, 0), NSRange(10, 0), NSRange(14, 0)])
+        
+        #expect(context.strings == [" ", " "])
+        #expect(context.ranges == [NSRange(2, 3), NSRange(13, 1)])
+        #expect(context.selectedRanges == nil)
+    }
+    
+    
+    @Test func joinLinesAfterAcrossBlankLine() {
+        
+        // ranges to replace must not overlap when the lines to join
+        // are separated by a whitespace-only line
+        let context = "a\n  \nb".joinLines(after: [NSRange(0, 0), NSRange(3, 0)])
+        
+        #expect(context.strings == [" "])
+        #expect(context.ranges == [NSRange(1, 4)])
+        
+        let emptyLineContext = "a\n \n \nb".joinLines(after: [NSRange(2, 0), NSRange(4, 0)])
+        
+        #expect(emptyLineContext.strings == [" "])
+        #expect(emptyLineContext.ranges == [NSRange(2, 4)])
+    }
+}
+
+
+struct StringTrimmingTests {
+    
+    @Test func trimWhitespace() throws {
+        
+        let string = """
+            
+            abc def
+                \t
+            white space -> \t
+            abc
+            """
+        
+        let trimmed = try string.trim(ranges: string.rangesOfTrailingWhitespace(ignoringEmptyLines: false))
+        let expectedTrimmed = """
+            
+            abc def
+            
+            white space ->
+            abc
+            """
+        #expect(trimmed == expectedTrimmed)
+        
+        let trimmedIgnoringEmptyLines = try string.trim(ranges: string.rangesOfTrailingWhitespace(ignoringEmptyLines: true))
+        let expectedTrimmedIgnoringEmptyLines = """
+            
+            abc def
+                \t
+            white space ->
+            abc
+            """
+        #expect(trimmedIgnoringEmptyLines == expectedTrimmedIgnoringEmptyLines)
+    }
+    
+    
+    @Test func trimTrailingWhitespace() throws {
+        
+        let string = "a  \n b\t\nc  \n"
+        let context = try #require(string.trimTrailingWhitespace(ignoringEmptyLines: false, in: []))
+        let trimmed = try string.trim(ranges: context.ranges)
+        
+        #expect(trimmed == "a\n b\nc\n")
+        #expect(context.selectedRanges?.isEmpty == true)
+    }
+    
+    
+    @Test func trimTrailingWhitespaceKeepingEditingPoint() throws {
+        
+        let string = "a  \n b\t\nc  \n"
+        let tabRange = (string as NSString).range(of: "\t")
+        let context = try #require(string.trimTrailingWhitespace(ignoringEmptyLines: false, keepingEditingPoint: true, in: [tabRange]))
+        let trimmed = try string.trim(ranges: context.ranges)
+        
+        #expect(trimmed == "a\n b\t\nc\n")
+        #expect(context.selectedRanges == [NSRange(location: 4, length: 1)])
+    }
+    
+    
+    @Test func trimTrailingWhitespaceKeepingEditingPointNoChanges() {
+        
+        let string = "a  \n"
+        let range = NSRange(location: 2, length: 0)
+        
+        #expect(string.trimTrailingWhitespace(ignoringEmptyLines: false, keepingEditingPoint: true, in: [range]) == nil)
+    }
+    
+    
+    @Test func trimTrailingWhitespaceKeepingEditingPointSkipsLine() throws {
+        
+        let string = "a  \n b  \n"
+        let editRange = NSRange(location: 0, length: 0)
+        let context = try #require(string.trimTrailingWhitespace(ignoringEmptyLines: false, keepingEditingPoint: true, in: [editRange]))
+        let trimmed = try string.trim(ranges: context.ranges)
+        
+        #expect(trimmed == "a  \n b\n")
+        #expect(context.selectedRanges == [editRange])
+    }
+}
+
+
+// MARK: -
+
+private extension String {
+    
+    func trim(ranges: [NSRange]) throws -> String {
+        
+        try ranges.reversed()
+            .map { try #require(Range($0, in: self)) }
+            .reduce(self) { $0.replacingCharacters(in: $1, with: "") }
+    }
+}
+
+
+private extension NSRange {
+    
+    init(_ location: Int, _ length: Int) {
+        
+        self.init(location: location, length: length)
+    }
+}

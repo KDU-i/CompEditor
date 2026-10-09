@@ -1,0 +1,436 @@
+//
+//  FindPanelFieldView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2016-06-26.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2014-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import AppKit
+import Defaults
+import RegexHighlighting
+import TextFind
+
+struct FindPanelFieldView: View {
+    
+    // -> Not used in code but need to reset focus
+    @Environment(\.appearsActive) private var appearsActive
+    
+    @AppStorage(.findUsesRegularExpression) private var usesRegularExpression: Bool
+    @AppStorage(.findIgnoresCase) private var ignoresCase: Bool
+    @AppStorage(.findInSelection) private var inSelection: Bool
+    @AppStorage(.findRegexUnescapesReplacementString) private var unescapesReplacementString: Bool
+    
+    @Bindable private var settings: TextFinderSettings = .shared
+    @State private var result: FindResult?
+    @State private var resultClientIdentifier: ObjectIdentifier?
+    @State private var didFindObserver: NotificationCenter.ObservationToken?
+    @State private var isPressingShift = false
+    @State private var isRegexReferencePresented = false
+    @State private var isSettingsPresented = false
+    
+    @State private var scrollerThickness: Double = 0
+    @State private var findMessageWidth: Double = 0
+    @State private var replaceMessageWidth: Double = 0
+    
+    
+    var body: some View {
+        
+        VStack {
+            FindTextField(String(localized: "Find", table: "TextFind", comment: "placeholder"),
+                          text: $settings.findString,
+                          mode: .search,
+                          isRegularExpression: self.usesRegularExpression,
+                          trailingInset: self.findMessageWidth)
+            {
+                let action = self.isPressingShift
+                    ? #selector((any TextFinderClient).matchPrevious)
+                    : #selector((any TextFinderClient).matchNext)
+                NSApp.sendAction(action, to: nil, from: nil)
+            }
+            .onTextChange { _ in
+                if self.settings.shouldSearchIncrementally {
+                    NSApp.sendAction(#selector((any TextFinderClient).incrementalSearch), to: nil, from: nil)
+                }
+            }
+            .onModifierKeysChanged(mask: .shift) { _, new in self.isPressingShift = new.contains(.shift) }
+            .clipShape(.rect(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.separator))
+            .overlay(alignment: .top) {
+                HStack(alignment: .firstTextBaseline) {
+                    HistoryMenu(.init("Recent Searches", table: "TextFind", comment: "menu item header"),
+                                defaultKey: .findHistory, systemImage: "magnifyingglass",
+                                clearLabel: .init("Clear Recent Searches", table: "TextFind", comment: "verb; menu item"),
+                                value: $settings.findString)
+                    Spacer()
+                    FindPanelFieldAccessoryView(result: self.findResultMessage,
+                                                text: $settings.findString)
+                        .onGeometryChange(for: CGFloat.self, of: \.size.width) { self.findMessageWidth = $0 }
+                }
+                .padding(.trailing, self.scrollerThickness)
+            }
+            .help(.init("Type the text to search for.", table: "TextFind", comment: "tooltip"))
+            .frame(minHeight: 44)
+            
+            FindTextField(String(localized: "Replace with", table: "TextFind", comment: "placeholder"),
+                          text: $settings.replacementString,
+                          mode: .replacement(unescapes: self.unescapesReplacementString),
+                          isRegularExpression: self.usesRegularExpression,
+                          trailingInset: self.replaceMessageWidth)
+            .clipShape(.rect(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.separator))
+            .overlay(alignment: .top) {
+                HStack(alignment: .firstTextBaseline) {
+                    HistoryMenu(.init("Recent Replacements", table: "TextFind", comment: "menu item header"),
+                                defaultKey: .replaceHistory, systemImage: "pencil",
+                                clearLabel: .init("Clear Recent Replacements", table: "TextFind", comment: "verb; menu item"),
+                                value: $settings.replacementString)
+                    Spacer()
+                    FindPanelFieldAccessoryView(result: (self.result?.action == .replace) ? self.result?.message : nil,
+                                                text: $settings.replacementString)
+                        .onGeometryChange(for: CGFloat.self, of: \.size.width) { self.replaceMessageWidth = $0 }
+                }
+                .padding(.trailing, self.scrollerThickness)
+            }
+            .help(.init("Type the text to replace the found text.", table: "TextFind", comment: "tooltip"))
+            .frame(minHeight: 44)
+            
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Toggle(.init("Regular Expression", table: "TextFind", comment: "toggle button"), isOn: $usesRegularExpression)
+                        .help(.init("Select to search with regular expression.", table: "TextFind", comment: "tooltip"))
+                        .fixedSize()
+                    HelpLink {
+                        self.isRegexReferencePresented.toggle()
+                    }
+                    .help(.init("Show quick reference for regular expression syntax.", table: "TextFind", comment: "tooltip"))
+                    .controlSize(.mini)
+                    .detachablePopover(isPresented: $isRegexReferencePresented, arrowEdge: .bottom) {
+                        RegularExpressionReferenceView()
+                            .scenePadding()
+                    }
+                }
+                Toggle(.init("Ignore Case", table: "TextFind", comment: "toggle button"), isOn: $ignoresCase)
+                    .help(.init("Select to ignore character case on search.", table: "TextFind", comment: "tooltip"))
+                    .fixedSize()
+                Toggle(.init("In Selection", table: "TextFind", comment: "toggle button"), isOn: $inSelection)
+                    .help(.init("Select to search text only from selection.", table: "TextFind", comment: "tooltip"))
+                    .fixedSize()
+                
+                Spacer()
+                
+                Button(.init("Advanced options", table: "TextFind", comment: "accessibility label"), systemImage: "ellipsis") {
+                    self.isSettingsPresented.toggle()
+                }
+                .help(.init("Show advanced options", table: "TextFind", comment: "tooltip"))
+                .symbolVariant(.circle)
+                .labelStyle(.iconOnly)
+                .popover(isPresented: $isSettingsPresented, arrowEdge: .trailing) {
+                    FindSettingsView()
+                        .scenePadding()
+                }
+            }
+            .controlSize(.small)
+        }
+        .onAppear {
+            self.invalidateScrollerThickness()
+        }
+        .onChange(of: self.settings.findString) {
+            self.result = nil
+            self.resultClientIdentifier = nil
+        }
+        .onChange(of: self.settings.replacementString) {
+            if self.result?.action == .replace {
+                self.result = nil
+                self.resultClientIdentifier = nil
+            }
+        }
+        .onAppear {
+            guard self.didFindObserver == nil else { return }
+            self.didFindObserver = NotificationCenter.default.addObserver(for: TextFinder.DidFindMessage.self) { message in
+                self.result = message.result
+                self.resultClientIdentifier = message.clientIdentifier
+            }
+        }
+        .onDisappear {
+            self.didFindObserver = nil
+        }
+        .task {
+            for await notification in NotificationCenter.default.notifications(named: NSTextView.didChangeSelectionNotification) {
+                guard
+                    var result = self.result,
+                    result.action == .find,
+                    result.currentMatchIndex != nil,
+                    let matchedRange = result.matchedRange,
+                    let textView = notification.object as? NSTextView,
+                    self.resultClientIdentifier == ObjectIdentifier(textView),
+                    textView.selectedRanges.count == 1,
+                    textView.selectedRange() != matchedRange
+                else { continue }
+                
+                result.currentMatchIndex = nil
+                result.matchedRange = nil
+                self.result = result
+            }
+        }
+        .task {
+            for await _ in NotificationCenter.default.notifications(named: NSWindow.didResignMainNotification) {
+                self.result = nil
+                self.resultClientIdentifier = nil
+            }
+        }
+        .task {
+            for await _ in NotificationCenter.default.notifications(named: NSScroller.preferredScrollerStyleDidChangeNotification) {
+                self.invalidateScrollerThickness()
+            }
+        }
+        .scenePadding([.top, .horizontal])
+        .padding(.bottom, 8)
+    }
+    
+    
+    private var findResultMessage: String? {
+        
+        guard let result, result.action == .find else { return nil }
+        
+        return result.positionMessage ?? result.message
+    }
+    
+    
+    /// Updates the scroller thickness preserving for the Clear button padding.
+    private func invalidateScrollerThickness() {
+        
+        self.scrollerThickness = NSScroller.preferredScrollerStyle == .legacy ? NSScroller.scrollerWidth(for: .small, scrollerStyle: NSScroller.preferredScrollerStyle) : 0
+    }
+}
+
+
+private struct FindPanelFieldAccessoryView: View {
+    
+    var result: String?
+    @Binding var text: String
+    
+    
+    var body: some View {
+        
+        if !self.text.isEmpty {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                if let result {
+                    Text(result)
+                        .monospacedDigit()
+                        .padding(.horizontal, 2)
+                        .foregroundStyle(.tertiary)
+                        .background(.background)
+                        .clipShape(.rect(cornerRadius: 2))
+                }
+                
+                Button(.init("Clear", table: "TextFind", comment: "verb; button"), systemImage: "xmark") {
+                    self.text = ""
+                }
+                .symbolVariant(.circle.fill)
+                .buttonStyle(.borderless)
+                .labelStyle(.iconOnly)
+            }
+            .controlSize(.small)
+            .padding(5)
+        }
+    }
+}
+
+
+private struct HistoryMenu: View {
+    
+    var defaultKey: DefaultKey<[String]>
+    
+    var titleResource: LocalizedStringResource
+    var systemImage: String
+    var clearTitleResource: LocalizedStringResource
+    
+    @Binding var value: String
+    
+    
+    init(_ titleResource: LocalizedStringResource, defaultKey: DefaultKey<[String]>, systemImage: String, clearLabel clearTitleResource: LocalizedStringResource, value: Binding<String>) {
+        
+        self.defaultKey = defaultKey
+        self.titleResource = titleResource
+        self.systemImage = systemImage
+        self.clearTitleResource = clearTitleResource
+        self._value = value
+    }
+    
+    
+    var body: some View {
+        
+        Menu {
+            let histories = UserDefaults.standard[self.defaultKey]
+            
+            if !histories.isEmpty {
+                Section(self.titleResource) {
+                    ForEach(histories, id: \.self) { string in
+                        let title = (string.count <= 64) ? string : (String(string.prefix(64)) + "…")
+                        
+                        Button(title) {
+                            self.value = string
+                        }.help(string)
+                    }
+                }
+            }
+            Button(self.clearTitleResource, systemImage: "trash") {
+                UserDefaults.standard.removeObject(forKey: self.defaultKey.rawValue)
+            }.disabled(histories.isEmpty)
+        } label: {
+            Label(self.titleResource, systemImage: self.systemImage)
+                .labelStyle(.iconOnly)
+        }
+        .buttonStyle(.borderless)
+        .frame(minWidth: 34)
+        .padding(.vertical, 5)
+        .padding(.horizontal, 3)
+    }
+}
+
+
+private struct FindTextField: NSViewRepresentable {
+    
+    typealias NSViewType = NSScrollView
+    typealias TextView = RegexTextView
+    
+    
+    var prompt: String
+    @Binding var text: String
+    @MainActor var action: (() -> Void)?
+    @MainActor var onTextChange: ((String) -> Void)?
+    
+    var mode: RegexParseMode = .search
+    var isRegularExpression: Bool = false
+    var trailingInset: Double = 0
+    
+    @Environment(\.layoutDirection) private var layoutDirection
+    
+    
+    init(_ prompt: String, text: Binding<String>, mode: RegexParseMode, isRegularExpression: Bool, trailingInset: Double, action: (@MainActor () -> Void)? = nil) {
+        
+        self.prompt = prompt
+        self._text = text
+        self.mode = mode
+        self.isRegularExpression = isRegularExpression
+        self.trailingInset = trailingInset
+        self.action = action
+    }
+    
+    
+    func makeNSView(context: Context) -> NSScrollView {
+        
+        let textView = FindPanelTextView()
+        textView.allowsUndo = true
+        textView.delegate = context.coordinator
+        textView.setValue(self.prompt, forKey: "placeholderString")  // private property in NSTextView
+        textView.action = self.action
+        
+        let scrollView = SynchronizedScrollView()
+        scrollView.contentView = FindPanelTextClipView()
+        scrollView.documentView = textView
+        scrollView.allowsMagnification = true
+        scrollView.focusRingType = .exterior
+        scrollView.focusRingRadius = 6
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.verticalScroller?.controlSize = .small
+        scrollView.horizontalScroller?.controlSize = .small
+        scrollView.contentView.automaticallyAdjustsContentInsets = false
+        
+        return scrollView
+    }
+    
+    
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        
+        let textView = nsView.documentView as! TextView
+        if textView.string != self.text, !textView.hasMarkedText() {
+            // set the string only when needed to avoid unexpected cursor move
+            textView.string = self.text
+        }
+        textView.parseMode = self.mode
+        textView.isRegularExpressionMode = self.isRegularExpression
+        
+        // add extra scroll margin to the trailing side of the textView, so that the entire input can be read
+        let leadingKeyPath = (self.layoutDirection == .rightToLeft) ? \NSEdgeInsets.left : \.right
+        nsView.contentView.contentInsets[keyPath: leadingKeyPath] = self.trailingInset
+        
+        if case .search = self.mode {
+            // make find text view the initial first responder to focus it on showWindow(_:)
+            textView.window?.initialFirstResponder = textView
+        }
+    }
+    
+    
+    func makeCoordinator() -> Coordinator {
+        
+        Coordinator(text: $text, onTextChange: self.onTextChange)
+    }
+    
+    
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        
+        @Binding private var text: String
+        var onTextChange: ((String) -> Void)?
+        
+        
+        init(text: Binding<String>, onTextChange: ((String) -> Void)?) {
+            
+            self._text = text
+            self.onTextChange = onTextChange
+        }
+        
+        
+        func textDidChange(_ notification: Notification) {
+            
+            guard
+                let textView = notification.object as? TextView,
+                !textView.hasMarkedText()
+            else { return }
+            
+            self.text = textView.string
+            self.onTextChange?(textView.string)
+        }
+    }
+}
+
+
+extension FindTextField {
+    
+    /// Sets a closure to be called whenever the underlying text changes due to user editing.
+    ///
+    /// - Parameter onTextChange: A closure that receives the latest committed `String` value.
+    func onTextChange(_ onTextChange: @MainActor @escaping (String) -> Void) -> Self {
+        
+        var view = self
+        view.onTextChange = onTextChange
+        return view
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview(traits: .fixedLayout(width: 400, height: 200)) {
+    FindPanelFieldView()
+}

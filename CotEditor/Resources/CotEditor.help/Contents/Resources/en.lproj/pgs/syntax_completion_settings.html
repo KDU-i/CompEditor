@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="Word Completion, completion, completion list, possible completions">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Define completion candidates in CotEditor on Mac</title>
+</head>
+
+<body>
+<a name="syntax_completion_settings"></a>
+
+<h1>Define completion candidates in CotEditor on Mac</h1>
+
+<p>In addition to standard completion candidates and words already found in the document, you can define syntax-specific completion candidates by customizing the syntax.</p>
+
+
+<section>
+<h2>Define completion candidates</h2>
+
+<p>To define words that appear in the completion list, select Completion from the list on the left side of the syntax editor, then add entries to the list on the right. See <a href="syntax_definition.html">Define a syntax</a> for how to open the syntax editor.</p>
+
+<p>Add words to the list as follows:</p>
+<table>
+	<thead>
+		<tr><th>Field</th><th>Description</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>Completion</th><td><p>The word entered here appears in the completion list.</p></td></tr>
+		<tr><th>Type</th><td><p>An optional note indicating the kind of completion item.</p></td></tr>
+	</tbody>
+</table>
+
+<p>If you do not define any words here, CotEditor uses words generated from your <a href="syntax_highlight_settings.html">syntax highlighting definition</a> as completion candidates.</p>
+
+<p>Whether syntax-specific candidates are actually included in the completion list also depends on the completion settings in <a href="settings_mode.html">Mode settings</a>.</p>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="howto_complete.html">Complete a word</a></li>
+</ul>
+</section>
+
+</body>
+</html>

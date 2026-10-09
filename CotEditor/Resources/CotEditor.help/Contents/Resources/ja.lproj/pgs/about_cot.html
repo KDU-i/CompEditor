@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="cot, コマンド">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>MacのCotEditorでcotコマンドと連携する</title>
+</head>
+
+<body>
+<a name="about_cot"></a>
+
+<h1>MacのCotEditorで<code>cot</code>コマンドと連携する</h1>
+
+<p>CotEditorには、コマンドラインから書類を開いたり、標準入力からテキストを受け取ったりできる<code>cot</code>コマンドラインツールがあります。<code>cot</code>コマンドを使うには、まずコマンドをインストールしてください。</p>
+
+
+<section>
+<h2><code>cot</code>コマンドをインストールする</h2>
+
+<p><code>cot</code>コマンドはCotEditor.app内の<code>Contents/SharedSupport/bin/cot</code>に同梱されています。</p>
+<p>ターミナルでシンボリックリンクを作成すると、<code>PATH</code>が通っている任意の場所にインストールできます。特にこだわりがない場合は、<code>/usr/local/bin/</code>にシンボリックリンクを作成するのがお勧めです。</p>
+
+<p>推奨する場所にシンボリックリンクを作成するには、ターミナルで以下のコマンドを実行します。</p>
+<pre class="shell"><code>mkdir -p /usr/local/bin/
+ln -s /Applications/CotEditor.app/Contents/SharedSupport/bin/cot /usr/local/bin/cot</code></pre>
+
+
+<h3>セキュリティ認証</h3>
+<p>macOSで別のアプリから<code>cot</code>コマンド経由でCotEditorを操作するには、ユーザの認証が必要です。この認証は通常、<code>cot</code>コマンドを初めて使ったときのダイアログから行えます。認証されなかった場合は、「システム設定」＞「プライバシーとセキュリティ」＞「プライバシー」＞「オートメーション」で、ターミナルなど利用するクライアントアプリの下にある「CotEditor」を有効にしてください。さらに、<code>--wait</code>オプションを使うときは「System Events」も有効にします。</p>
+
+
+<h3>Python 3のインストール</h3>
+<p><code>cot</code>コマンドはPython 3で実装されています。macOS 12.3以降ではPythonが標準では付属しないため、<code>cot</code>コマンドを使うには<code>python3</code>コマンドを自身で用意する必要があります。</p>
+<p>Appleが提供するコマンドラインデベロッパツールには<code>python3</code>が含まれます。下記のコマンドをターミナルで実行するとインストールできます。もちろん、ほかの方法で<code>python3</code>をインストールしてもかまいません。</p>
+
+<pre class="shell"><code>xcode-select --install</code></pre>
+</section>
+
+
+<section>
+<h2><code>cot</code>コマンドをアンインストールする</h2>
+
+<p>上記推奨場所にインストールした<code>cot</code>コマンドをアンインストールするときは、ターミナルで以下のコマンドを実行します。</p>
+<pre class="shell"><code>unlink /usr/local/bin/cot</code></pre>
+</section>
+
+
+<section>
+<h2>コマンドをオプションとともに使う</h2>
+
+<p><code>cot</code>コマンドは以下のオプションが使用できます:</p>
+
+<table>
+	<thead>
+		<tr><th>オプション</th><th>説明</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<th><code>-w</code>, <code>--wait</code></th>
+			<td><p>開いた書類が閉じるまでコマンドの終了を待ちます。</p></td>
+		</tr>
+		<tr>
+			<th><code>-r</code>, <code>--readonly</code></th>
+			<td><p>書類を<a href="howto_readonly.html">読み出し専用</a>で開きます。</p></td>
+		</tr>
+		<tr>
+			<th><code>-n</code>, <code>--new</code></th>
+			<td><p>空の新規書類を開きます。存在しないファイルを指定した場合は、新規作成して開きます。</p></td>
+		</tr>
+		<tr>
+			<th><code>-s</code>, <code>--syntax</code></th>
+			<td><p>開いた書類に任意のシンタックスをセットします。</p></td>
+		</tr>
+		<tr>
+			<th><code>-l</code>, <code>--line</code> <code><var>&lt;line&gt;</var></code></th>
+			<td><p>開いた書類の指定した行に移動します。<code><var>&lt;line&gt;</var></code>は行を指定する整数型です。</p></td>
+		</tr>
+		<tr>
+			<th><code>-c</code>, <code>--column</code> <code><var>&lt;column&gt;</var></code></th>
+			<td><p>開いた書類の指定した列に移動します。<code><var>&lt;column&gt;</var></code>は列を指定する整数型です。</p></td>
+		</tr>
+		<tr>
+			<th><code>--goto <var>&lt;file[:line[:column]]&gt;</var></code></th>
+			<td><p><code><var>FILE</var></code>にある書類を開き、<code><var>LINE</var></code>と<code><var>COLUMN</var></code>で指定した箇所に移動します（<code>--line</code>と<code>--column</code>オプションのシンタックスシュガー）。</p></td>
+		</tr>
+		<tr>
+			<th><code>-g</code>, <code>--background</code></th>
+			<td><p>CotEditorを前面に出さずに開きます。</p></td>
+		</tr>
+		<tr>
+			<th><code>-h</code>, <code>--help</code></th>
+			<td><p>ヘルプを表示します。</p></td>
+		</tr>
+		<tr>
+			<th><code>-v</code>, <code>--version</code></th>
+			<td><p>バージョンを表示します。</p></td>
+		</tr>
+	</tbody>
+</table>
+
+<p><code>--line</code>と<code>--column</code>、<code>--goto</code>オプションは負の値を指定することもできます。そのとき、<code>--line</code>オプションの場合は書類の末尾から、<code>--column</code>オプションの場合は行の末尾からカウントされます。</p>
+</section>
+
+
+<section>
+<h2><code>cot</code>コマンドを実行する</h2>
+
+<p><code>cot</code>コマンド単体でCotEditorが起動します。CotEditorがすでに起動している場合は、最前面に持っていきます。</p>
+
+<pre class="shell"><code>cot</code></pre>
+
+<p>以下のコマンドは、foo.txtファイルをCotEditorで開き、200行目に挿入ポイントを移動します。foo.txtファイルが存在しないときは、<code>cot</code>コマンドはエラーを返します。</p>
+
+<pre class="shell"><code>cot --line 200 foo.txt</code></pre>
+
+<p>以下のコマンドは、foo.txtファイルをCotEditorで開き、書類末尾に挿入ポイントを移動します。</p>
+
+<pre class="shell"><code>cot --line -1 --column -1 foo.txt</code></pre>
+
+<p><code>--goto</code>オプションを使うと、移動する先の行と列をコンパイラメッセージなどでよく使われる短縮記法で指定することもできます。以下のコマンドは、foo.txtファイルをCotEditorで開き、200行4列目に挿入ポイントを移動します。</p>
+
+<pre class="shell"><code>cot --goto foo.txt:200:4</code></pre>
+
+<p>ファイル名の代わりにダッシュ（<code>-</code>）を渡すと、標準入力を受け取るモードになります。受け取った入力は新規書類として開かれます。</p>
+
+<pre class="shell"><code>cot -</code></pre>
+
+<p>テキストをパイプで渡すこともできます。CotEditorは渡されたテキストを新規書類として開きます。</p>
+
+<pre class="shell"><code>echo &quot;I am a dog but also a cow at the same time.&quot; | cot</code></pre>
+
+<p><code>--wait</code>オプションを使えばCotEditorを<code>git</code>のエディタとして指定することもできます。</p>
+
+<pre class="shell"><code>git config --global core.editor &quot;cot -w&quot;</code></pre>
+</section>
+
+
+<section id="cf">
+<h2>関連項目</h2>
+<ul>
+	<li><a href="settings_general.html">MacのCotEditorで「一般」設定を変更する</a></li>
+</ul>
+</section>
+
+</body>
+</html>

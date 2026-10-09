@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="invisible characters, invisibles, control characters, space, tab, line ending">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Show invisible characters in CotEditor on Mac</title>
+</head>
+
+<body>
+
+<h1>Show invisible characters in CotEditor on Mac</h1>
+
+<p>You can show formatting characters—such as spaces, tabs, and line endings—in your document using alternative symbols so that you can see where they appear.</p>
+
+<p>The color for invisible characters is set in the <a href="howto_customize_theme.html">theme</a>.</p>
+
+
+<section>
+<h2>Change the default settings of invisible characters</h2>
+
+<ol>
+	<li><p>Go to the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac.</p></li>
+	<li><p>Choose CotEditor &gt; Settings, then click Window.</p></li>
+	<li><p>To change the visibility of invisible characters, select “Invisible characters” in the Show section.</p>
+		<p>To select the types of invisible characters to show, select checkboxes under “Invisible characters”.</p>
+		
+		<p>The available types correspond to the following characters:</p>
+		
+<table>
+	<colgroup>
+		<col>
+		<col>
+		<col style="width:20em">
+		<col>
+	</colgroup>
+	
+	<thead>
+		<tr><th>Label</th><th><abbr title="Symbol">Sym.</abbr></th><th>Characters (code point)</th><th>Description</th></tr>
+	</thead>
+	
+	<tbody>
+		<tr>
+			<th>Line ending</th>
+			<td><span class="invisible">↩</span></td>
+			<td><ul>
+				<li>U+000A <small>(LINE FEED)</small></li>
+				<li>U+000D <small>(CARRIAGE RETURN)</small></li>
+				<li>U+0085 <small>(NEW LINE)</small></li>
+				<li>U+2028 <small>(LINE SEPARATOR)</small></li>
+				<li>U+2029 <small>(PARAGRAPH SEPARATOR)</small></li>
+			</ul></td>
+			<td><p>Control characters that indicate a line break. CRLF line endings (a combination of <code>U+000D</code> and <code>U+000A</code>) are drawn as a single symbol.</p></td>
+		</tr>
+		
+		<tr>
+			<th>Tab</th>
+			<td><span class="invisible">→</span></td>
+			<td><ul>
+				<li>U+0009 <small>(HORIZONTAL TABULATION)</small></li>
+			</ul></td>
+			<td><p>A kind of whitespace character with a flexible width sending the next character to a certain position. Commonly used for indentation in programming.</p></td>
+		</tr>
+		
+		<tr>
+			<th>Space</th>
+			<td><span class="invisible">·</span></td>
+			<td><ul>
+				<li>U+0020 <small>(SPACE)</small></li>
+			</ul></td>
+			<td><p>The standard space character.</p></td>
+		</tr>
+		
+		<tr>
+			<th rowspan="3">Other whitespace</th>
+			<td><span class="invisible">·̂</span></td>
+			<td><ul>
+				<li>U+00A0 <small>(NO-BREAK SPACE)</small></li>
+				<li>U+2007 <small>(FIGURE SPACE)</small></li>
+				<li>U+202F <small>(NARROW NO-BREAK SPACE)</small></li>
+			</ul></td>
+			<td><p>Space characters that prevent line breaks before or after them.</p></td>
+		</tr>
+		
+		<tr>
+			<td><span class="invisible">□</span></td>
+			<td><ul>
+				<li>U+3000 <small>(IDEOGRAPHIC SPACE)</small></li>
+			</ul></td>
+			<td><p>A wide space character commonly used in CJK writing. Also known as “full-width space.”</p></td>
+		</tr>
+		
+		<tr>
+			<td><span class="invisible">⹀</span></td>
+			<td><ul>
+				<li>U+2000..U+200A <small>(various spaces)</small></li>
+				<li>U+205F <small>(MEDIUM MATHEMATICAL SPACE)</small></li>
+			</ul></td>
+			<td><p>Whitespace characters with various widths and uses. They correspond to all remaining characters in Unicode category Zs (space separator).</p></td>
+		</tr>
+		
+		<tr>
+			<th>Other control<br>characters</th>
+			<td><span class="invisible">�</span></td>
+			<td><ul>
+				<li>U+0000..U+001F <small>(C0)</small></li>
+				<li>U+007F <small>(DELETE)</small></li>
+				<li>U+0080..U+009F <small>(C1)</small></li>
+				<li>U+200B <small>(ZERO WIDTH SPACE)</small></li>
+				<li>U+200C <small>(ZERO WIDTH NON-JOINER)</small></li>
+				<li>U+2060 <small>(WORD JOINER)</small></li>
+				<li>U+FEFF <small>(ZERO WIDTH NO-BREAK SPACE)</small></li>
+				<li>U+061C, U+200E..U+200F, U+202A..U+202E, U+2066..U+206F <small>(bidi-text controls)</small></li>
+				<li>U+2061..U+2065 <small>(invisible operators)</small></li>
+				<li>U+FFF9..U+FFFB <small>(interlinear annotations)</small></li>
+			</ul></td>
+			<td><p>Special characters that don’t appear as visible glyphs but control or format the document. They correspond to all Unicode category Cc (control) and some of Cf (format).</p></td>
+		</tr>
+	</tbody>
+</table>
+</li>
+</ol>
+</section>
+
+
+<section>
+<h2>Temporarily change the visibility of invisible characters for the current document</h2>
+
+<ol>
+	<li><p>In the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac, open a document.</p></li>
+	<li><p>Do one of the following:</p>
+		<ul>
+			<li><p>Choose Format &gt; Show/Hide Invisible Characters.</p></li>
+			<li><p>Click the Invisibles button in the window toolbar (The Invisibles button can be added by customizing the toolbar).</p></li>
+		</ul>
+		<p>These changes don’t override the default visibility setting.</p>
+	</li>
+</ol>
+</section>
+
+
+<section>
+<h2>Include invisible characters to printing</h2>
+
+<p>You can choose whether to print invisible characters in the <a href="howto_print.html">Print dialog</a>.</p>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="settings_window.html">Change Window settings in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="文字化け, エンコーディング">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>MacのCotEditorで文字化けする場合</title>
+</head>
+
+<body>
+
+<h1>MacのCotEditorで文字化けする場合</h1>
+
+<p>文字化けは、多くの場合、CotEditorが書類のテキストエンコーディングを正しく判別できなかったときに発生します。問題の切り分けや解決のために、次の対策を試してください。</p>
+
+<ul>
+	<li><p>適切なテキストエンコーディングで読み込むことで正しく表示される可能性があります。別のエンコーディングでの読み込みを試してみてください。</p>
+	<p><a href="howto_interpret_encoding.html">エンコーディングを指定して書類を開く</a>を参照してください。</p></li>
+	
+	<li><p>自動判別に使うエンコーディングの優先順位を調整すると、文字化けが起きる頻度を減らせることがあります。</p>
+	<p><a href="howto_customize_encoding_order.html">テキストエンコーディングの優先順位をカスタマイズする</a>を参照してください。</p></li>
+	
+	<li><p>「フォーマット」設定で「書類内のエンコーディング宣言を参照」が有効になっていると、CotEditorは自動判別時に書類中の<code>encoding=</code>や<code>@charset</code>などの宣言も参照します。書類内に実際のエンコーディングと異なる宣言があると、誤判別の原因になることがあります。</p>
+	<p><a href="about_autodetect_encoding.html">書類のエンコーディングを判別する</a>を参照してください。</p></li>
+	
+	<li><p>バイナリデータなど、プレーンテキストとして扱えないファイルは、CotEditorでは正しく表示できません。ファイル形式に対応したアプリで開いてください。</p></li>
+</ul>
+
+
+<section id="cf">
+<h2>関連項目</h2>
+<ul>
+	<li><a href="howto_interpret_encoding.html">MacのCotEditorでエンコーディングを指定して書類を開く</a></li>
+	<li><a href="howto_customize_encoding_order.html">MacのCotEditorでテキストエンコーディングの優先順位をカスタマイズする</a></li>
+	<li><a href="about_autodetect_encoding.html">MacのCotEditorで書類のエンコーディングを判別する</a></li>
+	<li><a href="about_shiftjis.html">MacのCotEditorでShift JIS系のエンコーディングを使い分ける</a></li>
+</ul>
+</section>
+
+</body>
+</html>

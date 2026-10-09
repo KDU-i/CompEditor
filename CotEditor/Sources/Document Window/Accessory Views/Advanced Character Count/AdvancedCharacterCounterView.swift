@@ -1,0 +1,113 @@
+//
+//  AdvancedCharacterCounterView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2021-05-27.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2021-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import Defaults
+import StringUtils
+
+struct AdvancedCharacterCounterView: View {
+    
+    @State var counter: AdvancedCharacterCounter
+    var dismissAction: () -> Void
+    
+    @AppStorage(.countUnit) private var unit: CharacterCountOptions.CharacterUnit
+    
+    @State private var isSettingPresented = false
+    
+    
+    var body: some View {
+        
+        HStack(alignment: .firstTextBaseline) {
+            if let count = self.counter.count {
+                let valueAttributes = AttributeContainer
+                    .font(.body.monospacedDigit().weight(.medium))
+                    .foregroundColor(.primary)
+                let attributedCount: AttributedString = switch self.unit {
+                    case .byte:
+                        count.formatted(.byteCount(style: .binary, allowedUnits: .bytes, spellsOutZero: false).attributed)
+                            .replacingAttributes(AttributeContainer.byteCount(.value), with: valueAttributes)
+                    default:
+                        AttributedString(localized: "*\(count)* character(s)", table: "AdvancedCharacterCount", locale: .current, comment: "counter for advanced character count")
+                            .replacingAttributes(AttributeContainer.inlinePresentationIntent(.emphasized), with: valueAttributes)
+                }
+                
+                Text(attributedCount)
+                    .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.updatesFrequently)
+                
+            } else {
+                Label(.init("failed", table: "AdvancedCharacterCount", comment: "error message when count failed"), systemImage: "exclamationmark.triangle")
+                    .symbolVariant(.fill)
+                    .symbolRenderingMode(.multicolor)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Spacer()
+            
+            Toggle(.init("Show options", table: "AdvancedCharacterCount"), systemImage: "gearshape", isOn: $isSettingPresented)
+                .symbolVariant(.fill)
+                .toggleStyle(.button)
+                .buttonStyle(.borderless)
+                .labelStyle(.iconOnly)
+                .help(.init("Show options", table: "AdvancedCharacterCount", comment: "tooltip"))
+                .popover(isPresented: $isSettingPresented) {
+                    VStack {
+                        CharacterCountOptionsView()
+                        HelpLink(anchor: "howto_count_characters")
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    .scenePadding()
+                }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .fixedSize()
+        .glassEffect(in: .capsule)
+        .onTapGesture { }  // avoid clicking through
+        .contextMenu {
+            if let count = self.counter.count {
+                Button(.init("Copy", table: "AdvancedCharacterCount", comment: "verb; menu item"), systemImage: "document.on.document") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(String(count), forType: .string)
+                }
+                Divider()
+            }
+            Button(.init("Stop Count", table: "AdvancedCharacterCount",
+                         comment: "verb; menu item (This “Stop” should be translated the same as it is in the “Stop Advanced Character Count”.)"),
+                   systemImage: "numbers.rectangle",
+                   action: self.dismissAction)
+        }
+        .onDisappear {
+            self.counter.stopObservation()
+        }
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview {
+    AdvancedCharacterCounterView(counter: .init()) { }
+}

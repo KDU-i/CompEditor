@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="Go to, menu">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Go to a specific line in CotEditor on Mac</title>
+</head>
+
+<body>
+<a name="howto_jump"></a>
+
+<h1>Go to a specific line in CotEditor on Mac</h1>
+
+<p>Use the Go to Line command to quickly move to a specific line.</p>
+
+<figure>
+	<img class="bordered" src="../gfx/jumpToLine@2x.png" srcset="../gfx/jumpToLine@2x.png 2x" alt="Screenshot of the Go to Line dialog">
+</figure>
+
+
+<section>
+<h2>Go to a specific line</h2>
+
+<ol>
+	<li><p>In the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac, open a document.</p></li>
+	<li><p>Choose Find &gt; Go to Line.</p></li>
+	<li><p>Enter the line number you want to jump to.</p></li>
+	<li><p>Click the Go button, or press the <kbd>Return</kbd> key.</p></li>
+</ol>
+</section>
+
+
+<section>
+<h2>Specify selection</h2>
+
+<p>You can also specify a range of lines using the specific format. For example:</p>
+
+<table>
+	<thead>
+		<tr><th>Input</th><th>Range to select</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<th>3</th>
+			<td><p>Selects line 3 (the third line from the top).</p></td>
+		</tr>
+		<tr>
+			<th>3:2</th>
+			<td><p>Selects 2 lines starting from line 3. Lines 3 and 4 are selected.</p></td>
+		</tr>
+		<tr>
+			<th>3:-1</th>
+			<td><p>Selects the lines from line 3 up to the second-to-last line. For example, if the document has 10 lines, lines 3 to 9 are selected.</p></td>
+		</tr>
+	</tbody>
+</table>
+</section>
+
+</body>
+</html>

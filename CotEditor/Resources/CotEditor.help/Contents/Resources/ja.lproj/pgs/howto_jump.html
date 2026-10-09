@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="移動, メニュー, ジャンプ">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>MacのCotEditorで特定の行に移動する</title>
+</head>
+
+<body>
+<a name="howto_jump"></a>
+
+<h1>MacのCotEditorで特定の行に移動する</h1>
+
+<p>「行に移動」コマンドでエディタ内の特定の行を選択して素早く移動できます。</p>
+
+<figure>
+	<img class="bordered" src="../gfx/jumpToLine@2x.png" srcset="../gfx/jumpToLine@2x.png 2x" alt="行に移動ダイアログのスクリーンショット">
+</figure>
+
+
+<section>
+<h2>特定の行に移動する</h2>
+
+<ol>
+	<li><p>MacのCotEditorアプリ<img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt="">で、書類を開きます。</p></li>
+	<li><p>「検索」＞「行に移動」と選択します。</p></li>
+	<li><p>移動先の行数を入力します。</p></li>
+	<li><p>「移動」ボタンをクリックするか<kbd>Return</kbd>キーを押します。</p></li>
+</ol>
+</section>
+
+
+<section>
+<h2>選択範囲を指定する</h2>
+
+<p>移動先の範囲指定もできます。以下に例を挙げます:</p>
+
+<table>
+	<thead>
+		<tr><th>入力</th><th>選択される範囲</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<th>3</th>
+			<td><p>3行目全体が選択される</p></td>
+		</tr>
+		<tr>
+			<th>3:2</th>
+			<td><p>（「3行目からの2行を選択」という意味になり）3・4行目が選択される</p></td>
+		</tr>
+		<tr>
+			<th>3:-1</th>
+			<td><p>（「3行目から、終わりから1行目を残して選択」という意味になり）全部で10行ならば、3〜9行目まで選択される</p></td>
+		</tr>
+	</tbody>
+</table>
+</section>
+
+</body>
+</html>

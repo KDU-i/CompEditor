@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="document, save, saving">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Save documents in CotEditor on Mac</title>
+</head>
+
+<body>
+
+<h1>Save documents in CotEditor on Mac</h1>
+
+<p>In CotEditor, documents you’re working on can be saved automatically.</p>
+
+
+<p><dfn>Auto Save with Versions</dfn> is a standard macOS feature that combines automatic saving of documents with the ability to browse and restore previous versions. It’s used in many Mac apps, such as TextEdit and Pages. When this feature is enabled, CotEditor automatically overwrites the document as you edit it and also saves intermediate states as separate versions.</p>
+<p>In CotEditor, you can turn Auto Save with Versions off so that files aren’t overwritten unless you explicitly save the document. In <a href="settings_general.html">General settings</a>, use the Auto Save with Versions option to choose how CotEditor saves documents.</p>
+
+
+<section>
+<h2>Save a document</h2>
+
+<p>To explicitly save a document in the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac, choose File &gt; Save. When you save a newly created document for the first time, give it a name and choose a location in the Save dialog that appears, then click Save.</p>
+</section>
+
+
+<section>
+<h2>Save documents automatically</h2>
+
+<p>To help prevent loss of data while you’re editing, CotEditor saves documents automatically.</p>
+
+
+<h3>Auto Save</h3>
+<p>When Auto Save with Versions is enabled, CotEditor automatically overwrites the document as you edit it. If the document doesn’t yet have a defined save location, CotEditor saves the document being edited in the CotEditor folder in iCloud Drive when iCloud Drive is enabled, or in the Autosave Information folder<sup>1</sup> when it’s not.</p>
+
+
+<h3>Create backup files</h3>
+<p>When Auto Save with Versions is not selected, CotEditor doesn’t modify the document’s original file while editing it, but instead creates a backup in the Autosave Information folder<sup>1</sup>. These backups are used if the app unexpectedly quits.</p>
+<p>The original file isn’t changed unless you choose Save.</p>
+<p><small><sup>1</sup> Backup files are created in the sandboxed folder: “Library/Containers/com.coteditor.CotEditor/Data/Library/Autosave Information/”.</small></p>
+</section>
+
+
+<section>
+<h2>Revert a document to a previous version</h2>
+
+<p>When Auto Save with Versions is enabled, each time you save a document in CotEditor, a new version is created. This lets you view earlier versions, save copies of earlier versions, or revert a document to a previous version.</p>
+
+<p>You can also copy and paste text from a previous version into the current version.</p>
+
+
+<h3>View previous versions</h3>
+<ol>
+	<li><p>In the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac, open a document.</p></li>
+	<li><p>Choose File &gt; Revert To &gt; Browse All Versions.</p></li>
+	<li><p>To view earlier versions, click tick marks along the timeline, or click the arrows next to the stack of document thumbnails, then click a thumbnail to view the version full size.</p></li>
+	<li><p>Do any of the following:</p><ul>
+		<li><p><em>Edit the current version</em>: Click the thumbnail on the left, make your changes, then click Done.</p></li>
+		<li><p><em>Restore a previous version</em>: Click Restore below its thumbnail. A restored version replaces the current version.</p></li>
+		<li><p><em>Save a copy of a previous version as a new document</em>: Hold down the Option key on the keyboard, then click Restore a Copy. CotEditor opens the copy in a new window, where you can edit it and save it with a new name. The original version also remains open in its own window.</p></li>
+		<li><p><em>Close this view and return to your document</em>: Click Done.</p></li>
+	</ul></li>
+</ol>
+
+
+<h3>Explicitly save a version</h3>
+<ol>
+	<li><p>In the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac, open a document.</p></li>
+	<li><p>Choose File &gt; Save.</p>
+		<p>To save the document with a different filename, location, or format, press and hold the <kbd>Option</kbd> key, then choose File &gt; Save As.</p>
+	</li>
+</ol>
+
+
+<h3>Revert to your last opened or last saved version</h3>
+<ol>
+	<li><p>In the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac, open a document.</p></li>
+	<li><p>Choose File &gt; Revert To, then choose Last Opened, Last Saved, or Previous Save.</p></li>
+</ol>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="howto_open_document.html">Create or open documents in CotEditor on Mac</a></li>
+	<li><a href="howto_readonly.html">Make a document read-only in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

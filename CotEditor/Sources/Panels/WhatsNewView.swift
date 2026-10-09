@@ -1,0 +1,264 @@
+//
+//  WhatsNewView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2024-05-10.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2024-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import SemanticVersioning
+
+struct WhatsNewView: View {
+    
+    @Environment(\.dismiss) private var dismiss
+    
+    @Namespace private var namespace
+    
+    @State private var prerelease: Version.Prerelease?
+    
+    
+    var body: some View {
+        
+        VStack {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("What’s New in CotEditor \(NewFeature.version, format: .version(part: .minor))", tableName: "WhatsNew", comment: "%@ is version number")
+                        .fontWeight(.bold)
+                        .accessibilityHeading(.h1)
+                    
+                    if let prerelease = self.prerelease {
+                        Text(prerelease.label)
+                            .fontDesign(.rounded)
+                            .kerning(0.5)
+                            .padding(.horizontal, 4)
+                            .overlay(RoundedRectangle(cornerRadius: 5).stroke())
+                            .foregroundStyle(.tint)
+                    }
+                }
+                .font(.system(size: 18))
+                .padding(.vertical, 8)
+                
+                ForEach(NewFeature.allCases, id: \.self) { feature in
+                    HStack(alignment: .top, spacing: 20) {
+                        feature.image
+                            .font(.system(size: 28))
+                            .foregroundStyle(.tint)
+                            .symbolColorRenderingMode(.gradient)
+                            .frame(width: 40, alignment: .center)
+                            .accessibilityHidden(true)
+                            .padding(.top, 8)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(feature.label)
+                                .font(.system(size: 14, weight: .semibold))
+                                .accessibilityHeading(.h2)
+                            
+                            HStack(alignment: .bottom) {
+                                Text(feature.description)
+                                    .font(.body)
+                                    .lineSpacing(1.2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .foregroundStyle(.secondary)
+                                
+                                if let anchor = feature.helpAnchor {
+                                    Spacer(minLength: 0)
+                                    HelpLink(anchor: anchor)
+                                        .controlSize(.small)
+                                }
+                            }
+                            
+                            feature.supplementalView
+                        }
+                    }
+                }
+            }
+            .padding(30)
+            
+            HStack {
+                Button {
+                    NSHelpManager.shared.openHelpAnchor("releasenotes", inBook: Bundle.main.helpBookName)
+                } label: {
+                    Text("Release Notes", tableName: "WhatsNew")
+                        .frame(minWidth: 110)
+                }
+                .glassEffect()
+                
+                Spacer()
+                Button {
+                    self.dismiss()
+                } label: {
+                    Text("Continue", tableName: "WhatsNew", comment: "verb; button")
+                        .frame(minWidth: 110)
+                }
+                .prefersDefaultFocus(true, in: self.namespace)
+                .keyboardShortcut(.defaultAction)
+                .glassEffect()
+            }
+            .controlSize(.extraLarge)
+        }
+        .onAppear {
+            if let version = Bundle.main.version, version < NewFeature.version {
+                self.prerelease = version.prerelease
+            }
+        }
+        .focusScope(self.namespace)
+        .scenePadding()
+        .frame(width: 460)
+        .background {
+            Image(systemName: "gearshape.2")
+                .font(.system(size: 750, weight: .ultraLight))
+                .rotationEffect(.degrees(180))
+                .opacity(0.025)
+                .background()
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+
+private extension Version.Prerelease {
+    
+    var label: String {
+        
+        switch self {
+            case .alpha:
+                String(localized: "Version.Prerelease.alpha.label", defaultValue: "Alpha", table: "WhatsNew")
+            case .beta:
+                String(localized: "Version.Prerelease.beta.label", defaultValue: "Beta", table: "WhatsNew")
+            case .rc:
+                String(localized: "Version.Prerelease.rc.label", defaultValue: "RC", table: "WhatsNew")
+            case .other(let string):
+                string
+        }
+    }
+}
+
+
+enum NewFeature: CaseIterable {
+    
+    static let version = Version(7, 1, 0)
+    static let buildNumber = 847
+    
+    case folderFind
+    case macOS27
+    case folderNavigationHistory
+    case documentName
+    case customIndentStyle
+}
+
+
+private extension NewFeature {
+    
+    var image: Image {
+        
+        switch self {
+            case .folderFind:
+                Image(.folderBadgeMagnifyingglass)
+            case .macOS27:
+                Image(systemName: "27.circle")
+            case .folderNavigationHistory:
+                Image(systemName: "chevron.left.chevron.right")
+            case .documentName:
+                Image(systemName: "rectangle.and.pencil.and.ellipsis")
+            case .customIndentStyle:
+                Image(systemName: "increase.indent")
+        }
+    }
+    
+    
+    var label: LocalizedStringResource {
+        
+        switch self {
+            case .folderFind:
+                .init("NewFeature.folderFind.label",
+                      defaultValue: "Find it in the folder",
+                      table: "WhatsNew")
+            case .macOS27:
+                .init("NewFeature.macOS27.label",
+                      defaultValue: "Ready for macOS 27",
+                      table: "WhatsNew")
+            case .folderNavigationHistory:
+                .init("NewFeature.folderNavigationHistory.label",
+                      defaultValue: "Back and forward in folders",
+                      table: "WhatsNew")
+            case .documentName:
+                .init("NewFeature.documentName.label",
+                      defaultValue: "Let the document name itself",
+                      table: "WhatsNew")
+            case .customIndentStyle:
+                .init("NewFeature.customIndentStyle.label",
+                      defaultValue: "Indentation that fits each syntax",
+                      table: "WhatsNew")
+        }
+    }
+    
+    
+    var description: LocalizedStringResource {
+        
+        switch self {
+            case .folderFind:
+                .init("NewFeature.folderFind.description",
+                      defaultValue: "Search text across files in an opened folder right from the sidebar.",
+                      table: "WhatsNew")
+            case .macOS27:
+                .init("NewFeature.macOS27.description",
+                      defaultValue: "CotEditor now supports macOS 27 Golden Gate, including refreshed appearance for the latest system.",
+                      table: "WhatsNew")
+            case .folderNavigationHistory:
+                .init("NewFeature.folderNavigationHistory.description",
+                      defaultValue: "Use the toolbar to move back and forward through recently viewed documents in a folder document.",
+                      table: "WhatsNew")
+            case .documentName:
+                .init("NewFeature.documentName.description",
+                      defaultValue: "On macOS 27, untitled documents automatically get a draft name suggested from their content.",
+                      table: "WhatsNew")
+            case .customIndentStyle:
+                .init("NewFeature.customIndentStyle.description",
+                      defaultValue: "Use Mode settings to customize the indentation style for individual syntaxes as you like.",
+                      table: "WhatsNew")
+        }
+    }
+    
+    
+    var helpAnchor: String? {
+        
+        switch self {
+            default:
+                nil
+        }
+    }
+    
+    
+    @MainActor @ContentBuilder var supplementalView: some View {
+        
+        switch self {
+            default:
+                EmptyView()
+        }
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview {
+    WhatsNewView()
+}

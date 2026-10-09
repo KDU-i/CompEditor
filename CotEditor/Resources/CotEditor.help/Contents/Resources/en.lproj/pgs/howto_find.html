@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="find,replace,replacement,regex,regular expression">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Find and replace text in CotEditor on Mac</title>
+</head>
+
+<body>
+<a name="howto_find"></a>
+
+<h1>Find and replace text in CotEditor on Mac</h1>
+
+<p>CotEditor provides powerful find and replace features, including regular expression search.</p>
+
+
+<section>
+<h2>Open the Find window</h2>
+
+<ol>
+	<li><p>In the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac, open a document.</p></li>
+	<li><p>Choose Find &gt; Find.</p></li>
+</ol>
+
+<figure>
+	<img src="../gfx/findpanel@2x.png" srcset="../gfx/findpanel@2x.png 2x" alt="Screenshot of the Find window">
+</figure>
+</section>
+
+
+<section>
+<h2>Enter find and replace conditions</h2>
+
+<h3>Find/replacement fields</h3>
+<p>Enter the text to search for in the field with the magnifying glass icon.</p>
+
+<p>To replace matched text, enter replacement text in the field with the pen icon. If the replacement field is left empty, the matched text is removed.</p>
+
+<p>To insert the following special characters in these fields, use these key combinations:</p>
+
+<table>
+	<thead>
+		<tr><th>Character</th><th>Key combination</th></tr>
+	</thead>
+	
+	<tbody>
+		<tr>
+			<td>line ending character</td>
+			<td><kbd>Option</kbd>-<kbd>Return</kbd></td>
+		</tr>
+		<tr>
+			<td>tab character</td>
+			<td><kbd>Option</kbd>-<kbd>Tab</kbd></td>
+		</tr>
+	</tbody>
+</table>
+
+
+<h3>Find/replacement histories</h3>
+
+<p>You can reuse previous search and replacement text by selecting it from the magnifying glass or pen icon in each field.</p>
+
+
+<h3>Find options</h3>
+
+<table>
+	<thead>
+		<tr><th>Option</th><th>Description</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>Regular Expression</td>
+			<td><p>Search with regular expressions.</p></td>
+		</tr>
+		<tr>
+			<td>Ignore Case</td>
+			<td><p>Ignore character case on search.</p></td>
+		</tr>
+		<tr>
+			<td>In Selection</td>
+			<td><p>Search text only from selection.</p></td>
+		</tr>
+	</tbody>
+</table>
+</section>
+
+
+<section>
+<h2>Change advanced find options</h2>
+
+<p>You can customize the find behavior in the advanced find options view. To open the view, click the <object type="image/svg+xml" class="symbol" data="../../Shared/gfx/ellipsis.circle.svg">ellipsis</object> button in the Find window.</p>
+
+<table>
+	<thead>
+		<tr><th>Option</th><th>Description</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>Wrap search around</td>
+			<td><p>Continue searching from the beginning of the document if there is no match after the insertion point.</p></td>
+		</tr>
+		<tr>
+			<td>Search incrementally</td>
+			<td><p>Search the document as you type in the search field.</p></td>
+		</tr>
+	</tbody>
+</table>
+
+
+<h3>Textual search</h3>
+<p>Options for search when the regular expression option is turned off.</p>
+
+<table>
+	<thead>
+		<tr><th>Option</th><th>Description</th><th>Default</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>Match only whole words</td>
+			<td><p>Restrict search results to whole words.</p></td>
+			<td>Off</td>
+		</tr>
+		<tr>
+			<td>Distinguish characters strictly</td>
+			<td><p>Exact character-by-character equivalence.</p></td>
+			<td>Off</td>
+		</tr>
+		<tr>
+			<td>Ignore diacritical marks</td>
+			<td><p>Search ignores diacritical marks (for example, ö = o).</p></td>
+			<td>Off</td>
+		</tr>
+		<tr>
+			<td>Ignore width differences</td>
+			<td><p>Search ignores width differences in character forms (for example, ａ = a).</p></td>
+			<td>Off</td>
+		</tr>
+	</tbody>
+</table>
+
+
+<h3>Regular expression search</h3>
+<p>Options for search when the regular expression is selected.</p>
+
+<table>
+	<thead>
+		<tr><th>Option</th><th>Description</th><th>Default</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>Dot matches line separators</td>
+			<td><p>Allow period <span aria-hidden="true">(.)</span> to match any character, including newline characters (singleline).</p></td>
+			<td>Off</td>
+		</tr>
+		<tr>
+			<td>Anchors match lines</td>
+			<td><p>Allow ^ and $ to match the start and end of lines (multiline).</p></td>
+			<td>On</td>
+		</tr>
+		<tr>
+			<td>Use Unicode word boundaries</td>
+			<td><p>Use Unicode TR#29 to determine word boundaries.</p></td>
+			<td>Off</td>
+		</tr>
+		<tr>
+			<td>Unescape replacement text</td>
+			<td><p>Unescape metacharacters with backslash in the replacement text.</p></td>
+			<td>On</td>
+		</tr>
+	</tbody>
+</table>
+</section>
+
+
+<section>
+<h2>Highlight search results</h2>
+
+<p>With the Find All and Highlight All commands, all the places in the document that match your search criteria can be highlighted. When searching using regular expressions, each captured group is highlighted in a different color.</p>
+<p>To remove the highlight, choose Find &gt; Remove Highlights.</p>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="howto_find_newline.html">Find and replace a line ending in CotEditor on Mac</a></li>
+	<li><a href="about_regex.html">Use regular expressions in CotEditor on Mac</a></li>
+	<li><a href="howto_multiple_replace.html">Replace text using multiple rules in CotEditor on Mac</a></li>
+	<li><a href="howto_find_in_folder.html">Find text in a folder in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

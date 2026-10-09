@@ -1,0 +1,327 @@
+// Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
+//
+//  MultipleReplaceListView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2017-03-17.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2017-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import UniformTypeIdentifiers
+
+struct MultipleReplaceListView: View {
+    
+    @Binding var selection: String?
+    var manager: ReplacementManager = .shared
+    
+    
+    @State private var settingNames: [String] = []
+    @State private var exportingItem: TransferableReplacement?
+    @State private var deletingItem: String?
+    @FocusState private var editingItem: String?
+    
+    @State private var isExporterPresented = false
+    @State private var isImporterPresented = false
+    @State private var importingError: ImportDuplicationError?
+    @State private var error: (any Error)?
+    
+    
+    var body: some View {
+        
+        List(selection: $selection) {
+            ForEach(self.settingNames, id: \.self) { name in
+                SettingNameField(text: name) { newName in
+                    do {
+                        self.selection = try self.manager.renameSetting(name: name, to: newName)
+                    } catch {
+                        self.error = error
+                        return false
+                    }
+                    return true
+                }
+                .focused($editingItem, equals: name)
+                .draggable(TransferableReplacement.self) {
+                    self.manager.urlForUserSetting(name: name)
+                        .map { .init(name: name, url: $0) }
+                }
+                .tag(name)
+            }
+        }
+        .safeAreaBar(edge: .bottom) {
+            self.bottomAccessoryView
+                .padding(6)
+        }
+        .scrollEdgeEffectStyle(.hard, for: .bottom)
+        .dragConfiguration(DragConfiguration(allowMove: false, allowDelete: true))
+        .dropDestination(for: URL.self) { urls, session in
+            guard session.localSession == nil else { return }
+            
+            self.importSettings(at: urls)
+        }
+        .contextMenu(forSelectionType: String.self) { selections in
+            if let selection = selections.first {
+                self.menu(for: selection, isContext: true)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(.init("Sidebar", table: "MultipleReplace", comment: "accessibility label"))
+        .onChange(of: self.manager.settingNames, initial: true) { _, newValue in self.settingNames = newValue }
+        .onAppear {
+            // separate from `.onChange(of: self.settingNames.isEmpty)`
+            // to avoid evaluating before initializing settingNames
+            if self.settingNames.isEmpty {
+                self.createUntitledSetting()
+            }
+        }
+        .onChange(of: self.settingNames.isEmpty) { _, newValue in
+            if newValue {
+                self.createUntitledSetting()
+            }
+        }
+        .fileImporter(isPresented: $isImporterPresented, allowedContentTypes: [.cotReplacement, .tabSeparatedText], allowsMultipleSelection: true) { result in
+            switch result {
+                case .success(let urls):
+                    self.importSettings(at: urls)
+                case .failure(let error):
+                    self.error = error
+            }
+        }
+        .fileDialogMessage(.init("FileImporter.message",
+                                 defaultValue: "Choose CotEditor Replace Definition or TSV (Tab-separated values) files.", table: "MultipleReplace",
+                                 comment: "CotEditor Replace Definition is a proper file type name. Refer to InfoPlist.xcstrings."))
+        .fileDialogConfirmationLabel(.init("Action.import.label", defaultValue: "Import"))
+        .forkItemConfirmation(.init("ImportDuplicationError.description",
+                                  defaultValue: "“\(self.importingError?.name ?? String(localized: .unknown))” already exists. Do you want to replace it?",
+                                  comment: "%@ is a name of a setting. Refer to the same expression by Apple."),
+                            item: $importingError) { item in
+            Button(.init("Action.replace.label", defaultValue: "Replace")) {
+                do {
+                    try item.item.withSecurityScopedAccess {
+                        try self.manager.importSetting(item.item, name: item.name, type: item.type, overwrite: true)
+                    }
+                } catch {
+                    self.error = error
+                }
+            }
+        } message: { error in
+            Text(error.recoverySuggestion)
+        }
+        // place fileExporter after `fileDialogConfirmationLabel(_:)` for the import action to use the default label for the export.
+        .fileExporter(isPresented: $isExporterPresented, item: self.exportingItem, contentTypes: [.cotReplacement], defaultFilename: self.exportingItem?.name) { result in
+            switch result {
+                case .success:
+                    break
+                case .failure(let error):
+                    self.error = error
+            }
+        }
+        .forkItemConfirmation(.init("DeletionConfirmation.title",
+                                  defaultValue: "Are you sure you want to delete “\(self.deletingItem ?? String(localized: .unknown))”?"),
+                            item: $deletingItem)
+        { name in
+            Button(.init("Action.delete.label", defaultValue: "Delete"), role: .destructive) {
+                do {
+                    try self.manager.removeSetting(name: name)
+                } catch {
+                    self.error = error
+                    return
+                }
+                self.selection = self.settingNames.first
+            }
+        } message: { _ in
+            Text(.init("DeletionConfirmation.message", defaultValue: "This action cannot be undone."))
+        }
+        .alert(error: $error)
+    }
+    
+    
+    /// The action buttons to place at the bottom of the list.
+    @ContentBuilder private var bottomAccessoryView: some View {
+        
+        HStack {
+            Button {
+                self.createUntitledSetting()
+            } label: {
+                Label(.init("Action.add.label", defaultValue: "Add"), systemImage: "plus")
+                    .frame(width: 16, height: 16)
+            }
+            .help(.init("Action.add.tooltip", defaultValue: "Add new item"))
+            .labelStyle(.iconOnly)
+            
+            Button {
+                self.deletingItem = self.selection
+            } label: {
+                Label(.init("Action.delete.label", defaultValue: "Delete"), systemImage: "minus")
+                    .frame(width: 16, height: 16)
+            }
+            .help(.init("Action.delete.tooltip", defaultValue: "Delete selected items"))
+            .labelStyle(.iconOnly)
+            
+            Spacer()
+            
+            Menu {
+                self.menu(for: self.selection)
+            } label: {
+                Label(.init("Button.actions.label", defaultValue: "Actions"), systemImage: "ellipsis")
+                    .symbolVariant(.circle)
+                    .labelStyle(.iconOnly)
+            }
+        }
+        .buttonStyle(.borderless)
+    }
+    
+    
+    /// Builds menu items for either the Action menu button or the context menu.
+    ///
+    /// - Parameters:
+    ///   - selection: The action target.
+    ///   - isContext: Whether the items are for the context menu.
+    /// - Returns: Menu items.
+    @ContentBuilder private func menu(for selection: String?, isContext: Bool = false) -> some View {
+        
+        if let selection {
+            Button(isContext
+                   ? .init("Action.duplicate.label", defaultValue: "Duplicate")
+                   : .init("Action.duplicate.named.label", defaultValue: "Duplicate “\(selection)”"),
+                   systemImage: "plus.square.on.square")
+            {
+                do {
+                    try self.manager.duplicateSetting(name: selection)
+                } catch {
+                    self.error = error
+                }
+            }
+            
+            Button(isContext
+                   ? .init("Action.rename.label", defaultValue: "Rename")
+                   : .init("Action.rename.named.label", defaultValue: "Rename “\(selection)”"),
+                   systemImage: "pencil")
+            {
+                self.editingItem = selection
+            }
+            
+            if isContext {
+                Button(.init("Action.delete.label", defaultValue: "Delete"), systemImage: "trash") {
+                    self.deletingItem = selection
+                }
+            }
+            
+            Button(isContext
+                   ? .init("Action.export.label", defaultValue: "Export…")
+                   : .init("Action.export.named.label", defaultValue: "Export “\(selection)”…"),
+                   systemImage: "square.and.arrow.up")
+            {
+                if let url = self.manager.urlForUserSetting(name: selection) {
+                    self.exportingItem = TransferableReplacement(name: selection, url: url)
+                    self.isExporterPresented = true
+                }
+            }
+            .modifierKeyAlternate(.option) {
+                Button(isContext
+                       ? .init("Action.revealInFinder.label", defaultValue: "Reveal in Finder")
+                       : .init("Action.revealInFinder.named.label", defaultValue: "Reveal “\(selection)” in Finder"),
+                       systemImage: "finder")
+                {
+                    guard let url = self.manager.urlForUserSetting(name: selection) else { return }
+                    
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+            }
+            
+            if let url = self.manager.urlForUserSetting(name: selection) {
+                ShareLink(item: url)
+            }
+        }
+        
+        if !isContext {
+            Divider()
+            
+            Button(.init("Action.import.ellipsis.label", defaultValue: "Import…"), systemImage: "square.and.arrow.down") {
+                self.isImporterPresented = true
+            }
+            .modifierKeyAlternate(.option) {
+                Button(.init("Reload All Definitions", table: "MultipleReplace", comment: "verb; menu item"), systemImage: "arrow.clockwise") {
+                    Task {
+                        await self.manager.invalidateUserSettings()
+                    }
+                }
+            }
+        }
+    }
+    
+    
+    /// Creates an empty untitled setting.
+    private func createUntitledSetting() {
+        
+        do {
+            self.selection = try self.manager.createUntitledSetting()
+        } catch {
+            self.error = error
+        }
+    }
+    
+    
+    /// Imports setting files at the given URLs.
+    ///
+    /// - Parameter urls: The file URLs to import.
+    private func importSettings(at urls: [URL]) {
+        
+        for url in urls where url.isFileURL {
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer {
+                if accessing { url.stopAccessingSecurityScopedResource() }
+            }
+            
+            let name = url.deletingPathExtension().lastPathComponent
+            do {
+                let type = try url.resourceValues(forKeys: [.contentTypeKey]).contentType
+                guard type?.conforms(to: .cotReplacement) == true || type?.conforms(to: .tabSeparatedText) == true else { continue }
+                
+                try self.manager.importSetting(.url(url), name: name, type: type, overwrite: false)
+            } catch let error as ImportDuplicationError {
+                self.importingError = error
+                return
+            } catch {
+                self.error = error
+                return
+            }
+            self.selection = name
+        }
+    }
+}
+
+
+private struct TransferableReplacement: TransferableFile {
+    
+    static var fileType: UTType { .cotReplacement }
+    
+    var name: String
+    var url: URL
+}
+
+
+// MARK: - Preview
+
+#Preview(traits: .fixedLayout(width: 140, height: 300)) {
+    @Previewable @State var selection: String?
+    
+    MultipleReplaceListView(selection: $selection, manager: .shared)
+}

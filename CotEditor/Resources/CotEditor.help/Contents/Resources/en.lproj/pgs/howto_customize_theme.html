@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="theme, syntax coloring, highlight">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Customize a theme in CotEditor on Mac</title>
+</head>
+
+<body>
+
+<h1>Customize a theme in CotEditor on Mac</h1>
+
+<p>A CotEditor <dfn>theme</dfn> is a collection of settings that define the editor’s color appearance. You can choose your preferred color scheme, switch themes based on the window appearance, and export them as portable settings.</p>
+
+<figure>
+	<img class="bordered" src="../gfx/theme@2x.png" srcset="../gfx/theme@2x.png 2x" alt="Screenshot of the theme setting view">
+</figure>
+
+
+<p>CotEditor themes let you configure the colors used for elements that compose the editor view.</p>
+
+<table>
+	<thead>
+		<tr><th>Item</th><th>System Color</th><th>Opacity</th><th>Description</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>Text</th>
+			<td></td>
+			<td></td>
+			<td><p>The basic text color used for non-highlighted text. Line numbers also use this color.</p></td>
+		</tr>
+		<tr><th>Invisibles</th>
+			<td></td>
+			<td class="center">✔︎</td>
+			<td><p>The color of <a href="howto_display_invisibles.html">invisible characters</a> that can be enabled in <a href="settings_window.html">Window settings</a>.</p></td>
+		</tr>
+		<tr><th>Cursor</th>
+			<td class="center">✔︎</td>
+			<td class="center">✔︎</td>
+			<td><p>The color of the cursor displayed at the insertion point.</p></td>
+		</tr>
+		<tr><th>Background</th>
+			<td></td>
+			<td></td>
+			<td><p>The background color of the editor.</p></td>
+		</tr>
+		<tr><th>Current Line</th>
+			<td></td>
+			<td class="center">✔︎</td>
+			<td><p>The background color of the current line when the option to show the current line is enabled in <a href="settings_window.html">Window settings</a>.</p></td>
+		</tr>
+		<tr><th>Selection</th>
+			<td class="center">✔︎</td>
+			<td></td>
+			<td><p>The background color of selected text.</p></td>
+		</tr>
+		<tr><th>Highlight</th>
+			<td class="center">✔︎</td>
+			<td></td>
+			<td><p>The highlight color used, for example, when “Highlight instances of selected text” is turned on in <a href="settings_edit.html">Edit settings</a>. A version of this color with reduced opacity is used as the base highlight background.</p></td>
+		</tr>
+		<tr><th>Syntax</th>
+			<td></td>
+			<td class="center">✔︎</td>
+			<td><p>The text color for each <a href="syntax_highlight_settings.html">syntax highlighting</a> element defined in the syntax.</p></td>
+		</tr>
+	</tbody>
+</table>
+
+
+<p>Some editor components, such as the cursor and selection, use system colors determined by macOS Appearance settings. When “Use system colors” is enabled for an element, the system’s highlight color (System Settings &gt; Appearance) is used instead of the theme’s own color.</p>
+
+<p>Invisible characters, the cursor, the current line, and syntax highlighting can be assigned colors with opacity. However, opacity can’t be set for the basic text color or certain other elements. These components may adjust their opacity automatically based on the editor’s opacity and other conditions.</p>
+
+
+<section>
+<h2>Customize a theme</h2>
+
+<ol>
+	<li><p>Go to the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac.</p></li>
+	<li><p>Choose CotEditor &gt; Settings, then click Appearance.</p></li>
+	<li><p>Select the theme you want to customize from the Theme list.</p>
+		<p>To create a new theme, click the Add + button.</p>
+		<p>To create your own theme based on an existing one, click <object type="image/svg+xml" class="symbol" data="../../Shared/gfx/ellipsis.circle.svg">the More button</object>, then choose Duplicate.</p>
+	</li>
+	<li><p>Click a color well in the theme editor.</p></li>
+	<li><p>Select a color in the Colors window.</p>
+		<p>Your changes are saved automatically and applied immediately.</p>
+	</li>
+</ol>
+</section>
+
+
+<section>
+<h2>Switch theme based on the appearance</h2>
+
+<p>A pair of themes with the same name, where one ends with “ (Dark)” (note the space), automatically switches depending on the window’s appearance. The light-mode theme can be named either only with the base name or with “ (Light)” at the end. For example, the built-in “Anura” and “Anura (Dark)” themes form such a pair. “Anura” is used in light appearance, and “Anura (Dark)” is used in Dark Mode.</p>
+
+<p>However, if you manually choose a theme that doesn’t match the appearance, that selection takes precedence regardless of the appearance.</p>
+</section>
+
+
+<section>
+<h2>Export a custom theme</h2>
+
+<ol>
+	<li><p>Go to the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac.</p></li>
+	<li><p>Choose CotEditor &gt; Settings, then click Appearance.</p></li>
+	<li><p>Select the theme to export in the Theme list.</p></li>
+	<li><p>Do one of the following:</p><ul>
+		<li><p>Click <object type="image/svg+xml" class="symbol" data="../../Shared/gfx/ellipsis.circle.svg">the More button</object> or open the contextual menu for the selected item, then choose Export.</p></li>
+		<li><p>Click <object type="image/svg+xml" class="symbol" data="../../Shared/gfx/ellipsis.circle.svg">the More button</object> or open the contextual menu for the selected item, choose Share, then choose how to share it.</p></li>
+		<li><p>Drag the selected item into the Finder.</p></li>
+	</ul></li>
+</ol>
+
+<p><em class="note">Note:</em> Custom themes and customized built-in themes can be exported. Unmodified built-in themes can’t be exported.</p>
+
+<p><em class="tip">Tip:</em> You can export all custom themes at once as a CotEditor Settings Archive. For details, see <a href="howto_port_settings.html">Export and import settings</a>.</p>
+</section>
+
+
+<section>
+<h2>Import a custom theme</h2>
+
+<ol>
+	<li><p>Go to the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac.</p></li>
+	<li><p>Choose CotEditor &gt; Settings, then click Appearance.</p></li>
+	<li><p>Do one of the following:</p><ul>
+		<li><p>Click <object type="image/svg+xml" class="symbol" data="../../Shared/gfx/ellipsis.circle.svg">the More button</object>, choose Import, then choose a CotEditor Theme file to import.</p></li>
+		<li><p>Drag the CotEditor Theme file into the Theme list.</p></li>
+	</ul></li>
+</ol>
+
+<p>A CotEditor Theme file must have the .cottheme extension. Its format is based on JSON and uses hexadecimal color values with a <code>#</code> symbol.</p>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="settings_appearance.html">Change Appearance settings in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

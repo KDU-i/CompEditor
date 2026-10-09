@@ -1,0 +1,26 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Application display name:" : {
+      "localizations" : {
+        "ja" : {"stringUnit" : {"state" : "translated", "value" : "アプリ内の表示名:"}}
+      }
+    },
+    "Use CotEditor for in-app labels" : {
+      "localizations" : {
+        "ja" : {"stringUnit" : {"state" : "translated", "value" : "アプリ内の表示名をCotEditorにする"}}
+      }
+    },
+    "Changes About and application-menu labels immediately. Finder and Dock remain CompEditor. This is an unofficial fork." : {
+      "localizations" : {
+        "ja" : {"stringUnit" : {"state" : "translated", "value" : "Aboutとアプリメニュー内の表示をすぐに変更します。FinderとDockの名前はCompEditorのままです。このアプリは非公式フォークです。"}}
+      }
+    },
+    "Unofficial Java/Python fork of CotEditor" : {
+      "localizations" : {
+        "ja" : {"stringUnit" : {"state" : "translated", "value" : "Java/Python対応のCotEditor非公式フォーク"}}
+      }
+    }
+  },
+  "version" : "1.0"
+}

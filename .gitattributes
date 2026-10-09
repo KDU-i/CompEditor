@@ -1,0 +1,4 @@
+*.swift whitespace=-blank-at-eol
+
+# Preserve the SHA-pinned upstream source bytes, including original CRLF.
+ServerPatches/jdtls-1.61/upstream/BaseDiagnosticsHandler.java -text whitespace=cr-at-eol

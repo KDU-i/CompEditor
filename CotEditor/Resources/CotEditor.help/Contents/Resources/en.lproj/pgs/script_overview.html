@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="Script menu, script, scripting, macro">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Automate tasks with scripting in CotEditor on Mac</title>
+</head>
+
+<body>
+<a name="script_overview"></a>
+
+<h1>Automate tasks with scripting in CotEditor on Mac</h1>
+
+<p>Run your own scripts in CotEditor to modify documents or launch external tools. Your scripts appear in the Script menu, represented by the <object type="image/svg+xml" data="../../Shared/gfx/script.svg" height="16">script icon</object>.</p>
+
+<figure>
+	<img src="../gfx/ov_scriptmenu@2x.png" srcset="../gfx/ov_scriptmenu@2x.png 2x" alt="Screenshot of the Script menu">
+</figure>
+
+
+<p>In CotEditor, you can write scripts in two main ways:</p>
+<dl>
+	<dt>AppleScript</dt>
+	<dd>AppleScript and JavaScript for Automation (JXA) can control documents in CotEditor with a high level of flexibility.</dd>
+	
+	<dt>UNIX script</dt>
+	<dd>UNIX scripts primarily operate on the frontmost document, but you can write them in various languages such as Python, Ruby, and Swift.</dd>
+</dl>
+
+<p>Choose the scripting type that suits your needs. For details about how to write your scripts, see <a href="script_osascript.html">Automate tasks using AppleScript</a> or <a href="script_unixscript.html">Automate tasks using UNIX scripts</a>.</p>
+
+
+<section>
+<h2>Add scripts to or remove scripts from the Script menu</h2>
+
+<ol>
+	<li><p>Go to the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac.</p></li>
+	<li><p>Choose Script menu <object type="image/svg+xml" data="../../Shared/gfx/script.svg" height="16"></object> &gt; Open Scripts Folder.</p>
+		<p>The Finder opens the folder for CotEditor scripts at:<br>
+		~/Library/Application Scripts/com.coteditor.CotEditor/</p></li>
+	<li><p>Add your script files to this folder, or remove any you no longer need.</p>
+		<p>CotEditor automatically applies changes in this folder to the Script menu.</p></li>
+</ol>
+
+<p>You can also change the order of scripts or assign keyboard shortcuts by modifying the names of your script files. See <a href="script_menu.html">Customize the Script menu</a> for the details.</p>
+</section>
+
+
+<section>
+<h2>Get existing CotEditor scripts</h2>
+
+<p>The CotEditor project provides sample scripts. You can download them from:<br>
+<a href="https://github.com/coteditor/SampleScripts" rel="external">coteditor/SampleScripts -GitHub</a></p>
+
+<p>Some users also distribute their own scripts for CotEditor. A selection of these scripts is listed at:<br>
+<a href="https://github.com/coteditor/CotEditor/wiki/CotEditor-Scripts" rel="external">CotEditor Scripts -CotEditor Wiki</a></p>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="script_menu.html">Customize the Script menu in CotEditor on Mac</a></li>
+	<li><a href="script_osascript.html">Automate tasks using AppleScript in CotEditor on Mac</a></li>
+	<li><a href="script_unixscript.html">Automate tasks using UNIX scripts in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

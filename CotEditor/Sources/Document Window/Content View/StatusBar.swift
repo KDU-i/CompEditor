@@ -1,0 +1,461 @@
+//
+//  StatusBar.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2014-07-11.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2014-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import StoreKit
+import Combine
+import ControlUI
+import Defaults
+import DocumentFile
+import FileEncoding
+import LineEnding
+
+struct StatusBar: View {
+    
+    @MainActor @Observable final class Model {
+        
+        var document: DataDocument?  { willSet { self.invalidateObservation(document: newValue) } }
+        
+        private var isActive: Bool = false
+        private var defaultsObserver: AnyCancellable?
+        
+        
+        init(document: DataDocument? = nil) {
+            
+            self.document = document
+        }
+    }
+    
+    
+    @State var model: Model
+    
+    @AppStorage(.prefersOpaqueBarBackground) private var prefersOpaqueBarBackground
+    @AppStorage(.showStatusBar) private var showsStatusBar
+    @AppStorage(.donationBadgeType) private var badgeType
+    
+    @State private var hasDonated: Bool = false
+    
+    
+    var body: some View {
+        
+        if #available(macOS 27, *) {
+            self.contentView
+        } else {
+            VStack(spacing: 0) {
+                Divider()
+                self.contentView
+            }
+        }
+    }
+    
+    
+    @ContentBuilder private var contentView: some View {
+        
+        HStack {
+            if self.hasDonated, self.badgeType != .invisible {
+                CoffeeBadge(type: self.badgeType)
+            }
+            
+            if let document = self.model.document as? Document {
+                if !document.isEditable {
+                    NotEditableBadge()
+                        .transition(.opacity.animation(.linear))
+                }
+                EditorCountView(result: document.counter.result)
+                    .layoutPriority(-1)
+            }
+            
+            Spacer()
+            
+            if let document = self.model.document {
+                FileSizeView(size: document.fileAttributes?.size)
+                    .padding(.trailing, (document is Document) ? 0 : 8)
+                
+                if let document = document as? Document {
+                    DocumentStatusBar(document: document)
+                }
+            }
+        }
+        .onAppear {
+            if self.showsStatusBar {
+                self.model.onAppear()
+            } else {
+                self.model.onDisappear()
+            }
+        }
+        .onDisappear {
+            self.model.onDisappear()
+        }
+        .onChange(of: self.showsStatusBar) { _, newValue in
+            if newValue {
+                self.model.onAppear()
+            } else {
+                self.model.onDisappear()
+            }
+        }
+        .subscriptionStatusTask(for: Donation.groupID) { taskState in
+            self.hasDonated = taskState.value?.map(\.state)
+                .contains { [.subscribed, .inGracePeriod].contains($0) } == true
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(.init("Status Bar", table: "Document", comment: "accessibility label"))
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .lineLimit(1)
+        .modifier { container in
+            if #available(macOS 27, *) {
+                container
+                    .frame(height: 13)
+            } else {
+                container
+                    .frame(height: 18)
+                    .padding(.vertical, 7)
+                    .padding(.leading)
+                    .containerCornerOffset(.horizontal, sizeToFit: true)
+            }
+        }
+        .background(.windowBackground.opacity(self.prefersOpaqueBarBackground ? 1 : 0))
+        .animation(.default, value: self.prefersOpaqueBarBackground)
+        .animation(.default, value: self.hasDonated)
+        .animation(.default, value: self.badgeType)
+    }
+}
+
+
+// MARK: Private APIs
+
+private extension StatusBar.Model {
+    
+    /// Called when the view is fully transitioned onto the screen.
+    func onAppear() {
+        
+        self.isActive = true
+        
+        self.invalidateObservation(document: self.document)
+        
+        // observe changes in defaults
+        let editorDefaultKeys: [DefaultKey<Bool>] = [
+            .showStatusBarLines,
+            .showStatusBarChars,
+            .showStatusBarWords,
+            .showStatusBarLocation,
+            .showStatusBarLine,
+            .showStatusBarColumn,
+        ]
+        let publishers = editorDefaultKeys.map { UserDefaults.standard.publisher(for: $0) }
+        self.defaultsObserver = Publishers.MergeMany(publishers)
+            .map { _ in UserDefaults.standard.statusBarEditorInfo }
+            .sink { [weak self] in (self?.document as? Document)?.counter.statusBarRequirements = $0 }
+    }
+    
+    
+    /// Called after the view is removed from the view hierarchy in a window.
+    func onDisappear() {
+        
+        self.isActive = false
+        
+        self.defaultsObserver = nil
+        (self.document as? Document)?.counter.statusBarRequirements = []
+    }
+    
+    
+    /// Updates observations.
+    ///
+    /// - Parameter document: The document to observe.
+    private func invalidateObservation(document: DataDocument?) {
+        
+        (self.document as? Document)?.counter.statusBarRequirements = []
+        
+        if let document = document as? Document, self.isActive {
+            document.counter.statusBarRequirements = UserDefaults.standard.statusBarEditorInfo
+        }
+    }
+}
+
+
+private struct CoffeeBadge: View {
+    
+    var type: BadgeType
+    
+    @State private var isMessagePresented = false
+    
+    
+    var body: some View {
+        
+        Toggle(self.type.label, systemImage: self.type.symbolName, isOn: $isMessagePresented)
+            .toggleStyle(.button)
+            .fontWeight(.semibold)
+            .labelStyle(.iconOnly)
+            .fixedSize()
+            .popover(isPresented: $isMessagePresented) {
+                Text("Thank you for your kind support!", tableName: "Document", comment: "message for users who made a donation")
+                    .padding(.vertical, 8)
+                    .padding(.horizontal)
+            }
+            .padding(.trailing, 8)
+    }
+}
+
+
+private struct NotEditableBadge: View {
+    
+    var body: some View {
+        
+        Label(.init("Not editable", table: "Document"), systemImage: "pencil.slash")
+            .help(.init("The document is not editable.", table: "Document", comment: "tooltip"))
+            .labelStyle(.iconOnly)
+    }
+}
+
+
+private struct FileSizeView: View {
+    
+    var size: Int64?
+    
+    
+    var body: some View {
+        
+        LabeledContent(.init("File size", table: "Document"),
+                       optional: self.size?.formatted(.byteCount(style: .file, spellsOutZero: false)))
+        .monospacedDigit()
+        .labelsVisibility(.hidden)
+        .help(.init("File size", table: "Document", comment: "tooltip"))
+        .fixedSize()
+    }
+}
+
+
+private struct DocumentStatusBar: View {
+    
+    private var document: Document
+    
+    @State private var lineEnding: LineEnding
+    @State private var fileEncoding: FileEncoding
+    @State private var encodingManager: EncodingManager = .shared
+    
+    
+    init(document: Document) {
+        
+        self.document = document
+        self.lineEnding = document.lineEnding
+        self.fileEncoding = document.fileEncoding
+    }
+    
+    
+    var body: some View {
+        
+        HStack(spacing: 4) {
+            Divider()
+            
+            Picker(.init("Text Encoding", table: "Document"), selection: $fileEncoding) {
+                Section(.init("Text Encoding", table: "Document")) {
+                    if !self.encodingManager.fileEncodings.contains(self.fileEncoding) {
+                        Text(self.fileEncoding.localizedName).tag(self.fileEncoding)
+                        Divider()
+                    }
+                    ForEach(self.encodingManager.fileEncodings.enumerated(), id: \.offset) { _, fileEncoding in
+                        if let fileEncoding {
+                            Text(fileEncoding.localizedName).tag(fileEncoding)
+                        } else {
+                            Divider()
+                        }
+                    }
+                }
+            }
+            .onChange(of: self.fileEncoding) { _, newValue in
+                self.document.askChangingEncoding(to: newValue) {
+                    self.fileEncoding = self.document.fileEncoding
+                }
+            }
+            .help(.init("Text Encoding", table: "Document"))
+            .labelsVisibility(.hidden)
+            
+            Divider()
+            
+            LineEndingPicker(.init("Line Endings", table: "Document"), selection: $lineEnding) { lineEnding in
+                self.document.changeLineEnding(to: lineEnding)
+            }
+            .disabled(!self.document.isEditable)
+            .help(.init("Line Endings", table: "Document"))
+            .accessibilityLabel(.init("Line Endings", table: "Document"))
+            .frame(width: 48)
+        }
+        .onChange(of: self.document.lineEnding) { _, newValue in self.lineEnding = newValue }
+        .onChange(of: self.document.fileEncoding) { _, newValue in self.fileEncoding = newValue }
+    }
+}
+
+
+private struct EditorCountView: View {
+    
+    var result: EditorCounter.Result
+    
+    @AppStorage(.showStatusBarLines) private var showsLines
+    @AppStorage(.showStatusBarChars) private var showsCharacters
+    @AppStorage(.showStatusBarWords) private var showsWords
+    @AppStorage(.showStatusBarLocation) private var showsLocation
+    @AppStorage(.showStatusBarLine) private var showsLine
+    @AppStorage(.showStatusBarColumn) private var showsColumn
+    
+    
+    var body: some View {
+        
+        TruncatingHStack {
+            ForEach(CountType.allCases, id: \.self) { type in
+                if self.shows(type: type) {
+                    let valueText = self.result.formattedValue(type: type).map { Text($0).foregroundStyle(.primary) } ?? Text.none
+                    Text("\(type.label): \(valueText)")
+                        .accessibilityLabel("\(type.label): \(self.result.formattedValue(type: type, forAccessibility: true) ?? String(localized: "None"))")
+                }
+            }
+        }
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.updatesFrequently)
+    }
+    
+    
+    private func shows(type: CountType) -> Bool {
+        
+        switch type {
+            case .characters: self.showsCharacters
+            case .lines: self.showsLines
+            case .words: self.showsWords
+            case .location: self.showsLocation
+            case .line: self.showsLine
+            case .column: self.showsColumn
+        }
+    }
+}
+
+
+private struct LineEndingPicker: NSViewRepresentable {
+    
+    typealias NSViewType = NSPopUpButton
+    
+    var label: LocalizedStringResource
+    @Binding var selection: LineEnding
+    var onSelect: (LineEnding) -> Void
+    
+    
+    init(_ titleResource: LocalizedStringResource, selection: Binding<LineEnding>, onSelect: @escaping (LineEnding) -> Void) {
+        
+        self.label = titleResource
+        self._selection = selection
+        self.onSelect = onSelect
+    }
+    
+    
+    func makeNSView(context: Context) -> NSPopUpButton {
+        
+        let label = String(localized: self.label)
+        let menu = OptionalMenu(title: label)
+        menu.autoenablesItems = false
+        menu.items = [.sectionHeader(title: label)]
+        menu.items += LineEnding.allCases.map { lineEnding in
+            let item = NSMenuItem()
+            item.title = lineEnding.label
+            item.toolTip = lineEnding.description
+            item.action = #selector(Coordinator.didSelectItem)
+            item.target = context.coordinator
+            item.representedObject = lineEnding
+            item.isHidden = !lineEnding.isBasic
+            item.keyEquivalentModifierMask = lineEnding.isBasic ? [] : [.option]
+            
+            return item
+        }
+        
+        let popUpButton = NSPopUpButton()
+        popUpButton.menu = menu
+        popUpButton.isBordered = false
+        popUpButton.controlSize = .small
+        popUpButton.font = .menuFont(ofSize: NSFont.smallSystemFontSize)
+        
+        return popUpButton
+    }
+    
+    
+    func updateNSView(_ nsView: NSPopUpButton, context: Context) {
+        
+        let index = nsView.indexOfItem(withRepresentedObject: self.selection)
+        nsView.selectItem(at: index)
+        context.coordinator.onSelect = self.onSelect
+    }
+    
+    
+    func makeCoordinator() -> Coordinator {
+        
+        Coordinator(selection: $selection, onSelect: self.onSelect)
+    }
+    
+    
+    final class Coordinator: NSObject {
+        
+        @Binding private var selection: LineEnding
+        var onSelect: (LineEnding) -> Void
+        
+        
+        init(selection: Binding<LineEnding>, onSelect: @escaping (LineEnding) -> Void) {
+            
+            self._selection = selection
+            self.onSelect = onSelect
+        }
+        
+        
+        @objc func didSelectItem(_ sender: NSMenuItem) {
+            
+            self.selection = sender.representedObject as! LineEnding
+            self.onSelect(self.selection)
+        }
+    }
+}
+
+
+private extension UserDefaults {
+    
+    /// The info types needed to be calculated.
+    var statusBarEditorInfo: EditorCounter.Types {
+        
+        EditorCounter.Types()
+            .union(self[.showStatusBarChars] ? .characters : [])
+            .union(self[.showStatusBarLines] ? .lines : [])
+            .union(self[.showStatusBarWords] ? .words : [])
+            .union(self[.showStatusBarLocation] ? .location : [])
+            .union(self[.showStatusBarLine] ? .line : [])
+            .union(self[.showStatusBarColumn] ? .column : [])
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview {
+    let document = Document()
+    document.isEditable = false
+    document.counter.result.lines = .init(entire: 1024, selected: 64)
+    
+    return StatusBar(model: StatusBar.Model(document: document))
+}

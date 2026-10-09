@@ -1,0 +1,158 @@
+//
+//  BundledSyntaxTests.swift
+//  Tests
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2016-06-11.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2016-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import Foundation
+import Testing
+import SyntaxFormat
+import SyntaxParsers
+@testable import CotEditor
+
+actor BundledSyntaxTests {
+    
+    @Test func validateAllSyntaxes() throws {
+        
+        let syntaxes = try Self.loadSyntaxes()
+        
+        #expect(!syntaxes.isEmpty)
+        
+        for (name, syntax) in syntaxes {
+            let errors = syntax.validate()
+            
+            #expect(errors.isEmpty)
+            for error in errors {
+                Issue.record("\(name): \(error)")
+            }
+        }
+    }
+    
+    
+    @Test func sanitize() throws {
+        
+        let syntaxes = try Self.loadSyntaxes()
+        
+        for (name, syntax) in syntaxes {
+            let sanitized = syntax.sanitized
+            
+            #expect(syntax.kind == sanitized.kind)
+            
+            for type in SyntaxType.allCases {
+                #expect(syntax.highlights[type] == sanitized.highlights[type],
+                        ".\(type.rawValue) of “\(name)” is not sanitized in the latest manner")
+            }
+            
+            #expect(syntax.outlines == sanitized.outlines,
+                    ".outlines of “\(name)” is not sanitized in the latest manner")
+            #expect(syntax.completions == sanitized.completions,
+                    ".completions of “\(name)” is not sanitized in the latest manner")
+            #expect(syntax.commentDelimiters == sanitized.commentDelimiters,
+                    ".commentDelimiters of “\(name)” is not sanitized in the latest manner")
+            #expect(syntax.fileMap.extensions == sanitized.fileMap.extensions,
+                    ".extensions of “\(name)” is not sanitized in the latest manner")
+            #expect(syntax.fileMap.filenames == sanitized.fileMap.filenames,
+                    ".filenames of “\(name)” is not sanitized in the latest manner")
+            #expect(syntax.fileMap.interpreters == sanitized.fileMap.interpreters,
+                    ".interpreters of “\(name)” is not sanitized in the latest manner")
+            #expect(syntax.metadata == sanitized.metadata,
+                    ".metadata of “\(name)” is not sanitized in the latest manner")
+        }
+    }
+    
+    
+    @Test func containHardcodedSyntaxes() throws {
+        
+        let syntaxNames = try Self.loadSyntaxes().keys
+        
+        // syntax names hardcoded for the automatic syntax detection
+        #expect(syntaxNames.contains(SyntaxName.markdown))
+        #expect(syntaxNames.contains(SyntaxName.json))
+        #expect(syntaxNames.contains("XML"))  // used in SyntaxMappingTable.syntaxName(forContent:)
+    }
+    
+    
+    @Test func xmlSyntax() throws {
+        
+        let syntax = try Self.loadSyntax(named: "XML")
+        
+        #expect(syntax.highlightParser != nil)
+        #expect(syntax.outlineParser == nil)
+        #expect(syntax.commentDelimiters.inlines.isEmpty)
+        #expect(syntax.commentDelimiters.blocks == [.init(begin: "<!--", end: "-->")])
+    }
+    
+    
+    @Test func parseOutline() async throws {
+        
+        let syntax = try Self.loadSyntax(named: "SVG")
+        
+        // load test file
+        let bundle = Bundle(for: type(of: self))
+        let sourceURL = try #require(bundle.url(forResource: "sample", withExtension: "svg"))
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        
+        let parser = try #require(syntax.outlineParser)
+        let outlineItems = try await parser.parseOutline(in: source)
+        #expect(outlineItems.count == 3)
+        
+        let item = outlineItems[1]
+        #expect(item.indent == .string(""))
+        #expect(item.title == "#dogcow")
+        #expect(item.range == NSRange(location: 164, length: 11))
+        #expect(item.style.isEmpty)
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// Loads all bundled syntaxes.
+    ///
+    /// - Returns: The bundled syntaxes keyed by name.
+    /// - Throws: A bundle loading error.
+    private static func loadSyntaxes() throws -> [String: Syntax] {
+        
+        let urls = try #require(Bundle.main.urls(forResourcesWithExtension: "cotsyntax", subdirectory: "Syntaxes"))
+        
+        return urls.reduce(into: [:]) { dict, url in
+            let name = url.deletingPathExtension().lastPathComponent
+            
+            #expect(throws: Never.self, "The bundled \(name) syntax is invalid.") {
+                dict[name] = try Syntax(contentsOf: url)
+            }
+        }
+    }
+    
+    
+    /// Loads a bundled syntax.
+    ///
+    /// - Parameter name: The bundled syntax name.
+    /// - Returns: The loaded syntax.
+    /// - Throws: A bundle loading or syntax parsing error.
+    private static func loadSyntax(named name: String) throws -> Syntax {
+        
+        let url = try #require(Bundle.main.url(forResource: name, withExtension: "cotsyntax", subdirectory: "Syntaxes"))
+        
+        return try Syntax(contentsOf: url)
+    }
+}

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="line ending, newline, LF, CR, CRLF">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Find inconsistent line endings in CotEditor on Mac</title>
+</head>
+
+<body>
+<a name="inconsistent_line_endings"></a>
+
+<h1>Find inconsistent line endings in CotEditor on Mac</h1>
+
+<p>CotEditor automatically detects line endings inconsistent with the document line ending setting. Inconsistent line endings can cause problems in various ways, such as running a script.</p>
+
+
+<section>
+<h2>Detect line endings in the document</h2>
+
+<p>When a document is opened, CotEditor automatically inspects its line endings and uses the most common one as the document line ending.</p>
+
+<p>If the document contains multiple types of line endings, CotEditor warns you. In the dialog, you can choose whether to convert all inconsistent line endings to the most common one or leave them as they are so you can review them first.</p>
+
+<p>If you select the “Don’t ask again for this document” checkbox, the warning dialog no longer appears for that document. To suppress this warning for all documents, go to <a href="settings_general.html">General settings</a> &gt; <a href="howto_manage_warnings.html">Manage Warnings</a>, then turn on “Inconsistent line endings.”</p>
+</section>
+
+
+<section>
+<h2>Look over the location of inconsistent line endings</h2>
+
+<ol>
+	<li><p>In the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac, open a document.</p></li>
+	<li><p>Choose View &gt; Inspector &gt; Warnings.</p>
+		<p>The Warnings inspector lists all the line endings inconsistent with the document line ending.</p></li>
+</ol>
+</section>
+
+
+<section>
+<h2>Find inconsistent line endings in the editor</h2>
+
+<p>When line endings are shown as invisible characters, inconsistent line endings are drawn in a different color from other invisible characters. See <a href="howto_display_invisibles.html">Show invisible characters</a> for instructions on how to change their visibility.</p>
+</section>
+
+
+<section>
+<h2>Normalize line endings</h2>
+
+<p>You can convert all line endings including inconsistent ones to a single line ending type by selecting the document line ending in the Line Endings menu in the Format menu or the status bar.</p>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="about_line_endings.html">Handle various types of line endings in CotEditor on Mac</a></li>
+	<li><a href="howto_find_newline.html">Find and replace a line ending in CotEditor on Mac</a></li>
+	<li><a href="howto_inspect_usedchar.html">Find characters incompatible with the document encoding in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

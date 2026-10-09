@@ -1,0 +1,334 @@
+// Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
+//
+//  SyntaxManager.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by nakamuxu on 2004-12-24.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2004-2007 nakamuxu
+//  © 2014-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import Foundation
+import Synchronization
+import UniformTypeIdentifiers
+import Defaults
+import SyntaxFormat
+import SyntaxParsers
+import URLUtils
+
+enum SyntaxName {
+    
+    static let none = "None"
+    static let markdown = "Markdown"
+    static let json = "JSON"
+}
+
+
+@MainActor @Observable final class SyntaxManager: SettingFileManaging {
+    
+    typealias Setting = Syntax
+    
+    
+    // MARK: Public Properties
+    
+    static let shared = SyntaxManager()
+    
+    
+    // MARK: Setting File Managing Properties
+    
+    static let directoryName: String = "Syntaxes"
+    static let constantSettings: [String: Setting] = [SyntaxName.none: .none]
+    let reservedNames: [String] = [SyntaxName.none, "General", "Code"] + TreeSitterSyntax.aliasedSyntaxes.map(\.rawValue)
+    
+    let bundledSettingNames: [String]
+    var settingNames: [String] = []
+    
+    var cachedSettings: [String: Setting] {
+        
+        // protect with Mutex since SyntaxManager's cached settings can be accessed from a background thread
+        get { self._cachedSettings.withLock(\.self) }
+        set { self._cachedSettings.withLock { $0 = newValue } }
+    }
+    private let _cachedSettings: Mutex<[String: Setting]> = .init([:])
+    
+    
+    // MARK: Private Properties
+    
+    private let bundledMaps: [String: Syntax.FileMap]
+    private let mappingTable: Mutex<SyntaxMappingTable> = .init(.init())
+    
+    
+    // MARK: Lifecycle
+    
+    private init() {
+        
+        // load bundled syntax list
+        let url = Bundle.main.url(forResource: "SyntaxMap", withExtension: "json")!
+        let data = try! Data(contentsOf: url)
+        self.bundledMaps = try! JSONDecoder().decode([String: Syntax.FileMap].self, from: data)
+        self.bundledSettingNames = self.bundledMaps.keys.sorted(using: .localizedStandard)
+        
+        // cache user syntaxes
+        self.settingNames = self.listAvailableSettings()
+        self.updateMappingTable()
+    }
+    
+    
+    // MARK: Public Methods
+    
+    /// A map of items that are associated with more than one syntax setting.
+    var mappingConflicts: SyntaxMappingTable {
+        
+        let table = self.mappingTable.withLock(\.self)
+        
+        return SyntaxMappingTable(
+            extensions: table.extensions.filter { $0.value.count > 1 },
+            filenames: table.filenames.filter { $0.value.count > 1 },
+            interpreters: table.interpreters.filter { $0.value.count > 1 }
+        )
+    }
+    
+    
+    /// A snapshot of the syntax file mapping table.
+    nonisolated var fileMappingTable: SyntaxMappingTable {
+        
+        self.mappingTable.withLock(\.self)
+    }
+    
+    
+    /// Returns the syntax name that corresponds to the given document.
+    ///
+    /// - Parameters:
+    ///   - filename: The filename of the document used to detect the corresponding syntax.
+    ///   - content: The content of the document.
+    /// - Returns: A setting name, or `nil` if no match is found.
+    nonisolated func settingName(documentName filename: String, content: String) -> String? {
+        
+        let table = self.mappingTable.withLock(\.self)
+        
+        return table.syntaxName(forFilename: filename)
+            ?? table.syntaxName(forContent: content)
+            ?? Self.settingName(forFileTypeOf: filename)
+    }
+    
+    
+    /// Returns the syntax name that corresponds to the given filename.
+    ///
+    /// - Parameters:
+    ///   - filename: The filename used to detect the corresponding syntax.
+    /// - Returns: A setting name, or `nil` if no match is found.
+    nonisolated func settingName(documentName filename: String) -> String? {
+        
+        let table = self.mappingTable.withLock(\.self)
+        
+        return table.syntaxName(forFilename: filename)
+            ?? Self.settingName(forFileTypeOf: filename)
+    }
+    
+    
+    /// Returns syntax features that are user-customizable for the given setting.
+    ///
+    /// - Parameters:
+    ///   - name: The setting name to check.
+    /// - Returns: A set of customizable features.
+    func customizableFeatures(name: String) -> ParserFeatures {
+        
+        .all.subtracting(TreeSitterSyntax(name: name)?.features ?? [])
+    }
+    
+    
+    /// Saves the given setting to the user domain.
+    ///
+    /// - Parameters:
+    ///   - setting: The setting to save.
+    ///   - name: The name under which to save the setting.
+    ///   - oldName: The previous setting name, if any.
+    func save(setting: Setting, name: String, oldName: String?) throws {
+        
+        // move old file to new place to overwrite when syntax name is also changed
+        let finalizedName: String = if let oldName, name != oldName {
+            try self.renameSetting(name: oldName, to: name)
+        } else {
+            name
+        }
+        
+        try self.write(setting: setting, name: finalizedName)
+        
+        // invalidate current cache
+        if let oldName {
+            self.cachedSettings[oldName] = nil
+        }
+        self.cachedSettings[finalizedName] = setting
+        
+        // update internal cache
+        let change: SettingChange = oldName.map { .updated(from: $0, to: finalizedName) } ?? .added(finalizedName)
+        self.updateSettingList(change: change)
+    }
+    
+    
+    /// Adds the given setting to the list of recent syntaxes.
+    ///
+    /// - Parameter name: The setting name to record.
+    func noteRecentSetting(name: String) {
+        
+        guard name != SyntaxName.none else { return }
+        
+        let maximum = max(0, UserDefaults.standard[.maximumRecentSyntaxCount])
+        UserDefaults.standard[.recentSyntaxNames].appendUnique(name, maximum: maximum)
+    }
+    
+    
+    /// Migrates user syntax setting files from legacy format (YAML) to the current CotEditor Syntax format (CotEditor 7.0.0, 2026).
+    ///
+    /// - Throws: `CocoaError` if file operations fail during migration.
+    func migrateUserSettings() throws {
+        
+        let applicationURL = URL.applicationSupportDirectory.appending(component: "SemanticEditor", directoryHint: .isDirectory)
+        let syntaxURL = applicationURL.appending(component: Self.directoryName)
+        let legacyURL = applicationURL.appending(component: "Syntaxes (Legacy, before 7.0)")
+        let prereleaseURL = applicationURL.appending(component: "Syntaxes (Upcoming 7.0)")
+        
+        let hasLegacySettings = if syntaxURL.isReachable {
+            try FileManager.default.contentsOfDirectory(at: syntaxURL, includingPropertiesForKeys: [.contentTypeKey])
+                .contains { try $0.resourceValues(forKeys: [.contentTypeKey]).contentType == .yaml }
+        } else {
+            false
+        }
+        
+        // archive legacy settings if present
+        if hasLegacySettings {
+            if legacyURL.isReachable {
+                try FileManager.default.removeItem(at: legacyURL)
+            }
+            try FileManager.default.moveItem(at: syntaxURL, to: legacyURL)
+        }
+        
+        if prereleaseURL.isReachable {
+            if syntaxURL.isReachable {
+                try FileManager.default.removeItem(at: syntaxURL)
+            }
+            try FileManager.default.moveItem(at: prereleaseURL, to: syntaxURL)
+            
+        } else if hasLegacySettings {
+            try Syntax.migrateFormat(in: legacyURL, to: syntaxURL, deletingOriginal: false, shouldMigrate: { !self.bundledSettingNames.contains($0) })
+        }
+
+        // update cache
+        self.cachedSettings.removeAll()
+        self.settingNames = self.listAvailableSettings()
+        self.updateMappingTable()
+    }
+
+
+    // MARK: Setting File Managing
+    
+    /// Builds the list of available settings by considering both user and bundled settings.
+    ///
+    /// - Returns: Available setting names.
+    nonisolated func listAvailableSettings() -> [String] {
+        
+        let userSettingNames = self.userSettingFileURLs
+            .map(Self.settingName(from:))
+        
+        let settingNames = Set(self.bundledSettingNames + userSettingNames)
+            .sorted(using: .localizedStandard)
+        
+        // reset user defaults if not found
+        if !(settingNames + [SyntaxName.none]).contains(UserDefaults.standard[.syntax]) {
+            UserDefaults.standard.restore(key: .syntax)
+        }
+        UserDefaults.standard[.recentSyntaxNames].removeAll { !settingNames.contains($0) }
+        UserDefaults.standard[.hiddenSyntaxes].removeAll { !settingNames.contains($0) }
+        
+        return settingNames
+    }
+    
+    
+    /// Notifies the manager that a setting was updated.
+    ///
+    /// - Parameters:
+    ///   - change: The change to report.
+    func didUpdateSetting(change: SettingChange) {
+        
+        switch change {
+            case .updated(from: let oldName, to: let newName):
+                guard
+                    oldName != newName,
+                    UserDefaults.standard[.hiddenSyntaxes].contains(oldName)
+                else { break }
+                
+                var hiddenSyntaxes = Set(UserDefaults.standard[.hiddenSyntaxes])
+                hiddenSyntaxes.remove(oldName)
+                hiddenSyntaxes.insert(newName)
+                UserDefaults.standard[.hiddenSyntaxes] = hiddenSyntaxes.sorted()
+                
+            case .removed(let name):
+                guard UserDefaults.standard[.hiddenSyntaxes].contains(name) else { break }
+                
+                UserDefaults.standard[.hiddenSyntaxes].removeAll { $0 == name }
+                
+            case .added:
+                break
+        }
+        
+        self.updateMappingTable()
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// Updates the file mapping table used for syntax detection.
+    private func updateMappingTable() {
+        
+        let userSettingFileURLs = self.userSettingFileURLs
+        let userSettingNames = Set(userSettingFileURLs.map(Self.settingName(from:)))
+        
+        // defer bundled syntaxes so user-customized syntaxes take precedence
+        let settingNames = self.settingNames.filter(userSettingNames.contains)
+            + self.bundledSettingNames.filter { !userSettingNames.contains($0) }
+        
+        // load mapping definitions from syntax files in the user domain
+        let userMaps = try! Syntax.FileMap.load(at: userSettingFileURLs, ignoresInvalidData: true)
+        let maps = self.bundledMaps.merging(userMaps) { _, new in new }
+        
+        let mappingTable = SyntaxMappingTable(syntaxNames: settingNames, maps: maps)
+        self.mappingTable.withLock { $0 = mappingTable }
+    }
+    
+    
+    /// Returns the syntax name determined from the file type of the given filename.
+    ///
+    /// - Parameters:
+    ///   - filename: The filename used to detect the corresponding syntax.
+    /// - Returns: A setting name, or `nil` if no match is found.
+    private nonisolated static func settingName(forFileTypeOf filename: String) -> String? {
+        
+        guard
+            let pathExtension = filename.pathExtension,
+            let type = UTType(filenameExtension: pathExtension)
+        else { return nil }
+        
+        if type.conforms(to: .json) {
+            return SyntaxName.json
+        }
+        
+        return nil
+    }
+}

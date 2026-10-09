@@ -1,0 +1,630 @@
+//
+//  TextFindTests.swift
+//  Tests
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2017-02-03.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2017-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import Foundation
+import LineEnding
+import ValueRange
+import Testing
+@testable import TextFind
+
+struct TextFindTests {
+    
+    @Test func selectionInitializationError() throws {
+        
+        let pattern = try TextFind.Pattern(findString: "a", mode: .textual(options: [], fullWord: false))
+        #expect(throws: TextFind.Error.emptyInSelectionSearch) {
+            try TextFind(for: "abc", pattern: pattern, inSelection: true, selectedRanges: [NSRange()])
+        }
+    }
+    
+    
+    @Test func patternInitializationErrors() {
+        
+        #expect(throws: TextFind.Error.emptyFindString) {
+            try TextFind.Pattern(findString: "", mode: .textual(options: [], fullWord: false))
+        }
+        
+        let regexError = #expect(throws: TextFind.Error.self) {
+            try TextFind.Pattern(findString: "[", mode: .regularExpression(options: [], unescapesReplacement: false))
+        }
+        if case .regularExpression(let reason) = regexError {
+            #expect(!reason.isEmpty)
+        } else {
+            Issue.record()
+        }
+    }
+    
+    
+    @Test func reusePattern() throws {
+        
+        let mode = TextFind.Mode.regularExpression(options: [], unescapesReplacement: false)
+        let pattern = try TextFind.Pattern(findString: #"item-\d+"#, mode: mode)
+        let firstTextFind = TextFind(for: "item-1 item-x", pattern: pattern)
+        let secondTextFind = TextFind(for: "item-22", pattern: pattern)
+        
+        #expect(firstTextFind.findString == pattern.findString)
+        #expect(firstTextFind.mode == pattern.mode)
+        #expect(try firstTextFind.matches == [NSRange(location: 0, length: 6)])
+        #expect(try secondTextFind.matches == [NSRange(location: 0, length: 7)])
+    }
+    
+    
+    @Test func scopeRangeInSelection() throws {
+        
+        let pattern = try TextFind.Pattern(findString: "a", mode: .textual(options: [], fullWord: false))
+        let textFind = try TextFind(for: "abcdef", pattern: pattern,
+                                    inSelection: true,
+                                    selectedRanges: [NSRange(location: 1, length: 2),
+                                                     NSRange(location: 4, length: 1)])
+        
+        #expect(textFind.scopeRange == 1..<5)
+    }
+    
+    
+    @Test func findIncludingSelection() throws {
+        
+        let pattern = try TextFind.Pattern(findString: "abc", mode: .textual(options: [], fullWord: false))
+        let textFind = try TextFind(for: "abc abc", pattern: pattern,
+                                    selectedRanges: [NSRange(location: 0, length: 3)])
+        
+        let matches = try textFind.matches
+        let included = try #require(textFind.find(in: matches, forward: true, includingSelection: true, wraps: false))
+        #expect(included.range == NSRange(location: 0, length: 3))
+        
+        let excluded = try #require(textFind.find(in: matches, forward: true, includingSelection: false, wraps: false))
+        #expect(excluded.range == NSRange(location: 4, length: 3))
+    }
+    
+    
+    @Test func findZeroLengthMatch() throws {
+        
+        let mode: TextFind.Mode = .regularExpression(options: [], unescapesReplacement: false)
+        let pattern = try TextFind.Pattern(findString: "(?=a)", mode: mode)
+        let matches = try TextFind(for: "aa", pattern: pattern).matches
+        
+        #expect(matches == [NSRange(location: 0, length: 0), NSRange(location: 1, length: 0)])
+        
+        var textFind = try TextFind(for: "aa", pattern: pattern,
+                                    selectedRanges: [NSRange(location: 0, length: 0)])
+        
+        let included = try #require(textFind.find(in: matches, forward: true, includingSelection: true, wraps: false))
+        #expect(included.range == NSRange(location: 0, length: 0))
+        
+        let next = try #require(textFind.find(in: matches, forward: true, wraps: false))
+        #expect(next.range == NSRange(location: 1, length: 0))
+        
+        let wrappedPrevious = try #require(textFind.find(in: matches, forward: false, wraps: true))
+        #expect(wrappedPrevious.range == NSRange(location: 1, length: 0))
+        #expect(wrappedPrevious.wrapped)
+        
+        textFind = try TextFind(for: "aa", pattern: pattern,
+                                selectedRanges: [NSRange(location: 1, length: 0)])
+        
+        let previous = try #require(textFind.find(in: matches, forward: false, wraps: false))
+        #expect(previous.range == NSRange(location: 0, length: 0))
+        
+        let wrappedNext = try #require(textFind.find(in: matches, forward: true, wraps: true))
+        #expect(wrappedNext.range == NSRange(location: 0, length: 0))
+        #expect(wrappedNext.wrapped)
+    }
+    
+    
+    @Test func matchesCancellation() async throws {
+        
+        let string = "aa aa"
+        let pattern = try TextFind.Pattern(findString: "a", mode: .textual(options: [], fullWord: false))
+        let textFind = TextFind(for: string, pattern: pattern)
+        
+        let task = Task {
+            while !Task.isCancelled {
+                await Task.yield()
+            }
+            
+            _ = try textFind.matches
+        }
+        task.cancel()
+        
+        await #expect(throws: CancellationError.self) { try await task.value }
+    }
+    
+    
+    @Test(arguments: [false, true])
+    func textualCancellationBetweenMatches(fullWord: Bool) async throws {
+        
+        let pattern = try TextFind.Pattern(findString: "a", mode: .textual(options: [], fullWord: fullWord))
+        let textFind = TextFind(for: "a a a", pattern: pattern)
+        
+        let task = Task {
+            var matches: [NSRange] = []
+            #expect(throws: CancellationError.self) {
+                try textFind.findAll { ranges, _ in
+                    matches.append(ranges[0])
+                    unsafe withUnsafeCurrentTask { unsafe $0?.cancel() }
+                }
+            }
+            
+            #expect(matches == [NSRange(location: 0, length: 1)])
+        }
+        await task.value
+    }
+    
+    
+    @Test(.timeLimit(.minutes(1)))
+    func regularExpressionCancellationBetweenMatches() async throws {
+        
+        // The first match cancels the task; the remaining input would take seconds of quadratic backtracking without cancellation.
+        let string = "!" + String(repeating: "a", count: 15_000) + "?"
+        let pattern = try TextFind.Pattern(findString: "!|a+b", mode: .regularExpression(options: [], unescapesReplacement: false))
+        let textFind = TextFind(for: string, pattern: pattern)
+        
+        let task = Task {
+            var matches: [NSRange] = []
+            let start = ContinuousClock.now
+            #expect(throws: CancellationError.self) {
+                try textFind.findAll { ranges, _ in
+                    matches.append(ranges[0])
+                    unsafe withUnsafeCurrentTask { unsafe $0?.cancel() }
+                }
+            }
+            
+            #expect(matches == [NSRange(location: 0, length: 1)])
+            #expect(ContinuousClock.now - start < .seconds(1))
+        }
+        await task.value
+    }
+    
+    
+    @Test func countCaptureGroup() throws {
+        
+        let mode = TextFind.Mode.regularExpression(options: [], unescapesReplacement: false)
+        var pattern: TextFind.Pattern
+        var textFind: TextFind
+        
+        pattern = try TextFind.Pattern(findString: "a", mode: mode)
+        textFind = TextFind(for: "", pattern: pattern)
+        #expect(textFind.numberOfCaptureGroups == 0)
+        
+        pattern = try TextFind.Pattern(findString: "(?!=a)(b)(c)(?=d)", mode: mode)
+        textFind = TextFind(for: "", pattern: pattern)
+        #expect(textFind.numberOfCaptureGroups == 2)
+        
+        pattern = try TextFind.Pattern(findString: "(?!=a)(b)(c)(?=d)", mode: .textual(options: [], fullWord: false))
+        textFind = TextFind(for: "", pattern: pattern)
+        #expect(textFind.numberOfCaptureGroups == 0)
+    }
+    
+    
+    @Test func singleFind() throws {
+        
+        let text = "abcdefg abcdefg ABCDEFG"
+        let findString = "abc"
+        let pattern = try TextFind.Pattern(findString: findString, mode: .textual(options: [], fullWord: false))
+        
+        var textFind: TextFind
+        var result: (range: NSRange, wrapped: Bool)
+        var matches: [NSRange]
+        
+        textFind = TextFind(for: text, pattern: pattern)
+        matches = try textFind.matches
+        
+        result = try #require(textFind.find(in: matches, forward: true, wraps: false))
+        #expect(matches.count == 2)
+        #expect(result.range == NSRange(location: 0, length: 3))
+        #expect(!result.wrapped)
+        
+        #expect(textFind.find(in: matches, forward: false, wraps: false) == nil)
+        
+        
+        textFind = try TextFind(for: text, pattern: pattern, selectedRanges: [NSRange(location: 1, length: 0)])
+        
+        matches = try textFind.matches
+        #expect(matches.count == 2)
+        
+        result = try #require(textFind.find(in: matches, forward: true, wraps: true))
+        #expect(result.range == NSRange(location: 8, length: 3))
+        #expect(!result.wrapped)
+        
+        result = try #require(textFind.find(in: matches, forward: false, wraps: true))
+        #expect(result.range == NSRange(location: 8, length: 3))
+        #expect(result.wrapped)
+        
+        
+        let caseInsensitivePattern = try TextFind.Pattern(findString: findString, mode: .textual(options: .caseInsensitive, fullWord: false))
+        textFind = try TextFind(for: text, pattern: caseInsensitivePattern, selectedRanges: [NSRange(location: 1, length: 0)])
+        
+        matches = try textFind.matches
+        #expect(matches.count == 3)
+        
+        result = try #require(textFind.find(in: matches, forward: false, wraps: true))
+        #expect(result.range == NSRange(location: 16, length: 3))
+        #expect(result.wrapped)
+    }
+    
+    
+    @Test func fullWord() throws {
+        
+        var pattern: TextFind.Pattern
+        var textFind: TextFind
+        var result: (range: NSRange, wrapped: Bool)
+        var matches: [NSRange]
+        
+        pattern = try TextFind.Pattern(findString: "apple", mode: .textual(options: .caseInsensitive, fullWord: true))
+        textFind = TextFind(for: "apples apple Apple", pattern: pattern)
+        matches = try textFind.matches
+        result = try #require(textFind.find(in: matches, forward: true, wraps: true))
+        #expect(matches.count == 2)
+        #expect(result.range == NSRange(location: 7, length: 5))
+        
+        pattern = try TextFind.Pattern(findString: "apple", mode: .textual(options: [.caseInsensitive, .literal], fullWord: true))
+        textFind = TextFind(for: "apples apple Apple", pattern: pattern)
+        matches = try textFind.matches
+        result = try #require(textFind.find(in: matches, forward: true, wraps: true))
+        #expect(matches.count == 2)
+        #expect(result.range == NSRange(location: 7, length: 5))
+        
+        pattern = try TextFind.Pattern(findString: "Äpfel", mode: .textual(options: .diacriticInsensitive, fullWord: true))
+        textFind = TextFind(for: "Apfel Äpfel Äpfelchen", pattern: pattern)
+        matches = try textFind.matches
+        result = try #require(textFind.find(in: matches, forward: true, wraps: true))
+        #expect(matches.count == 2)
+        #expect(result.range == NSRange(location: 0, length: 5))
+        
+        pattern = try TextFind.Pattern(findString: "イヌ", mode: .textual(options: .widthInsensitive, fullWord: true))
+        textFind = TextFind(for: "イヌら ｲﾇ イヌ", pattern: pattern)
+        matches = try textFind.matches
+        result = try #require(textFind.find(in: matches, forward: true, wraps: true))
+        #expect(matches.count == 2)
+        #expect(result.range == NSRange(location: 4, length: 2))
+    }
+    
+    
+    @Test func unescapedRegexFind() throws {
+        
+        let mode: TextFind.Mode = .regularExpression(options: .caseInsensitive, unescapesReplacement: true)
+        let pattern = try TextFind.Pattern(findString: "1", mode: mode)
+        let textFind = try TextFind(for: "1", pattern: pattern, selectedRanges: [NSRange(0..<1)])
+        let replacementResult = try #require(textFind.replace(with: #"foo：\n1"#))
+        #expect(replacementResult.value == "foo：\n1")
+    }
+    
+    
+    @Test func unescapedRegexReplacement() throws {
+        
+        let mode: TextFind.Mode = .regularExpression(options: [], unescapesReplacement: true)
+        let pattern = try TextFind.Pattern(findString: #"\n"#, mode: mode)
+        let textFind = try TextFind(for: "a\nb", pattern: pattern, selectedRanges: [NSRange(0..<3)])
+        
+        #expect(textFind.replace(with: #"\n"#)?.value == "\n")
+        #expect(textFind.replace(with: #"\\n"#)?.value == #"\n"#)
+        #expect(textFind.replace(with: #"\\\\n"#)?.value == #"\\n"#)
+        #expect(textFind.replace(with: #"\t"#)?.value == "\t")
+        #expect(textFind.replace(with: #"\$0"#)?.value == "$0")
+        #expect(textFind.replace(with: "$0")?.value == "\n")
+    }
+    
+    
+    @Test func findAndReplaceSingleRegex() throws {
+        
+        let findString = "(?!=a)b(c)(?=d)"
+        let mode: TextFind.Mode = .regularExpression(options: .caseInsensitive, unescapesReplacement: true)
+        let pattern = try TextFind.Pattern(findString: findString, mode: mode)
+        
+        var textFind: TextFind
+        var result: (range: NSRange, wrapped: Bool)
+        var matches: [NSRange]
+        
+        
+        textFind = try TextFind(for: "abcdefg abcdefg ABCDEFG", pattern: pattern, selectedRanges: [NSRange(location: 1, length: 1)])
+        
+        matches = try textFind.matches
+        #expect(matches.count == 3)
+        
+        result = try #require(textFind.find(in: matches, forward: true, wraps: true))
+        #expect(result.range == NSRange(location: 9, length: 2))
+        #expect(!result.wrapped)
+        
+        result = try #require(textFind.find(in: matches, forward: false, wraps: true))
+        #expect(result.range == NSRange(location: 17, length: 2))
+        #expect(result.wrapped)
+        
+        
+        textFind = try TextFind(for: "ABCDEFG", pattern: pattern, selectedRanges: [NSRange(location: 1, length: 1)])
+        
+        matches = try textFind.matches
+        #expect(matches.count == 1)
+        
+        result = try #require(textFind.find(in: matches, forward: true, wraps: true))
+        #expect(result.range == NSRange(location: 1, length: 2))
+        #expect(result.wrapped)
+        
+        result = try #require(textFind.find(in: matches, forward: false, wraps: true))
+        #expect(result.range == NSRange(location: 1, length: 2))
+        #expect(result.wrapped)
+        
+        #expect(textFind.replace(with: "$1") == nil)
+        
+        
+        textFind = try TextFind(for: "ABCDEFG", pattern: pattern, selectedRanges: [NSRange(location: 1, length: 2)])
+        
+        let replacementResult = try #require(textFind.replace(with: "$1\\t"))
+        #expect(replacementResult.value == "C\t")
+        #expect(replacementResult.range == NSRange(location: 1, length: 2))
+    }
+    
+    
+    /// Uses the target line ending in a single replacement in every search mode.
+    ///
+    /// - Parameters:
+    ///   - mode: The search mode.
+    ///   - lineEnding: The target line ending, or `nil` to preserve inserted line endings.
+    /// - Throws: A find pattern or selection error.
+    @Test(arguments: [TextFind.Mode.textual(options: [], fullWord: false),
+                      .textual(options: [], fullWord: true),
+                      .regularExpression(options: [], unescapesReplacement: true)],
+          [nil, .lf, .crlf] as [LineEnding?])
+    func replaceNormalizesInsertedLineEndings(mode: TextFind.Mode, lineEnding: LineEnding?) throws {
+        
+        let string = "before\r dog after\r"
+        let range = (string as NSString).range(of: "dog")
+        let pattern = try TextFind.Pattern(findString: "dog", mode: mode)
+        let textFind = try TextFind(for: string, pattern: pattern, lineEnding: lineEnding, selectedRanges: [range])
+        
+        #expect(textFind.replace(with: "cat\n") == .init(value: "cat\(lineEnding?.string ?? "\n")", range: range))
+    }
+    
+    
+    /// Normalizes captured text and metacharacters after expanding a single replacement.
+    ///
+    /// - Parameters:
+    ///   - lineEnding: The target line ending, or `nil` to preserve inserted line endings.
+    ///   - replacement: The replacement template.
+    /// - Throws: A find pattern or selection error.
+    @Test(arguments: [nil, .lf, .crlf] as [LineEnding?], ["$0", #"$0\r"#])
+    func replaceNormalizesCapturedLineEndings(lineEnding: LineEnding?, replacement: String) throws {
+        
+        let string = "before\r|dog\r\ncow|after\r"
+        let range = (string as NSString).range(of: "dog\r\ncow")
+        let pattern = try TextFind.Pattern(findString: #"dog\Rcow"#,
+                                           mode: .regularExpression(options: [], unescapesReplacement: true))
+        let textFind = try TextFind(for: string, pattern: pattern, lineEnding: lineEnding, selectedRanges: [range])
+        let suffix = replacement == "$0" ? "" : (lineEnding?.string ?? "\r")
+        
+        #expect(textFind.replace(with: replacement) == .init(value: "dog\(lineEnding?.string ?? "\r\n")cow\(suffix)", range: range))
+    }
+    
+    
+    @Test func findAll() throws {
+        
+        let mode: TextFind.Mode = .regularExpression(options: .caseInsensitive, unescapesReplacement: false)
+        var pattern: TextFind.Pattern
+        var textFind: TextFind
+        
+        pattern = try TextFind.Pattern(findString: "(?!=a)b(c)(?=d)", mode: mode)
+        textFind = TextFind(for: "abcdefg ABCDEFG", pattern: pattern)
+        
+        var matches = [[NSRange]]()
+        try textFind.findAll { matchedRanges, _ in
+            matches.append(matchedRanges)
+        }
+        #expect(matches.count == 2)
+        #expect(matches[0].count == 2)
+        #expect(matches[0][0] == NSRange(location: 1, length: 2))
+        #expect(matches[0][1] == NSRange(location: 2, length: 1))
+        #expect(matches[1].count == 2)
+        #expect(matches[1][0] == NSRange(location: 9, length: 2))
+        #expect(matches[1][1] == NSRange(location: 10, length: 1))
+        
+        
+        pattern = try TextFind.Pattern(findString: "ab", mode: mode)
+        textFind = TextFind(for: "abcdefg ABCDEFG", pattern: pattern)
+        
+        matches = [[NSRange]]()
+        try textFind.findAll { matchedRanges, _ in
+            matches.append(matchedRanges)
+        }
+        #expect(matches.count == 2)
+        #expect(matches[0].count == 1)
+        #expect(matches[0][0] == NSRange(location: 0, length: 2))
+        #expect(matches[1].count == 1)
+        #expect(matches[1][0] == NSRange(location: 8, length: 2))
+    }
+    
+    
+    @Test func replaceAll() throws {
+        
+        var pattern: TextFind.Pattern
+        var textFind: TextFind
+        var replacementItems: [TextFind.ReplacementItem]
+        var selectedRanges: [NSRange]?
+        
+        pattern = try TextFind.Pattern(findString: "(?!=a)b(c)(?=d)",
+                                       mode: .regularExpression(options: .caseInsensitive, unescapesReplacement: false))
+        textFind = TextFind(for: "abcdefg ABCDEFG", pattern: pattern)
+        
+        (replacementItems, selectedRanges) = try textFind.replaceAll(with: "$1\\\\t") { _, _, _ in }
+        #expect(replacementItems.count == 1)
+        #expect(replacementItems[0].value == "ac\\tdefg AC\\tDEFG")
+        #expect(replacementItems[0].range == NSRange(location: 0, length: 15))
+        #expect(selectedRanges == nil)
+        
+        
+        pattern = try TextFind.Pattern(findString: "abc", mode: .regularExpression(options: [], unescapesReplacement: false))
+        textFind = try TextFind(for: "abcdefg abcdefg abcdefg", pattern: pattern,
+                                inSelection: true,
+                                selectedRanges: [NSRange(location: 1, length: 14),
+                                                 NSRange(location: 16, length: 7)])
+        
+        (replacementItems, selectedRanges) = try textFind.replaceAll(with: "_") { _, _, _ in }
+        #expect(replacementItems.count == 2)
+        #expect(replacementItems[0].value == "bcdefg _defg")
+        #expect(replacementItems[0].range == NSRange(location: 1, length: 14))
+        #expect(replacementItems[1].value == "_defg")
+        #expect(replacementItems[1].range == NSRange(location: 16, length: 7))
+        #expect(selectedRanges?[0] == NSRange(location: 1, length: 12))
+        #expect(selectedRanges?[1] == NSRange(location: 14, length: 5))
+        
+        
+        pattern = try TextFind.Pattern(findString: "abc", mode: .textual(options: [], fullWord: false))
+        textFind = try TextFind(for: "abcx---def", pattern: pattern,
+                                inSelection: true,
+                                selectedRanges: [NSRange(location: 0, length: 4),
+                                                 NSRange(location: 7, length: 3)])
+        
+        (replacementItems, selectedRanges) = try textFind.replaceAll(with: "_") { _, _, _ in }
+        #expect(replacementItems.count == 1)
+        #expect(replacementItems[0].value == "_x")
+        #expect(replacementItems[0].range == NSRange(location: 0, length: 4))
+        #expect(selectedRanges?[0] == NSRange(location: 0, length: 2))
+        #expect(selectedRanges?[1] == NSRange(location: 5, length: 3))
+    }
+    
+    
+    /// Preserves unmatched line endings when replacing text in a mixed-line-ending document.
+    ///
+    /// - Throws: A find pattern or cancellation error.
+    @Test(.bug("https://github.com/coteditor/CotEditor/issues/2172"))
+    func replaceAllPreservesUnmatchedLineEndings() throws {
+        
+        let string = "<key>\r</key>\n\t<string>insertNewline:</string>\n"
+        let pattern = try TextFind.Pattern(findString: #"\n\t<string>"#,
+                                           mode: .regularExpression(options: [], unescapesReplacement: true))
+        let textFind = TextFind(for: string, pattern: pattern, lineEnding: .lf)
+        
+        let (items, _) = try textFind.replaceAll(with: "<string>") { _, _, _ in }
+        
+        #expect(items == [.init(value: "<key>\r</key><string>insertNewline:</string>\n", range: NSRange(0..<string.utf16.count))])
+    }
+    
+    
+    /// Normalizes inserted line endings in both textual replacement paths and regular expressions.
+    ///
+    /// - Parameter mode: The search mode.
+    /// - Throws: A find pattern or cancellation error.
+    @Test(arguments: [TextFind.Mode.textual(options: [], fullWord: false),
+                      .textual(options: [], fullWord: true),
+                      .regularExpression(options: [], unescapesReplacement: true)])
+    func replaceAllNormalizesInsertedLineEndings(mode: TextFind.Mode) throws {
+        
+        let string = "before\r dog dog after\r"
+        let pattern = try TextFind.Pattern(findString: "dog", mode: mode)
+        let textFind = TextFind(for: string, pattern: pattern, lineEnding: .crlf)
+        
+        let (items, _) = try textFind.replaceAll(with: "cat\n") { _, _, _ in }
+        
+        #expect(items == [.init(value: "before\r cat\r\n cat\r\n after\r", range: NSRange(0..<string.utf16.count))])
+    }
+    
+    
+    /// Normalizes captured text after template expansion, including an otherwise unchanged replacement.
+    ///
+    /// - Parameters:
+    ///   - lineEnding: The document line ending.
+    ///   - replacement: The replacement template.
+    /// - Throws: A find pattern or cancellation error.
+    @Test(arguments: [LineEnding.lf, .cr], ["$0", #"$0\r"#])
+    func replaceAllNormalizesCapturedLineEndings(lineEnding: LineEnding, replacement: String) throws {
+        
+        let string = "before\r|dog\r\ncow|after\r"
+        let pattern = try TextFind.Pattern(findString: #"dog\Rcow"#,
+                                           mode: .regularExpression(options: [], unescapesReplacement: true))
+        let textFind = TextFind(for: string, pattern: pattern, lineEnding: lineEnding)
+        
+        let (items, _) = try textFind.replaceAll(with: replacement) { _, _, _ in }
+        
+        let suffix = replacement == "$0" ? "" : lineEnding.string
+        #expect(items == [.init(value: "before\r|dog\(lineEnding.string)cow\(suffix)|after\r", range: NSRange(0..<string.utf16.count))])
+    }
+    
+    
+    /// Normalizes every supported line ending in captured text.
+    ///
+    /// - Parameter capturedLineEnding: The line ending in the captured text.
+    /// - Throws: A find pattern or cancellation error.
+    @Test(arguments: LineEnding.allCases)
+    func replaceAllNormalizesCapturedNewlineCharacters(capturedLineEnding: LineEnding) throws {
+        
+        let string = "before\r|dog\(capturedLineEnding.string)cow|after\r"
+        let pattern = try TextFind.Pattern(findString: #"dog\Rcow"#,
+                                           mode: .regularExpression(options: [], unescapesReplacement: true))
+        let textFind = TextFind(for: string, pattern: pattern, lineEnding: .crlf)
+        
+        let (items, _) = try textFind.replaceAll(with: "$0") { _, _, _ in }
+        
+        let expectedItems: [TextFind.ReplacementItem] = if capturedLineEnding == .crlf {
+            []
+        } else {
+            [.init(value: "before\r|dog\r\ncow|after\r", range: NSRange(0..<string.utf16.count))]
+        }
+        #expect(items == expectedItems)
+    }
+    
+    
+    /// Adjusts multiple selections using normalized replacement lengths while preserving unmatched CRs.
+    ///
+    /// - Throws: A find pattern, selection, or cancellation error.
+    @Test func replaceAllNormalizesLineEndingsInSelections() throws {
+        
+        let pattern = try TextFind.Pattern(findString: #"dog\Rcow"#,
+                                           mode: .regularExpression(options: [], unescapesReplacement: true))
+        let textFind = try TextFind(for: "dog\r\ncow\r---dog\r\ncow\r", pattern: pattern, lineEnding: .lf, inSelection: true,
+                                    selectedRanges: [NSRange(0..<9), NSRange(12..<21)])
+        
+        let (items, selectedRanges) = try textFind.replaceAll(with: "$0") { _, _, _ in }
+        
+        #expect(items == [.init(value: "dog\ncow\r", range: NSRange(0..<9)),
+                          .init(value: "dog\ncow\r", range: NSRange(12..<21))])
+        #expect(selectedRanges == [NSRange(0..<8), NSRange(11..<19)])
+    }
+    
+    
+    /// Leaves mixed line endings untouched when there is no match.
+    ///
+    /// - Throws: A find pattern or cancellation error.
+    @Test func replaceAllWithoutMatchesPreservesLineEndings() throws {
+        
+        let pattern = try TextFind.Pattern(findString: "dog", mode: .textual(options: [], fullWord: false))
+        let textFind = TextFind(for: "cat\r\ncow\r", pattern: pattern, lineEnding: .lf)
+        
+        let (items, selectedRanges) = try textFind.replaceAll(with: "bird\n") { _, _, _ in }
+        
+        #expect(items.isEmpty)
+        #expect(selectedRanges == nil)
+    }
+    
+    
+    @Test func replaceAllTextualCanonicallyEquivalentCharacter() throws {
+        
+        let pattern = try TextFind.Pattern(findString: "\u{00B7}", mode: .textual(options: [], fullWord: false))
+        let textFind = TextFind(for: "\u{00B7}", pattern: pattern)
+        
+        let (replacementItems, selectedRanges) = try textFind.replaceAll(with: "\u{0387}") { _, _, _ in }
+        
+        #expect(replacementItems.count == 1)
+        #expect(replacementItems[0].value.unicodeScalars.map(\.value) == [0x0387])
+        #expect(replacementItems[0].range == NSRange(location: 0, length: 1))
+        #expect(selectedRanges == nil)
+    }
+}

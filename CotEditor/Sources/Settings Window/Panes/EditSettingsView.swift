@@ -1,0 +1,143 @@
+//
+//  EditSettingsView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2023-11-29.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2023-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import Defaults
+
+struct EditSettingsView: View {
+    
+    @Namespace private var accessibility
+    
+    @Environment(\.layoutDirection) private var layoutDirection
+    
+    @AppStorage(.autoExpandTab) private var autoExpandTab
+    @AppStorage(.tabWidth) private var tabWidth
+    @AppStorage(.detectsIndentStyle) private var detectsIndentStyle
+    @AppStorage(.autoIndent) private var autoIndent
+    @AppStorage(.indentWithTabKey) private var indentWithTabKey
+    
+    @AppStorage(.autoTrimsTrailingWhitespace) private var autoTrimsTrailingWhitespace
+    @AppStorage(.trimsWhitespaceOnlyLines) private var trimsWhitespaceOnlyLines
+    
+    @AppStorage(.insertsCommentDelimitersAfterIndent) private var insertsCommentDelimitersAfterIndent
+    @AppStorage(.appendsCommentSpacer) private var appendsCommentSpacer
+    
+    @AppStorage(.autoLinkDetection) private var autoLinkDetection
+    @AppStorage(.highlightBraces) private var highlightBraces
+    @AppStorage(.highlightSelectionInstance) private var highlightSelectionInstance
+    @AppStorage(.selectionInstanceHighlightDelay) private var selectionInstanceHighlightDelay
+    
+    
+    var body: some View {
+        
+        Grid(alignment: .leadingFirstTextBaseline, verticalSpacing: 18) {
+            GridRow {
+                Text("Indentation:", tableName: "EditSettings")
+                    .gridColumnAlignment(.trailing)
+                
+                VStack(alignment: .leading) {
+                    Picker(.init("Prefer using", table: "EditSettings", comment: "label followed by either \"Spaces\" or \"Tabs\""), selection: $autoExpandTab) {
+                        Text("Spaces", tableName: "EditSettings", comment: "noun; menu item; indent style").tag(true)
+                        Text("Tabs", tableName: "EditSettings", comment: "noun; menu item; indent style").tag(false)
+                    }
+                    
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Indent width:", tableName: "EditSettings")
+                            .accessibilityLabeledPair(role: .label, id: "tabWidth", in: self.accessibility)
+                        StepperNumberField(value: $tabWidth, default: UserDefaults.standard[initial: .tabWidth], in: 1...99)
+                            .accessibilityLabeledPair(role: .content, id: "tabWidth", in: self.accessibility)
+                        Text("spaces", tableName: "EditSettings", comment: "unit for indentation")
+                    }
+                    Toggle(.init("Detect indent style on document opening", table: "EditSettings", comment: "verb; checkbox"), isOn: $detectsIndentStyle)
+                    Toggle(.init("Automatically indent while typing", table: "EditSettings", comment: "verb; checkbox"), isOn: $autoIndent)
+                    Toggle(.init("Indent selection with Tab key", table: "EditSettings", comment: "verb; checkbox"), isOn: $indentWithTabKey)
+                }
+            }
+            
+            GridRow {
+                Text("Whitespace:", tableName: "EditSettings")
+                    .gridColumnAlignment(.trailing)
+                
+                VStack(alignment: .leading) {
+                    Toggle(.init("Automatically trim trailing whitespace", table: "EditSettings", comment: "verb; checkbox"), isOn: $autoTrimsTrailingWhitespace)
+                    Toggle(.init("Including whitespace-only lines", table: "EditSettings", comment: "checkbox; also trim whitespace-only lines"), isOn: $trimsWhitespaceOnlyLines)
+                        .disabled(!self.autoTrimsTrailingWhitespace)
+                        .padding(.leading, 20)
+                }
+            }
+            
+            GridRow {
+                Text("Comment:", tableName: "EditSettings")
+                    .gridColumnAlignment(.trailing)
+                
+                VStack(alignment: .leading) {
+                    Toggle(.init("Insert comment delimiters after indent", table: "EditSettings", comment: "verb; checkbox"), isOn: $insertsCommentDelimitersAfterIndent)
+                    Toggle(.init("Add a space to comment delimiters", table: "EditSettings", comment: "verb; checkbox"), isOn: $appendsCommentSpacer)
+                }
+            }
+            
+            GridRow {
+                Text("Content parse:", tableName: "EditSettings")
+                    .gridColumnAlignment(.trailing)
+                
+                VStack(alignment: .leading) {
+                    Toggle(.init("Link URLs in document", table: "EditSettings", comment: "verb; checkbox"), isOn: $autoLinkDetection)
+                    Toggle(.init("Highlight matching braces", table: "EditSettings", comment: "verb; checkbox"), isOn: $highlightBraces)
+                    Toggle(.init("Highlight instances of selected text", table: "EditSettings", comment: "verb; checkbox"), isOn: $highlightSelectionInstance)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Delay:", tableName: "EditSettings")
+                            .accessibilityLabeledPair(role: .label, id: "selectionInstanceHighlightDelay", in: self.accessibility)
+                        Stepper(value: $selectionInstanceHighlightDelay, in: 0...10, step: 0.25, format: .number.precision(.fractionLength(2)).numberLocale, label: EmptyView.init)
+                            .monospacedDigit()
+                            .multilineTextAlignment(self.layoutDirection == .rightToLeft ? .leading : .trailing)  // width: 40
+                            .accessibilityValue(Duration.seconds(self.selectionInstanceHighlightDelay)
+                                .formatted(.units(allowed: [.seconds], width: .wide, fractionalPart: .show(length: 2))))
+                            .accessibilityLabeledPair(role: .content, id: "selectionInstanceHighlightDelay", in: self.accessibility)
+                        Text("seconds", tableName: "EditSettings", comment: "init for delay time")
+                            .accessibilityHidden(true)
+                    }
+                    .disabled(!self.highlightSelectionInstance)
+                    .foregroundStyle(self.highlightSelectionInstance ? .primary : .tertiary)
+                    .controlSize(.small)
+                    .padding(.leading, 20)
+                }
+            }
+            
+            HStack {
+                Spacer()
+                HelpLink(anchor: "settings_edit")
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview {
+    EditSettingsView()
+        .scenePadding()
+}

@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="syntax, style">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Define syntax highlighting in CotEditor on Mac</title>
+</head>
+
+<body>
+<a name="syntax_highlight_settings"></a>
+
+<h1>Define syntax highlighting in CotEditor on Mac</h1>
+
+<p>Syntax highlighting helps you distinguish different elements in a document by displaying them in different styles. In CotEditor, you can define which parts of text are highlighted and how they appear by configuring syntax highlighting rules.</p>
+
+<p>CotEditor already defines the element types used for syntax highlighting in each theme. These elements are:</p>
+
+<table>
+	<thead>
+		<tr><th>Element</th><th>Description</th><th>Examples</th></tr>
+	</thead>
+	
+	<tbody>
+	<tr><th>Keywords</th>
+	<td><p>Keywords in source code such as reserved words of programming languages.</p></td>
+	<td><code>for</code>, <code>while</code>, <code>if</code></td></tr>
+	
+	<tr><th>Commands</th>
+	<td><p>Functions or commands in source code.</p></td>
+	<td><code>print</code>, <code>filter</code>, <code>func()</code></td></tr>
+	
+	<tr><th>Types</th>
+	<td><p>Types in source code or headings in structured language.</p></td>
+	<td><code>int</code>, <code>bool</code>, <code>Object</code></td></tr>
+	
+	<tr><th>Attributes</th>
+	<td><p>Attributes in source code.</p></td>
+	<td><code>&lt;html <span style="color:-apple-system-blue">lang</span>=&quot;ja&quot;&gt;</code>, <code>@classmethod</code></td></tr>
+	
+	<tr><th>Variables</th>
+	<td><p>Variables in source code.</p></td>
+	<td><code>$foo</code>, <code>self</code></td></tr>
+	
+	<tr><th>Values</th>
+	<td><p>Value constants in source code.</p></td>
+	<td><code>Null</code>, <code>True</code>, <code>False</code></td></tr>
+	
+	<tr><th>Numbers</th>
+	<td><p>Numeric constants in source code.</p></td>
+	<td><code>Int i = <span style="color: -apple-system-blue;">0</span>;</code></td></tr>
+	
+	<tr><th>Strings</th>
+	<td><p>String constants in source code.</p></td>
+	<td><code>String s = <span style="color: -apple-system-blue">&quot;Hello World&quot;</span></code></td></tr>
+	
+	<tr><th>Characters</th>
+	<td><p>Character constants in source code.</p></td>
+	<td><code>Char c = <span style="color: -apple-system-blue">'a'</span></code></td></tr>
+	
+	<tr><th>Comments</th>
+	<td><p>Comments in source code.</p></td>
+	<td><code>/* 〜 */</code>, <code># 〜</code></td></tr>
+	</tbody>
+</table>
+
+<p>CotEditor colors syntax elements from top to bottom in the list, such as Keywords, Commands, and Types. If a document contains text that matches multiple categories (for example, both a keyword and a command) the style of the element that appears later in the order overrides the earlier one. The names of the elements are provided for reference and can also be used for other grammatical purposes.</p>
+
+
+<section>
+<h2>Define a syntax highlighting rule</h2>
+
+<p>To define highlighting rules for a syntax, select a syntax element from the list on the sidebar of the syntax editor, then add highlighting conditions to the list on the right. For instructions on opening the syntax editor, see <a href="syntax_definition.html">Define a syntax</a>.</p>
+
+<p>To define how text is highlighted, register one of the following as a highlighting condition for each element: a specific piece of text, a pair of start and end strings, or a regular expression pattern.</p>
+
+<p>Highlighting rules are determined by the following settings:</p>
+
+<table>
+	<thead>
+		<tr><th>Field</th><th>Description</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>RE</th><td><p>If selected, both the begin and end strings are treated as regular expression patterns (RE stands for Regular Expression).</p></td></tr>
+		<tr><th>IC</th><td><p>If selected, the search ignores case (IC stands for Ignore Case). For example, if you set “abc” as the begin string and turn on IC, occurrences such as “ABC,” “abc,” and “aBc” in your document all match.</p></td></tr>
+		<tr><th>Begin String</th><td><p>The text that marks the beginning of the search pattern. This field is required for defining a syntax element to highlight.</p></td></tr>
+		<tr><th>End String</th><td><p>The text that marks the end of the search pattern. This field may be left blank.</p></td></tr>
+		<tr><th>Multiline</th><td><p>If selected, the search allows matches spanning multiple lines.</p></td></tr>
+		<tr><th>Description</th><td><p>A note or comment for your reference. The description doesn’t affect syntax highlighting and may be left blank.</p></td></tr>
+	</tbody>
+</table>
+
+<p>By defining conditions:</p>
+<ul>
+	<li><p>A rule with an empty begin string is ignored.</p></li>
+	<li><p>When you use both Begin String and End String, they must both be regular expressions or both be plain text.</p></li>
+</ul>
+
+
+<p>A condition whose end string is blank and whose regular expression option is not selected is also used for completion candidates.</p>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="syntax_definition.html">Define a syntax in CotEditor on Mac</a></li>
+	<li><a href="about_regex.html">Use regular expressions in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

@@ -1,0 +1,63 @@
+@charset "UTF-8";
+
+/*
+ Shared Style Sheet
+ 
+ CotEditor
+ https://coteditor.com
+ 
+ © 2025 1024jp
+*/
+
+:root {
+	font: 400 17px/1.5 -apple-system, sans-serif;
+	font-size-adjust: from-font;
+	text-autospace: normal;
+	text-spacing-trim: trim-start;
+	
+	-webkit-font-smoothing: antialiased;
+	
+	color-scheme: light dark;
+}
+
+body {
+	max-inline-size: 820px;
+	margin-block: 2.5rem;
+	margin-inline: auto;
+	padding-inline: 2.75rem;
+}
+
+a {
+	text-decoration-line: unset;
+}
+a:link, a:visited {
+	color: -apple-system-blue;
+}
+a:hover {
+	text-decoration-line: underline;
+}
+
+em:lang(ja) {
+	font-weight: 600;
+	font-style: normal;
+}
+kbd {
+	font-family: inherit;
+}
+pre, code {
+	font-family: monospace;
+	font-size: 95%;
+	tab-size: 4;
+}
+dfn {
+	font-style: inherit;
+}
+
+summary {
+	cursor: pointer;
+}
+
+p object[data*="script.svg"] {
+	block-size: 1em;
+	vertical-align: -0.15em;
+}

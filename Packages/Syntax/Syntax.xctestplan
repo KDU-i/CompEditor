@@ -1,0 +1,31 @@
+{
+  "configurations" : [
+    {
+      "id" : "CA7953FD-4FF4-45A1-95E5-B06016E1678A",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "SyntaxFormatTests",
+        "name" : "SyntaxFormatTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "SyntaxParsersTests",
+        "name" : "SyntaxParsersTests"
+      }
+    }
+  ],
+  "version" : 1
+}

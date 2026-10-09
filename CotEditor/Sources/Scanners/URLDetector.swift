@@ -1,0 +1,174 @@
+// Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
+//
+//  URLDetector.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2020-02-15.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2020-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import AppKit.NSTextStorage
+import StringUtils
+import ValueRange
+
+@MainActor final class URLDetector {
+    
+    // MARK: Private Properties
+    
+    private let textStorage: NSTextStorage
+    private var editedRanges: EditedRangeSet
+    private let delay: Duration = .seconds(0.5)
+    
+    private var textEditingObserver: (any NSObjectProtocol)?
+    private var task: Task<Void, any Error>?
+    
+    
+    // MARK: Lifecycle
+    
+    init(textStorage: NSTextStorage) {
+        
+        self.textStorage = textStorage
+        
+        self.editedRanges = EditedRangeSet(range: textStorage.range)
+        self.textEditingObserver = self.observeTextStorage(textStorage)
+        self.task = Task(priority: .utility) { try await self.detectInvalidRanges() }
+    }
+    
+    
+    // MARK: Public Methods
+    
+    /// Stops the detection and removes highlights.
+    func cancel() {
+        
+        self.textEditingObserver.map(NotificationCenter.default.removeObserver)
+        self.textEditingObserver = nil
+        
+        self.task?.cancel()
+        self.task = nil
+        
+        self.textStorage.removeAttribute(.link, range: self.textStorage.range)
+        self.editedRanges.clear()
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// Observes the changes of the given textStorage to detect URLs around the edited area.
+    ///
+    /// - Parameter textStorage: The text storage to observe.
+    /// - Returns: The notification observer.
+    private func observeTextStorage(_ textStorage: NSTextStorage) -> any NSObjectProtocol {
+        
+        NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: textStorage, queue: .main) { [weak self] notification in
+            let textStorage = notification.object as! NSTextStorage
+            
+            guard textStorage.editedMask.contains(.editedCharacters) else { return }
+            
+            MainActor.assumeIsolated { [range = textStorage.editedRange, length = textStorage.changeInLength] in
+                self?.invalidate(in: range, changeInLength: length)
+            }
+        }
+    }
+    
+    
+    /// Updates edited ranges by assuming the textStorage was edited.
+    ///
+    /// - Parameters:
+    ///   - editedRange: The edited range.
+    ///   - delta: The change in length.
+    private func invalidate(in editedRange: NSRange, changeInLength delta: Int) {
+        
+        self.editedRanges.append(editedRange: editedRange, changeInLength: delta)
+        
+        self.task?.cancel()
+        self.task = Task(priority: .utility) {
+            try await Task.sleep(for: self.delay, tolerance: self.delay * 0.5)
+            try await self.detectInvalidRanges()
+        }
+    }
+    
+    
+    /// Updates URLs around the edited ranges.
+    ///
+    /// - Throws: `CancellationError`.
+    private func detectInvalidRanges() async throws(CancellationError) {
+        
+        guard let invalidRange = self.editedRanges.range else { return }
+        
+        let string = self.textStorage.string as NSString
+        let lowerBound = max(invalidRange.lowerBound - 1, 0)
+        let upperBound = min(invalidRange.upperBound + 1, string.length)
+        let parseRange = string.lineRange(for: NSRange(lowerBound..<upperBound))
+        
+        try await self.textStorage.linkURLs(in: parseRange)
+        
+        self.editedRanges.clear()
+    }
+}
+
+
+extension NSTextStorage {
+    
+    /// Links detected URLs in the content.
+    ///
+    /// - Parameter range: The range where links are detected, or nil to detect all.
+    /// - Throws: `CancellationError`.
+    @MainActor final func linkURLs(in range: NSRange? = nil) async throws(CancellationError) {
+        
+        guard self.length > 0 else { return }
+        
+        let string = self.string.immutable
+        let range = range ?? self.range
+        
+        let links = try await Self.detectLinks(in: string, range: range)
+        
+        guard !Task.isCancelled else { throw CancellationError() }
+        
+        guard self.string.length == string.length else {
+            return assertionFailure("textStorage was edited after starting URL detection")
+        }
+        
+        guard !links.isEmpty || self.hasAttribute(.link, in: range) else { return }
+        
+        self.beginEditing()
+        self.removeAttribute(.link, range: range)
+        for link in links {
+            self.addAttribute(.link, value: link.value, range: link.range)
+        }
+        self.endEditing()
+    }
+    
+    
+    /// Detects URLs in the given string in the background.
+    ///
+    /// - Parameters:
+    ///   - string: The string to detect URLs.
+    ///   - range: The range where URLs are detected.
+    /// - Returns: The detected URLs with their ranges.
+    /// - Throws: `CancellationError`.
+    @concurrent private static func detectLinks(in string: String, range: NSRange) async throws(CancellationError) -> [ValueRange<URL>] {
+        
+        let detector = try! NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        
+        return try detector
+            .cancellableMatches(in: string, range: range)
+            .compactMap { match in match.url.map { ValueRange(value: $0, range: match.range) } }
+    }
+}

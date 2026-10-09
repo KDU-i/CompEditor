@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="text encoding, Shift JIS, japanese">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Use four kinds of Shift JIS properly in CotEditor on Mac</title>
+</head>
+
+<body>
+
+<h1>Use four kinds of Shift JIS properly in CotEditor on Mac</h1>
+
+<p>There are multiple variants of Japanese Shift JIS-based encodings. Choosing the appropriate one helps prevent unintended character corruption.</p>
+
+
+<p>CotEditor distinguishes among the following four Shift JIS–based encodings.</p>
+
+<table>
+	<thead>
+		<tr><th>Encoding name</th><th>IANA charset name</th><th>Description</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>Japanese (Shift JIS)</th><td>shift_jis</td><td><p>The most basic Shift JIS variant. It supports JIS level 1 and 2 kanji characters.</p></td></tr>
+		<tr><th>Japanese (Shift JIS X0213)</th><td>Shift_JIS</td><td><p>Supports the JIS X0213 character set, including JIS levels 1 through 4 kanji characters.</p></td></tr>
+		<tr><th>Japanese (Mac OS)</th><td>x-mac-japanese</td><td><p>An extension of Shift JIS with Mac-specific characters, used in Mac OS 9 and earlier.</p></td></tr>
+		<tr><th>Japanese (Windows, DOS)</th><td>cp932</td><td><p>An extension of Shift JIS with Windows-specific characters.</p></td></tr>
+	</tbody>
+</table>
+
+<p>These encoding names follow the terminology used in standard macOS. Although “Japanese (Mac OS)” and “Japanese (Windows, DOS)” don’t include the term Shift JIS in their names, both are extended versions of Shift JIS.</p>
+
+<p>The appropriate encoding varies depending on the situation, but in general “Japanese (Shift JIS)” is the safest choice.</p>
+
+
+<h3>Handling of certain characters in Shift JIS–based encodings</h3>
+
+<p>Even within the same Shift JIS family, some characters are handled differently, as shown in the table below:</p>
+
+<table>
+	<thead>
+		<tr><td></td><th>Halfwidth Yen sign (&#x00A5;)</th><th>Halfwidth backslash (&#x005C;)</th><th>Halfwidth tilde (&#x007E;)</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>Shift JIS</th><td>Available</td><td>Replaced with fullwidth backslash (＼)</td><td>Replaced with question mark (?)</td></tr>
+		<tr><th>Shift JIS X0213</th><td>Available</td><td>Replaced with fullwidth backslash (＼)</td><td>Replaced with fullwidth tilde (〜)</td></tr>
+		<tr><th>Mac OS</th><td>Available</td><td>Available</td><td>Available</td></tr>
+		<tr><th>Windows, DOS</th><td>Replaced with backslash (\)</td><td>Available</td><td>Available</td></tr>
+	</tbody>
+</table>
+
+<p>When using these characters in a document, be aware of differences among text encodings.</p>
+
+<p>To check whether any incompatible characters are included in the document, see <a href="howto_inspect_usedchar.html">Find characters incompatible with the document encoding</a>.</p>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="howto_inspect_usedchar.html">Find characters incompatible with the document encoding in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

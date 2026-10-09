@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="search, replace, line ending, newline, line break">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Find and replace a line ending in CotEditor on Mac</title>
+</head>
+
+<body>
+
+<h1>Find and replace a line ending in CotEditor on Mac</h1>
+
+<p>CotEditor’s search treats line endings strictly. While it allows you to search for specific line ending types, using an incorrect specification may prevent matches with the line endings you intend to find.</p>
+
+<p><em class="tip">Tip:</em> Typing <kbd>Option</kbd>-<kbd>Return</kbd> in a text field in the Find window breaks a line.</p>
+
+
+<section>
+<h2>Find line endings</h2>
+
+<h3>Textual search</h3>
+
+<p>In normal textual search, line endings typed into the search field are treated as the current line ending of the document being searched. They therefore don’t match line endings in the document that use a different line ending character.</p>
+
+
+<h3>Regular expression search</h3>
+
+<p>As in textual search, regular newline characters typed directly into the pattern are treated as the current line ending of the document being searched. By contrast, line endings specified with metacharacters or Unicode code points in the regular expression pattern are interpreted exactly as written, regardless of the document’s line ending type.</p>
+
+<p>The following metacharacters indicate a line ending in regular expression patterns:</p>
+<table>
+	<thead>
+		<tr><th>Metacharacter</th><th>Description</th></tr>
+	</thead>
+	<tbody>
+		<tr><td>\n</td><td><p><code>U+000A</code>, the line ending character for LF</p></td></tr>
+		<tr><td>\r</td><td><p><code>U+000D</code>, the line ending character for CR</p></td></tr>
+		<tr><td>\r\n</td><td><p>The sequence of <code>U+000D</code> and <code>U+000A</code>, the line ending character for CRLF</p></td></tr>
+		<tr><td>\R</td><td><p>Any kind of line endings from <code>U+000A</code> (LF), <code>U+000B</code>, <code>U+000C</code>, <code>U+000D</code> (CR), <code>U+0085</code>, <code>U+2028</code>, <code>U+2029</code>, or the sequence of <code>U+000D</code> <code>U+000A</code> (CRLF).</p></td></tr>
+	</tbody>
+</table>
+</section>
+
+
+<section>
+<h2>Replace with line endings</h2>
+
+<p>In replacement text, every line ending inserted by the replacement is normalized to the document’s line ending, even when it comes from a metacharacter such as <code>\n</code> or from captured text.</p>
+
+<p>For example, when replacing the find text “dog\Rcow” with the replacement text “$0\r” using regular expressions in a document whose line ending type is LF (<code>\n</code>), the text “dog<span class="invisible">\r\n</span>cow” in the document also matches. Theoretically, the regular expression would replace it with “dog<span class="invisible">\r\n</span>cow<span class="invisible">\r</span>”. However, CotEditor actually replaces it with “dog<span class="invisible">\n</span>cow<span class="invisible">\n</span>”.</p>
+
+<p>There is currently no way to replace them with line endings other than the document line ending.</p>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="about_line_endings.html">Handle various types of line endings in CotEditor on Mac</a></li>
+	<li><a href="howto_find.html">Find and replace text in CotEditor on Mac</a></li>
+	<li><a href="about_regex.html">Use regular expressions in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

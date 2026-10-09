@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="ハイライト, カラーリング, シンタックス, アウトライン, 入力補完, tree-sitter">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>MacのCotEditorでシンタックスを定義する</title>
+</head>
+
+<body>
+<a name="syntax_definition"></a>
+
+<h1>MacのCotEditorでシンタックスを定義する</h1>
+
+<p>CotEditorのシンタックスエディタで、CotEditor内蔵のシンタックスを編集したり、独自のシンタックスを追加したりできます。</p>
+
+
+<section>
+<h2>シンタックスエディタを開く</h2>
+
+<ol>
+	<li><p>MacでCotEditorアプリ<img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt="">に移動します。</p></li>
+	<li><p>「CotEditor」＞「設定」と選択してから、「フォーマット」をクリックします。</p></li>
+	<li>以下のいずれかの操作を行います:<ul>
+		<li><p><em>既存のシンタックスをカスタマイズ:</em> 「利用可能なシンタックス」リストから設定したいシンタックスを選択して、シンタックス名をダブルクリックするか、「編集」ボタンをクリックします。</p></li>
+		<li><p><em>新しいシンタックスを定義:</em> 「利用可能なシンタックス」リスト下部の追加 + ボタンをクリックします。</p></li>
+	</ul></li>
+</ol>
+
+<p>内蔵シンタックスの編集はユーザのカスタマイズとして保存され、必要に応じてオリジナルの定義に戻せます。</p>
+</section>
+
+
+<section>
+<h2>シンタックスの各機能を定義する</h2>
+
+<p>シンタックスエディタでは、シンタックスの以下の機能を編集できます。</p>
+
+<ul>
+	<li><p><em>名前</em>: シンタックスの名前を設定します。</p></li>
+	<li><p><em>種類</em>: シンタックスの言語がコーディング用途か一般的な文書かを設定します。この設定は、<a href="settings_mode.html">「モード」設定</a>で設定するエディタの振る舞いやフォントに影響します。</p></li>
+	<li><p><em><a href="syntax_file_mapping.html">ファイル関連付け</a></em>: シンタックスと関連付けるファイルを設定します。</p></li>
+	<li><p><em><a href="syntax_delimiter_settings.html">区切り文字</a></em>: コメント記号、自動インデント用のブロック区切り記号、区切り文字のエスケープ方法を設定します。</p></li>
+	<li><p><em><a href="syntax_outline_settings.html">アウトライン</a></em>: アウトライン機能の項目抽出条件とフォーマット条件を設定します。</p></li>
+	<li><p><em><a href="syntax_completion_settings.html">入力補完</a></em>: 入力補完候補を設定します。</p></li>
+	<li><p><em><a href="syntax_highlight_settings.html">シンタックスハイライト</a></em>: ハイライトセクション内の各要素のカラーリング条件を設定します。</p></li>
+	<li><p><em><a href="syntax_metadata_settings.html">情報</a></em>: シンタックス定義のメタ情報を設定します。</p></li>
+	<li><p><em>検証</em>: 定義に正規表現の誤りや重複登録、不正なコメント区切りなどがないかを確認します。</p></li>
+</ul>
+
+
+<h3>シンタックスの解析方式</h3>
+
+<p>CotEditorでは、シンタックスハイライトとアウトライン抽出のための内容解析方式が2種類あり、シンタックスに応じてそのいずれかを使用します。</p>
+
+<table>
+	<thead>
+		<tr><th>解析方式</th><th>説明</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>正規表現ベース</th>
+			<td><p>キーワードと正規表現によるパターンマッチングを行います。また、「区切り文字」ペインの設定もコメント・文字列・文字リテラルのハイライトに使われます。この方式は完全な文法ではなく一連のマッチングパターンで定義されるため、簡単に作成やカスタマイズができます。</p></td>
+		</tr>
+		<tr><th>tree-sitterベース</th>
+			<td><p>ソースコードから完全な構文木を構築するパーサである<a href="https://tree-sitter.github.io" rel="external" title="Tree-sitter">tree-sitter</a>を使用します。tree-sitterは言語の文法構造を理解して解析するため、深いネスト構造や文脈に依存するキーワード、複数行にわたる式など、正規表現だけでは扱いにくい複雑な構造もより正確に解析できます。</p></td>
+		</tr>
+	</tbody>
+</table>
+
+<p>tree-sitterベースの解析は、Swift、Python、JavaScript、HTML、CSSなど、約20の内蔵シンタックスで利用できます。tree-sitterによるハイライトやアウトライン抽出のルールはアプリによって管理されているため、ユーザがカスタマイズしたり、別のシンタックスにtree-sitter対応を追加したりすることはできません。一方で、正規表現ベースのシンタックスはシンタックスエディタでカスタマイズでき、各シンタックスのハイライトルールやアウトライン抽出パターンを調整したり、新しいシンタックスを一から作成したりできます。</p>
+
+<p><em class="note">注記:</em> Markdownシンタックスでは、パフォーマンス上の理由から、アウトライン抽出にのみtree-sitterを使用します。シンタックスハイライトには正規表現ベースの方式を使用します。</p>
+</section>
+
+
+<section>
+<h2>カスタムシンタックスを書き出す</h2>
+
+<ol>
+	<li><p>MacでCotEditorアプリ<img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt="">に移動します。</p></li>
+	<li><p>「CotEditor」＞「設定」と選択してから、「フォーマット」をクリックします。</p></li>
+	<li><p>「利用可能なシンタックス」リストで書き出したいシンタックスを選択します。</p></li>
+	<li><p>以下のいずれかの操作を行います:</p><ul>
+		<li><p><object type="image/svg+xml" class="symbol" data="../../Shared/gfx/ellipsis.circle.svg">その他のボタン</object>をクリックするか選択した項目のコンテキストメニューを開き、「書き出す」を選択します。</p></li>
+		<li><p><object type="image/svg+xml" class="symbol" data="../../Shared/gfx/ellipsis.circle.svg">その他のボタン</object>をクリックするか選択した項目のコンテキストメニューを開き、「共有」を選択してから、シンタックスの共有方法を選択します。</p></li>
+		<li><p>シンタックスをFinderにドラッグします。</p></li>
+	</ul></li>
+</ol>
+
+<p><em class="note">注記:</em> カスタムシンタックスのみ書き出すことができます。オリジナルの内蔵シンタックスは書き出せません。</p>
+
+<p><em class="tip">ヒント:</em> CotEditor設定アーカイブとしてすべてのカスタムシンタックスを一度に書き出したり読み込んだりすることもできます。詳しくは、<a href="howto_port_settings.html">設定を書き出す/読み込む</a>を参照してください。</p>
+</section>
+
+
+<section>
+<h2>カスタムシンタックスを読み込む</h2>
+
+<ol>
+	<li><p>MacでCotEditorアプリ<img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt="">に移動します。</p></li>
+	<li><p>「CotEditor」＞「設定」と選択してから、「フォーマット」をクリックします。</p></li>
+	<li><p>以下のいずれかの操作を行います:</p><ul>
+		<li><p><object type="image/svg+xml" class="symbol" data="../../Shared/gfx/ellipsis.circle.svg">その他のボタン</object>をクリックして、「読み込む」を選択してから、読み込むCotEditorシンタックスファイル（.cotsyntax形式）を選択します。</p></li>
+		<li><p>CotEditorシンタックスファイル（.cotsyntax形式）をFinderから「利用可能なシンタックス」リストにドロップします。</p></li>
+	</ul></li>
+</ol>
+
+<p>CotEditorシンタックスファイルは、拡張子が.cotsyntaxのパッケージファイルです。</p>
+
+<p><small>「読み込む」では、CotEditor 7.0より前に使われていた旧YAML形式のシンタックス定義を変換して取り込めます。</small></p>
+</section>
+
+
+<section id="cf">
+<h2>関連項目</h2>
+<ul>
+	<li><a href="syntax_overview.html">シンタックスを解析する</a></li>
+	<li><a href="settings_format.html">「フォーマット」設定を変更する</a></li>
+	<li><a href="specification_changes_on_7.0.html">CotEditor 7.0での重要な変更</a></li>
+</ul>
+</section>
+
+</body>
+</html>

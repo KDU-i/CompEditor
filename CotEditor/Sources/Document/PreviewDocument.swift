@@ -1,0 +1,160 @@
+// Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
+//
+//  PreviewDocument.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2024-09-02.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2024-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import AppKit
+import QuickLookUI
+import AVFoundation
+import DocumentFile
+import URLUtils
+
+protocol FileContentAttributes: Sendable, Equatable { }
+
+
+@Observable final class PreviewDocument: DataDocument {
+    
+    // MARK: Public Properties
+    
+    private(set) var isAlias = false
+    private(set) var isFolderAlias = false
+    
+    private(set) var previewSize: CGSize?
+    private(set) var contentAttributes: (any FileContentAttributes)?
+    
+    
+    // MARK: Document Methods
+    
+    override nonisolated static var autosavesInPlace: Bool {
+        
+        true
+    }
+    
+    
+    override nonisolated func read(from url: URL, ofType typeName: String) throws {
+        
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false))
+        let fileAttributes = FileAttributes(dictionary: attributes)
+        let isAlias = try url.resourceValues(forKeys: [.isAliasFileKey]).isAliasFile == true
+        let isFolderAlias = if isAlias {
+            (try? URL(resolvingAliasFileAt: url).isDirectory) == true
+        } else {
+            false
+        }
+        
+        if isAlias {
+            let aliasURL = try? URL(resolvingAliasFileAt: url)
+            let attributes = LinkFileAttributes(destinationURL: aliasURL)
+            
+            Task { @MainActor in
+                self.contentAttributes = attributes
+            }
+            
+        } else if let type = UTType(typeName) {
+            if let rep = NSImageRep(contentsOf: url) {
+                let previewSize = rep.size
+                let attributes = rep.attributes
+                
+                Task { @MainActor in
+                    self.previewSize = previewSize
+                    self.contentAttributes = attributes.dotsPerInch.isZero ? nil : attributes
+                }
+                
+            } else if type.conforms(to: .movie) {
+                Task {
+                    guard let attributes = try? await AVURLAsset(url: url).movieAttributes else { return }
+                    
+                    await MainActor.run {
+                        self.previewSize = attributes.dimensions
+                        self.contentAttributes = attributes
+                    }
+                }
+                
+            } else if type.conforms(to: .audio) {
+                Task {
+                    guard let attributes = try? await AVURLAsset(url: url).audioAttributes else { return }
+                    
+                    await MainActor.run {
+                        self.contentAttributes = attributes
+                    }
+                }
+            }
+        }
+        
+        self.continueAsynchronousWorkOnMainActor {
+            self.fileAttributes = fileAttributes
+            self.isAlias = isAlias
+            self.isFolderAlias = isFolderAlias
+        }
+    }
+    
+    
+    // MARK: Public Methods
+    
+    /// Opens the file targeted by this document when it represents an alias.
+    ///
+    /// This method assumes the document URL points to an alias file.
+    func openLinkedFile() {
+        
+        assert(self.isAlias)
+        
+        guard
+            let fileURL = self.fileURL
+        else { return assertionFailure() }
+        
+        var destinationURL: URL
+        do {
+            destinationURL = try URL(resolvingAliasFileAt: fileURL)
+            try destinationURL.grantAccess(isDirectory: self.isFolderAlias)
+        } catch is CancellationError {
+            return
+        } catch {
+            NSApp.presentError(error)
+            return
+        }
+        
+        NSDocumentController.shared.openDocument(withContentsOf: destinationURL, display: true) { _, _, error in
+            if let error {
+                NSApp.presentError(error)
+            }
+        }
+    }
+}
+
+
+// MARK: QLPreviewItem Protocol
+
+extension PreviewDocument: @MainActor QLPreviewItem {
+    
+    var previewItemURL: URL! {
+        
+        self.fileURL
+    }
+    
+    
+    var previewItemTitle: String! {
+        
+        self.fileURL?.lastPathComponent
+    }
+}

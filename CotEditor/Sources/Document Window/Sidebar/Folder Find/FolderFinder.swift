@@ -1,0 +1,364 @@
+// Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
+//
+//  FolderFinder.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2026-06-15.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import Foundation
+import AppKit.NSTextStorage
+import Defaults
+import FileEncoding
+import FolderFind
+import SyntaxFormat
+import TextFind
+
+@MainActor @Observable final class FolderFinder {
+    
+    enum Error: Swift.Error, Equatable, Sendable {
+        
+        case folderUnavailable
+        case invalidQuery(TextFind.Error)
+        case searchFailed(String)
+    }
+    
+    
+    enum SearchState: Equatable {
+        
+        case idle
+        case searching(FolderFindProgress)
+        case finished(FolderFind.Summary)
+        case failed(FolderFinder.Error)
+    }
+    
+    
+    // MARK: Public Properties
+    
+    let document: DirectoryDocument
+    
+    private(set) var state: SearchState = .idle {
+        
+        didSet {
+            if case .finished = self.state { } else {
+                self.liveSummary = nil
+                self.unhighlight()
+            }
+            self.updateTextStorageObservation()
+        }
+    }
+    private(set) var resultRevision = 0
+    
+    
+    // MARK: Private Properties
+    
+    /// The search results whose match ranges follow document edits.
+    ///
+    /// The ranges are used only to reveal and highlight matches, so they are kept apart from the displayed results
+    /// to avoid updating the results view on every edit.
+    private var liveSummary: FolderFind.Summary?
+    
+    private var searchTask: Task<Void, Never>?
+    private var selectionTask: Task<Void, Never>?
+    private var textEditingObserver: (any NSObjectProtocol)?
+    private var highlightObserver: NotificationCenter.ObservationToken?
+    private weak var highlightedTextView: NSTextView?
+    private var submittedFindString = ""
+    
+    
+    // MARK: Lifecycle
+    
+    /// Initializes a folder find model.
+    ///
+    /// - Parameter document: The directory document whose folder is searched.
+    init(document: DirectoryDocument) {
+        
+        self.document = document
+    }
+    
+    
+    isolated deinit {
+        
+        self.searchTask?.cancel()
+        self.selectionTask?.cancel()
+        self.textEditingObserver.map(NotificationCenter.default.removeObserver)
+        self.unhighlight()
+    }
+    
+    
+    // MARK: Public Methods
+    
+    /// Updates the search state after the user edits the find string.
+    ///
+    /// - Parameter findString: The new find string.
+    func findStringDidChange(to findString: String) {
+        
+        guard findString != self.submittedFindString else { return }
+        
+        self.searchTask?.cancel()
+        self.selectionTask?.cancel()
+        if case .searching = self.state {
+            self.state = .idle
+        }
+    }
+    
+    
+    /// Searches files in the directory document.
+    ///
+    /// - Parameters:
+    ///   - findString: The string to find.
+    ///   - usesRegularExpression: Whether the search string should be treated as a regular expression.
+    ///   - ignoresCase: Whether character case should be ignored.
+    ///   - includesHiddenFiles: Whether hidden files should be searched.
+    ///   - includesOtherFileTypes: Whether files that do not look like plain text should also be searched.
+    ///   - fileScope: The file scope to search.
+    func find(findString: String, usesRegularExpression: Bool, ignoresCase: Bool, includesHiddenFiles: Bool, includesOtherFileTypes: Bool = false, fileScope: FileScope? = nil) {
+        
+        self.searchTask?.cancel()
+        self.selectionTask?.cancel()
+        
+        guard !findString.isEmpty else {
+            self.submittedFindString = findString
+            self.state = .idle
+            self.resultRevision += 1
+            return
+        }
+        
+        guard let rootURL = self.document.fileURL else {
+            self.state = .failed(.folderUnavailable)
+            self.resultRevision += 1
+            return
+        }
+        
+        let mode = TextFind.Mode(usesRegularExpression: usesRegularExpression, ignoresCase: ignoresCase)
+        let query = FolderFind.Query(findString: findString, mode: mode)
+        
+        self.submittedFindString = findString
+        
+        let pattern: TextFind.Pattern
+        do {
+            pattern = try query.pattern()
+        } catch {
+            self.state = .failed(.invalidQuery(error))
+            self.resultRevision += 1
+            return
+        }
+        
+        let options = FolderFind.Options(
+            includesOtherFileTypes: includesOtherFileTypes,
+            includesHiddenFiles: includesHiddenFiles,
+            fileScope: fileScope,
+            decodingOptions: .init(candidates: EncodingManager.shared.fileEncodingCandidates)
+        )
+        let syntaxMappingTable = SyntaxManager.shared.fileMappingTable
+        let progress = FolderFindProgress(findString: findString)
+        
+        self.state = .searching(progress)
+        self.resultRevision += 1
+        
+        self.searchTask = Task { [weak self] in
+            do {
+                let summary = try await { @concurrent () async throws -> FolderFind.Summary in
+                    var search = try Search(rootURL: rootURL, pattern: pattern, options: options, progress: progress) { candidate in
+                        syntaxMappingTable.syntaxName(forFilename: candidate.fileURL.lastPathComponent) != nil
+                    }
+                    return try await search.run()
+                }()
+                
+                try Task.checkCancellation()
+                
+                self?.liveSummary = summary
+                self?.state = .finished(summary)
+                self?.resultRevision += 1
+                
+            } catch is CancellationError {
+                return
+                
+            } catch {
+                guard !Task.isCancelled else { return }
+                
+                self?.state = .failed(.searchFailed(error.localizedDescription))
+                self?.resultRevision += 1
+            }
+        }
+    }
+    
+    
+    /// Returns the search result for the given ID with the match range following document edits.
+    ///
+    /// - Parameter id: The result ID to resolve.
+    /// - Returns: The resolved search result, or `nil` if not found.
+    func result(for id: FolderFind.ResultID) -> FolderFind.Result? {
+        
+        self.liveSummary?.result(for: id)
+    }
+    
+    
+    /// Opens the file for the result, highlights all its matches until the editor gains focus, and selects the matched range if the result is a match.
+    ///
+    /// - Parameter id: The result ID to select.
+    func selectResult(for id: FolderFind.ResultID) {
+        
+        guard let result = self.result(for: id) else { return }
+        
+        self.selectionTask?.cancel()
+        self.unhighlight()
+        self.selectionTask = Task { @MainActor [self] in
+            guard
+                await self.document.openDocument(at: result.file.fileURL),
+                !Task.isCancelled
+            else { return }
+            
+            guard
+                let document = self.document.currentDocument as? Document,
+                let textView = document.textView
+            else { return }
+            
+            let length = textView.string.utf16.count
+            let ranges = result.file.matches.map(\.range)
+                .filter { $0.length > 0 && $0.upperBound <= length }
+            
+            textView.updateBackgroundColor(.unemphasizedSelectedTextBackgroundColor, ranges: ranges)
+            self.highlightedTextView = textView
+            
+            self.highlightObserver.map(NotificationCenter.default.removeObserver)
+            self.highlightObserver = NotificationCenter.default.addObserver(for: EditorTextView.DidBecomeFirstResponderMessage.self) { [weak self, weak document] message in
+                guard document?.textViews.contains(where: { ObjectIdentifier($0) == message.subjectIdentifier }) == true else { return }
+                
+                self?.unhighlight()
+            }
+            
+            guard let range = result.match?.range, range.upperBound <= length else { return }
+            
+            // ensure the newly swapped-in editor has its final visible rect before scrolling
+            // and prevent the find indicator effect from cutting out (2026-09, macOS 26)
+            await Task.yield()
+            
+            textView.selectedRange = range
+            textView.scrollRangeToVisible(range)
+            textView.showFindIndicator(for: range)
+        }
+    }
+    
+    
+    /// Removes the selected results from the current search results.
+    ///
+    /// - Parameter ids: The result IDs to remove.
+    func removeResults(for ids: Set<FolderFind.ResultID>) {
+        
+        guard
+            !ids.isEmpty,
+            case .finished(var summary) = self.state
+        else { return }
+        
+        summary.removeResults(for: ids)
+        self.liveSummary?.removeResults(for: ids)
+        self.selectionTask?.cancel()
+        self.selectionTask = nil
+        self.unhighlight()
+        self.state = .finished(summary)
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// Removes the folder find highlights and stops observing editor focus.
+    private func unhighlight() {
+        
+        self.highlightObserver.map(NotificationCenter.default.removeObserver)
+        self.highlightObserver = nil
+        self.highlightedTextView?.unhighlight(nil)
+        self.highlightedTextView = nil
+    }
+    
+    
+    /// Starts or stops observing text editing according to the current search state.
+    private func updateTextStorageObservation() {
+        
+        if case .finished = self.state {
+            guard self.textEditingObserver == nil else { return }
+            self.textEditingObserver = self.observeTextStorage()
+        } else {
+            self.textEditingObserver.map(NotificationCenter.default.removeObserver)
+            self.textEditingObserver = nil
+        }
+    }
+    
+    
+    /// Observes text editing in open documents.
+    ///
+    /// - Returns: The notification observer.
+    private func observeTextStorage() -> any NSObjectProtocol {
+        
+        NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: nil, queue: .main) { [weak self] notification in
+            let textStorage = notification.object as! NSTextStorage
+            
+            guard textStorage.editedMask.contains(.editedCharacters) else { return }
+            
+            let textStorageIdentifier = ObjectIdentifier(textStorage)
+            let editedRange = textStorage.editedRange
+            let changeInLength = textStorage.changeInLength
+            let length = textStorage.length
+            
+            MainActor.assumeIsolated {
+                self?.documentTextDidChange(textStorageIdentifier: textStorageIdentifier, editedRange: editedRange, changeInLength: changeInLength, length: length)
+            }
+        }
+    }
+    
+    
+    /// Updates the live match ranges after the text of an open document changes.
+    ///
+    /// - Parameters:
+    ///   - textStorageIdentifier: The identifier of the edited text storage.
+    ///   - editedRange: The range edited in the text storage.
+    ///   - changeInLength: The change in UTF-16 length caused by the edit.
+    ///   - length: The text storage length in UTF-16 units after the edit.
+    private func documentTextDidChange(textStorageIdentifier: ObjectIdentifier, editedRange: NSRange, changeInLength: Int, length: Int) {
+        
+        guard
+            let document = NSDocumentController.shared.documents
+                .compactMap({ $0 as? Document })
+                .first(where: { ObjectIdentifier($0.textStorage) == textStorageIdentifier }),
+            let fileURL = document.fileURL
+        else { return }
+        
+        self.liveSummary?.updateMatchRanges(in: fileURL, editedRange: editedRange, changeInLength: changeInLength, length: length)
+    }
+}
+
+
+private extension TextFind.Mode {
+    
+    /// Initializes a text find mode for the given options.
+    ///
+    /// - Parameters:
+    ///   - usesRegularExpression: Whether the search string should be treated as a regular expression.
+    ///   - ignoresCase: Whether character case should be ignored.
+    init(usesRegularExpression: Bool, ignoresCase: Bool) {
+        
+        self = if usesRegularExpression {
+            .regularExpression(options: ignoresCase ? .caseInsensitive : [], unescapesReplacement: false)
+        } else {
+            .textual(options: ignoresCase ? .caseInsensitive : [], fullWord: false)
+        }
+    }
+}

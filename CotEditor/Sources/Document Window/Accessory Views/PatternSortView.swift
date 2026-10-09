@@ -1,0 +1,370 @@
+//
+//  PatternSortView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2018-01-05.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2018-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+public import Foundation
+public import LineSort
+import SwiftUI
+import Defaults
+
+struct PatternSortView: View {
+    
+    enum SortKey: CaseIterable {
+        
+        case entire
+        case column
+        case regularExpression
+    }
+    
+    
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.resetFocus) private var resetFocus
+    
+    @Namespace private var namespace
+    
+    private var sampleLine: String
+    private var sampleFontName: String?
+    private var completionHandler: (_ pattern: any SortPattern, _ options: SortOptions) -> Void
+    
+    @State private var sortKey: SortKey = .column
+    @State private var columnSortPattern = CSVSortPattern()
+    @State private var regularExpressionSortPattern = RegularExpressionSortPattern()
+    @State private var options = SortOptions()
+    
+    @State private var attributedSampleLine: AttributedString
+    @State private var error: SortPatternError?
+    
+    
+    // MARK: View
+    
+    /// Initializes view with given values.
+    ///
+    /// - Parameters:
+    ///   - sampleLine: A line of target text to display as sample.
+    ///   - sampleFontName: The name of the editor font for the sample line display.
+    ///   - completionHandler: The callback method to perform when the command was accepted.
+    init(sampleLine: String, sampleFontName: String? = nil, completionHandler: @escaping (_ pattern: any SortPattern, _ options: SortOptions) -> Void) {
+        
+        self.sampleLine = sampleLine
+        self.sampleFontName = sampleFontName
+        self.completionHandler = completionHandler
+        
+        self.attributedSampleLine = AttributedString(sampleLine)
+    }
+    
+    
+    var body: some View {
+        
+        VStack(alignment: .leading) {
+            Section(.init("Sample:", table: "PatternSort")) {
+                GroupBox {
+                    Text(self.attributedSampleLine)
+                        .font(.custom(self.sampleFontName ?? "", size: 0))
+                        .truncationMode(.tail)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .help(.init("Sample line to check which part of a line will be used for sorting.", table: "PatternSort", comment: "tooltip"))
+                }.padding(.bottom)
+            }
+            
+            Grid(alignment: .leadingFirstTextBaseline, verticalSpacing: 14) {
+                GridRow {
+                    Text("Sort key:", tableName: "PatternSort")
+                        .gridColumnAlignment(.trailing)
+                    
+                    VStack(alignment: .leading) {
+                        Picker(selection: $sortKey.animation()) {
+                            ForEach(SortKey.allCases, id: \.self) {
+                                Text($0.label)
+                            }
+                        } label: {
+                            EmptyView()
+                        }
+                        .pickerStyle(.radioGroup)
+                        .horizontalRadioGroupLayout()
+                        .labelsHidden()
+                        .fixedSize()
+                        .onChange(of: self.sortKey) { self.validate() }
+                        
+                        switch self.sortKey {
+                            case .entire:
+                                EmptyView()
+                            case .column:
+                                ColumnSortPatternView(pattern: $columnSortPattern)
+                                    .onChange(of: self.columnSortPattern) { self.validate() }
+                            case .regularExpression:
+                                RegularExpressionSortPatternView(pattern: $regularExpressionSortPattern, error: $error)
+                                    .onChange(of: self.regularExpressionSortPattern) { self.validate() }
+                        }
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                
+                GridRow {
+                    Text("Sort option:", tableName: "PatternSort")
+                    
+                    VStack(alignment: .leading) {
+                        Toggle(.init("Ignore case", table: "PatternSort", comment: "verb; checkbox"),
+                               isOn: $options.ignoresCase)
+                        Toggle(.init("Respect language rules", table: "PatternSort", comment: "verb; checkbox"),
+                               isOn: $options.isLocalized)
+                        Toggle(.init("Treat numbers as numeric values", table: "PatternSort", comment: "verb; checkbox"),
+                               isOn: $options.numeric)
+                        Toggle(.init("Keep the first line at the top", table: "PatternSort", comment: "verb; checkbox"),
+                               isOn: $options.keepsFirstLine)
+                        Toggle(.init("In descending order", table: "PatternSort", comment: "checkbox"),
+                               isOn: $options.descending)
+                    }
+                }
+                .fixedSize()
+                .accessibilityElement(children: .contain)
+            }
+            
+            SubmitButtonGroup(.init("Sort", table: "PatternSort", comment: "verb; button"), helpAnchor: "howto_pattern_sort", action: self.submit) .disabled(self.error != nil)
+                .padding(.top)
+        }
+        .onAppear {
+            self.validate()
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(minWidth: 460)
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// The sort pattern currently selected.
+    private var sortPattern: any SortPattern {
+        
+        switch self.sortKey {
+            case .entire: return EntireLineSortPattern()
+            case .column: return self.columnSortPattern
+            case .regularExpression: return self.regularExpressionSortPattern
+        }
+    }
+    
+    
+    /// Submits the current input.
+    private func submit() {
+        
+        self.resetFocus(in: self.namespace)
+        
+        let pattern = self.sortPattern
+        
+        if let pattern = pattern as? RegularExpressionSortPattern {
+            UserDefaults.standard[.regexPatternSortHistory].appendUnique(pattern.searchPattern, maximum: 10)
+        }
+        
+        self.completionHandler(pattern, self.options)
+        self.dismiss()
+    }
+    
+    
+    /// Validates the current sort pattern and applies the result to the view.
+    ///
+    /// - Returns: Whether the sort pattern is valid.
+    @discardableResult
+    private func validate() -> Bool {
+        
+        self.attributedSampleLine.backgroundColor = nil
+        
+        do {
+            try self.sortPattern.validate()
+        } catch {
+            self.error = error
+            return false
+        }
+        self.error = nil
+        
+        if let range = self.sortPattern.range(for: self.sampleLine),
+           let attrRange = Range<AttributedString.Index>(range, in: self.attributedSampleLine)
+        {
+            self.attributedSampleLine[attrRange].backgroundColor = .accentColor.opacity(0.3)
+        }
+        
+        return true
+    }
+}
+
+
+struct ColumnSortPatternView: View {
+    
+    @Binding var pattern: CSVSortPattern
+    
+    
+    var body: some View {
+        
+        HStack(alignment: .firstTextBaseline) {
+            LabeledContent(.init("Delimiter:", table: "PatternSort")) {
+                TextField(text: $pattern.delimiter, prompt: Text(verbatim: ","), label: EmptyView.init)
+                    .frame(width: 32)
+            }.padding(.trailing)
+            
+            LabeledContent(.init("Position:", table: "PatternSort")) {
+                StepperNumberField(value: $pattern.column, default: 1, in: 1...(.max))
+            }
+        }.fixedSize()
+    }
+}
+
+
+struct RegularExpressionSortPatternView: View {
+    
+    @Binding var pattern: RegularExpressionSortPattern
+    @Binding var error: SortPatternError?
+    
+    
+    @Namespace private var accessibility
+    
+    
+    var body: some View {
+        
+        Grid(alignment: .leadingFirstTextBaseline) {
+            GridRow {
+                Text("Pattern:", tableName: "PatternSort")
+                    .accessibilityLabeledPair(role: .label, id: "pattern", in: self.accessibility)
+                VStack(alignment: .leading, spacing: 6) {
+                    RegexTextField(text: $pattern.searchPattern, prompt: String(localized: "Regular Expression", table: "PatternSort", comment: "noun; placeholder"))
+                        .leadingInset(18)
+                        .overlay(alignment: .leadingLastTextBaseline) {
+                            Menu {
+                                let patterns = UserDefaults.standard[.regexPatternSortHistory]
+                                
+                                Section(.init("Recents", table: "PatternSort", comment: "menu header")) {
+                                    ForEach(patterns, id: \.self) { pattern in
+                                        Button(pattern) {
+                                            self.pattern.searchPattern = pattern
+                                        }
+                                    }
+                                }
+                                
+                                if !patterns.isEmpty {
+                                    Button(.init("Clear Recents", table: "PatternSort", comment: "verb; menu item"), role: .destructive, action: self.clearRecents)
+                                }
+                            } label: {
+                                EmptyView()
+                            }
+                            .accessibilityLabel(.init("Recents", table: "PatternSort"))
+                            .menuStyle(.button)
+                            .buttonStyle(.borderless)
+                            .frame(width: 16)
+                            .padding(.leading, 4)
+                        }
+                    
+                    HStack(alignment: .firstTextBaseline) {
+                        Toggle(.init("Ignore case", table: "PatternSort"),
+                               isOn: $pattern.ignoresCase)
+                            .fixedSize()
+                        Spacer()
+                        
+                        if let errorMessage = self.error?.errorDescription {
+                            Label(errorMessage, systemImage: "exclamationmark.triangle")
+                                .symbolVariant(.fill)
+                                .symbolRenderingMode(.multicolor)
+                                .lineLimit(1)
+                                .help(errorMessage)
+                        }
+                    }
+                    .controlSize(.small)
+                    .frame(minHeight: 8)  // keep height for error message
+                }
+                .accessibilityLabeledPair(role: .content, id: "pattern", in: self.accessibility)
+            }
+            .accessibilityElement(children: .contain)
+        }
+        
+        HStack(alignment: .firstTextBaseline) {
+            Toggle(.init("Use captured group:", table: "PatternSort"), isOn: $pattern.usesCaptureGroup)
+            StepperNumberField(value: $pattern.group, default: 1, in: 0...self.pattern.numberOfCaptureGroups)
+                .disabled(!self.pattern.usesCaptureGroup)
+                .accessibilityLabel(.init("Use captured group:", table: "PatternSort"))
+        }
+    }
+    
+    
+    /// Clears the regular expression pattern history.
+    private func clearRecents() {
+        
+        UserDefaults.standard[.regexPatternSortHistory].removeAll()
+    }
+}
+
+
+private extension PatternSortView.SortKey {
+    
+    var label: LocalizedStringResource {
+        
+        switch self {
+            case .entire:
+                .init("Entire line",
+                      table: "PatternSort",
+                      comment: "pattern sort key option")
+            case .column:
+                .init("Column",
+                      table: "PatternSort",
+                      comment: "pattern sort key option")
+            case .regularExpression:
+                .init("Regular expression",
+                      table: "PatternSort",
+                      comment: "pattern sort key option")
+        }
+    }
+}
+
+
+extension SortPatternError: @retroactive LocalizedError {
+    
+    public var errorDescription: String? {
+        
+        switch self {
+            case .emptyPattern:
+                String(localized: "Empty pattern",
+                       table: "PatternSort",
+                       comment: "error message (“pattern” is a regular expression pattern)")
+            case .invalidRegularExpressionPattern:
+                String(localized: "Invalid pattern",
+                       table: "PatternSort",
+                       comment: "error message (“pattern” is a regular expression pattern)")
+        }
+    }
+    
+    
+    public var helpAnchor: String? {
+        
+        switch self {
+            case .invalidRegularExpressionPattern:
+                "about_regex"
+            default:
+                nil
+        }
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview {
+    PatternSortView(sampleLine: "Dog, 🐕, 1", sampleFontName: "Menlo") { _, _ in }
+        .scenePadding()
+}

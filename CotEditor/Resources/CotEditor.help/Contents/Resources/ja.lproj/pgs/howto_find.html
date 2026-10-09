@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="検索, 置換, 正規表現">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>MacのCotEditorでテキストを検索する/置換する</title>
+</head>
+
+<body>
+<a name="howto_find"></a>
+
+<h1>MacのCotEditorでテキストを検索する/置換する</h1>
+
+<p>CotEditorは正規表現も使える強力な検索・置換機能を備えています。</p>
+
+
+<section>
+<h2>検索ウインドウを開く</h2>
+
+<ol>
+	<li><p>MacのCotEditorアプリ<img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt="">で、書類を開きます。</p></li>
+	<li><p>「検索」＞「検索」と選択します。</p></li>
+</ol>
+
+<figure>
+	<img src="../gfx/findpanel@2x.png" srcset="../gfx/findpanel@2x.png 2x" alt="検索ウインドウのスクリーンショット">
+</figure>
+</section>
+
+
+<section>
+<h2>検索/置換の条件を入力する</h2>
+
+<h3>検索/置換フィールド</h3>
+<p>虫眼鏡アイコンの付いた検索フィールドに検索したいテキストを入力します。</p>
+
+<p>検索に一致したテキストを置換するときは、ペンアイコンの付いた置換フィールドに置換後のテキストを入力します。置換フィールドが空欄なら、一致したテキストは削除されます。</p>
+
+<p>検索フィールドと置換フィールドに改行やタブ文字を挿入するには、以下のキーを使います。</p>
+
+<table>
+	<thead>
+		<tr><th>文字</th><th>キーボード入力</th></tr>
+	</thead>
+	
+	<tbody>
+		<tr>
+			<td>改行</td>
+			<td><kbd>Option</kbd>+<kbd>Return</kbd></td>
+		</tr>
+		<tr>
+			<td>タブ</td>
+			<td><kbd>Option</kbd>+<kbd>Tab</kbd></td>
+		</tr>
+	</tbody>
+</table>
+
+
+<h3>検索/置換履歴</h3>
+
+<p>フィールド内にある虫眼鏡/ペンアイコンから、過去の検索/置換テキストを選択して再利用できます。</p>
+
+
+<h3>検索オプション</h3>
+
+<table>
+	<thead>
+		<tr><th>オプション</th><th>説明</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>正規表現</td>
+			<td><p>正規表現を使って検索をします。</p></td>
+		</tr>
+		<tr>
+			<td>大文字/小文字を無視</td>
+			<td><p>大文字/小文字を区別せずに検索します。</p></td></tr>
+		<tr>
+			<td>選択範囲のみ</td>
+			<td><p>検索対象を現在の選択範囲のみに限定します。</p></td>
+		</tr>
+	</tbody>
+</table>
+</section>
+
+
+<section>
+<h2>詳細検索オプションを変更する</h2>
+
+<p>詳細オプションパネルからより細かな検索の振る舞いを設定できます。詳細オプションパネルは検索ウインドウの<object type="image/svg+xml" class="symbol" data="../../Shared/gfx/ellipsis.circle.svg">（3点リーダシンボル）</object>ボタンをクリックすると開きます。</p>
+
+<table>
+	<thead>
+		<tr><th>オプション</th><th>説明</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>検索を折り返す</td>
+			<td><p>挿入ポイント以降に一致がなかったときに書類の最初から一致を探します。</p></td>
+		</tr>
+		<tr>
+			<td>インクリメンタルに検索</td>
+			<td><p>検索フィールドに入力するたびに逐次書類を検索します。</p></td>
+		</tr>
+	</tbody>
+</table>
+
+
+<h3>テキスト検索</h3>
+<p>正規表現検索が無効のときに使用されるオプションです。</p>
+
+<table>
+	<thead>
+		<tr><th>オプション</th><th>説明</th><th>デフォルト</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>単語に完全一致</td>
+			<td><p>入力した単語と完全に一致する単語のみに限定します。</p></td>
+			<td>無効</td>
+		</tr>
+		<tr>
+			<td>文字を厳密に判別</td>
+			<td><p>バイトレベルで完全一致する文字列にのみ一致します。</p></td>
+			<td>無効</td>
+		</tr>
+		<tr>
+			<td>発音区別記号を無視</td>
+			<td><p>文字の発音記号を無視して検索します。（例えば: ö = o）</p></td>
+			<td>無効</td>
+		</tr>
+		<tr>
+			<td>全角/半角を無視</td>
+			<td><p>文字の全角/半角を無視して検索します。（例えば: ａ = a）</p></td>
+			<td>無効</td>
+		</tr>
+	</tbody>
+</table>
+
+
+<h3>正規表現検索</h3>
+<p>正規表現検索が有効のときに使用されるオプションです。</p>
+
+<table>
+	<thead>
+		<tr><th>オプション</th><th>説明</th><th>デフォルト</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>ドットが改行に一致</td>
+			<td><p>ピリオド<span aria-hidden="true">（.）</span>が改行記号を含むすべての文字に一致します。（単一行モード）</p></td>
+			<td>無効</td>
+		</tr>
+		<tr>
+			<td>アンカーが行頭/行末に一致</td>
+			<td><p>^と$がそれぞれ行頭と行末にも一致します。（複数行モード）</p></td>
+			<td>有効</td>
+		</tr>
+		<tr>
+			<td>Unicode単語境界を使用</td>
+			<td><p>単語の区切りにUnicode TR#29定義を使用します。</p></td>
+			<td>無効</td>
+		</tr>
+		<tr>
+			<td>置換テキストのエスケープ文字を解釈</td>
+			<td><p>置換テキストのバックスラッシュをエスケープ文字として解釈します。</p></td>
+			<td>有効</td>
+		</tr>
+	</tbody>
+</table>
+</section>
+
+
+<section>
+<h2>検索結果をハイライトする</h2>
+
+<p>「すべて検索」や「すべてハイライト」コマンドで、書類内で検索条件に一致するすべての箇所をハイライト表示できます。正規表現を使って検索をしたときは、キャプチャグループごとに異なるカラーでハイライトします。</p>
+<p>ハイライトを削除するには、「検索」＞「ハイライトを解除」と選択します。</p>
+</section>
+
+
+<section id="cf">
+<h2>関連項目</h2>
+<ul>
+	<li><a href="howto_find_newline.html">MacのCotEditorで改行を検索する/置換する</a></li>
+	<li><a href="about_regex.html">MacのCotEditorで正規表現を使う</a></li>
+	<li><a href="howto_multiple_replace.html">MacのCotEditorで複数条件でテキストを置換する</a></li>
+	<li><a href="howto_find_in_folder.html">MacのCotEditorでフォルダ内のテキストを検索する</a></li>
+</ul>
+</section>
+
+</body>
+</html>

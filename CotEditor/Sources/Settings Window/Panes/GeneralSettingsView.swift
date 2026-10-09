@@ -1,0 +1,326 @@
+// Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
+//
+//  GeneralSettingsView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2023-01-25.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2023-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import Defaults
+import SemanticVersioning
+
+struct GeneralSettingsView: View {
+    
+#if SPARKLE
+    var showsUpdaterSettings = true
+#else
+    var showsUpdaterSettings = false
+#endif
+    
+    @Namespace private var accessibility
+    @AppStorage(ForkIdentity.legacyDisplayNameKey) private var usesCotEditorDisplayName = false
+    
+    @AppStorage(.quitAlwaysKeepsWindows) private var quitAlwaysKeepsWindows: Bool
+    @AppStorage(.noDocumentOnLaunchOption) private var noDocumentOnLaunchOption: NoDocumentOnLaunchOption
+    
+    @AppStorage(.enablesAutosaveInPlace) private var enablesAutosaveInPlace: Bool
+    @AppStorage(.documentConflictOption) private var documentConflictOption: DocumentConflictOption
+    
+    @State private var initialEnablesAutosaveInPlace: Bool = false
+    
+    @State private var isAutosaveChangeConfirmationPresented = false
+    @State private var suppressesQuitAlwaysKeepsWindowsChangeConfirmation = false
+    @State private var isQuitAlwaysKeepsWindowsChangeConfirmationPresented = false
+    @State private var isWarningsSettingPresented = false
+    
+    
+    // MARK: View
+    
+    var body: some View {
+        
+        Grid(alignment: .leadingFirstTextBaseline, verticalSpacing: 18) {
+            GridRow {
+                Text("Application display name:", tableName: "ForkIdentity")
+                    .gridColumnAlignment(.trailing)
+                VStack(alignment: .leading) {
+                    Toggle(.init("Use CotEditor for in-app labels", table: "ForkIdentity"), isOn: $usesCotEditorDisplayName)
+                        .onChange(of: self.usesCotEditorDisplayName) {
+                            ForkDisplayNameController.shared.refresh()
+                        }
+                    Text("Changes About and application-menu labels immediately. Finder and Dock remain CompEditor. This is an unofficial fork.", tableName: "ForkIdentity")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            GridRow {
+                Text("On startup:", tableName: "GeneralSettings")
+                    .gridColumnAlignment(.trailing)
+                
+                VStack(alignment: .leading) {
+                    Toggle(.init("Reopen windows from last session", table: "GeneralSettings", comment: "verb; checkbox"), isOn: $quitAlwaysKeepsWindows)
+                        .onChange(of: self.quitAlwaysKeepsWindows) {
+                            guard !self.suppressesQuitAlwaysKeepsWindowsChangeConfirmation else { return }
+                            
+                            self.isQuitAlwaysKeepsWindowsChangeConfirmationPresented = true
+                            self.suppressesQuitAlwaysKeepsWindowsChangeConfirmation = true
+                        }
+                        .confirmationDialog(.init("NextSessionApplicationConfirmation.title", defaultValue: "The change will be applied first on the next launch.", table: "GeneralSettings"), isPresented: $isQuitAlwaysKeepsWindowsChangeConfirmationPresented) {
+                        } message: {
+                            Text(.init("NextSessionApplicationConfirmation.nextAfterNext.message", defaultValue: "The app’s behavior will change from the next launch after that one.", table: "GeneralSettings"))
+                        }
+                    
+                    Text("When nothing else is open:", tableName: "GeneralSettings")
+                        .accessibilityLabeledPair(role: .label, id: "noDocumentOnLaunchOption", in: self.accessibility)
+                    Picker(selection: $noDocumentOnLaunchOption) {
+                        ForEach(NoDocumentOnLaunchOption.allCases, id: \.self) {
+                            Text($0.label)
+                        }
+                    } label: {
+                        EmptyView()
+                    }
+                    .pickerStyle(.menu)
+                    .labelsVisibility(.hidden)
+                    .accessibilityLabeledPair(role: .content, id: "noDocumentOnLaunchOption", in: self.accessibility)
+                    .padding(.leading, 20)
+                }
+            }
+            
+            GridRow {
+                Text("Document save:", tableName: "GeneralSettings")
+                    .gridColumnAlignment(.trailing)
+                
+                VStack(alignment: .leading) {
+                    Toggle(.init("Enable Auto Save with Versions", table: "GeneralSettings", comment: "verb; checkbox"), isOn: $enablesAutosaveInPlace)
+                        .onChange(of: self.enablesAutosaveInPlace) { _, newValue in
+                            if newValue != self.initialEnablesAutosaveInPlace {
+                                self.isAutosaveChangeConfirmationPresented = true
+                            }
+                        }
+                        .onAppear {
+                            self.initialEnablesAutosaveInPlace = self.enablesAutosaveInPlace
+                        }
+                        .confirmationDialog(.init("NextSessionApplicationConfirmation.title", defaultValue: "The change will be applied first on the next launch.", table: "GeneralSettings"), isPresented: $isAutosaveChangeConfirmationPresented) {
+                            Button(.init("Restart Now", table: "GeneralSettings", comment: "verb; button")) {
+                                (NSApp.delegate as? AppDelegate)?.needsRelaunch = true
+                                NSApp.terminate(self)
+                            }
+                            Button(.init("Later", table: "GeneralSettings", comment: "button")) {
+                                // do nothing
+                            }
+                            Button(role: .cancel) {
+                                self.enablesAutosaveInPlace.toggle()
+                            }
+                        } message: {
+                            Text(.init("NextSessionApplicationConfirmation.message", defaultValue: "Do you want to restart CotEditor now?", table: "GeneralSettings"))
+                        }
+                    
+                    Text("A system feature that automatically overwrites your files while editing. Even if turned off, CotEditor covertly creates a backup in case it unexpectedly quits.", tableName: "GeneralSettings")
+                        .foregroundStyle(.secondary)
+                        .controlSize(.small)
+                        .lineLimit(10)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 22)
+                }
+            }
+            
+            
+            GridRow {
+                Text("When document is changed by another application:", tableName: "GeneralSettings")
+                    .accessibilityLabeledPair(role: .label, id: "documentConflictOption", in: self.accessibility)
+                    .gridCellColumns(2)
+            }.padding(.bottom, -8)
+            
+            GridRow {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .gridCellUnsizedAxes([.horizontal, .vertical])
+                    .accessibilityHidden(true)
+                
+                Picker(selection: $documentConflictOption) {
+                    ForEach(DocumentConflictOption.allCases, id: \.self) {
+                        Text($0.label)
+                    }
+                } label: {
+                    EmptyView()
+                }
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+                .accessibilityLabeledPair(role: .content, id: "documentConflictOption", in: self.accessibility)
+            }
+            
+            GridRow {
+                Text("Dialog warnings:", tableName: "GeneralSettings")
+                    .gridColumnAlignment(.trailing)
+                    .accessibilityLabeledPair(role: .label, id: "dialogWarnings", in: self.accessibility)
+                
+                Button(.init("Manage Warnings…", table: "GeneralSettings", comment: "verb; button")) {
+                    self.isWarningsSettingPresented.toggle()
+                }
+                .accessibilityLabeledPair(role: .content, id: "dialogWarnings", in: self.accessibility)
+                .sheet(isPresented: $isWarningsSettingPresented) {
+                    WarningsSettingView()
+                        .scenePadding()
+                }
+            }
+            
+            if self.showsUpdaterSettings {
+                Divider()
+                UpdaterView()
+            }
+            
+            HStack {
+                Spacer()
+                HelpLink(anchor: "settings_general")
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+
+private struct UpdaterView: View {
+    
+    @AppStorage("SUEnableAutomaticChecks") private var enableAutomaticUpdateChecks: Bool = true
+    @AppStorage(.checksUpdatesForBeta) private var checksUpdatesForBeta: Bool
+    
+    
+    var body: some View {
+        
+        GridRow {
+            Text("Software update:", tableName: "GeneralSettings")
+                .gridColumnAlignment(.trailing)
+            
+            VStack(alignment: .leading) {
+                Toggle(.init("Check for updates automatically", table: "GeneralSettings", comment: "verb; checkbox"), isOn: $enableAutomaticUpdateChecks)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Toggle(.init("Update to prereleases when available", table: "GeneralSettings", comment: "verb; checkbox"), isOn: $checksUpdatesForBeta)
+                    
+                    if Bundle.main.version!.isPrerelease {
+                        Text("Regardless of this setting, new prereleases are always included while using a prerelease.", tableName: "GeneralSettings")
+                            .foregroundStyle(.secondary)
+                            .controlSize(.small)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.leading, 20)
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+private struct WarningsSettingView: View {
+    
+    @Environment(\.dismiss) private var dismiss
+    
+    @AppStorage(.suppressesInconsistentLineEndingAlert) private var suppressesInconsistentLineEndingAlert: Bool
+    
+    
+    var body: some View {
+        
+        VStack {
+            Form {
+                Text("Suppress the following warnings:", tableName: "GeneralSettings")
+                Toggle(.init("Inconsistent line endings", table: "GeneralSettings"), isOn: $suppressesInconsistentLineEndingAlert)
+            }
+            
+            HStack {
+                HelpLink(anchor: "howto_manage_warnings")
+                Spacer()
+                Button(.done) {
+                    self.dismiss()
+                }.keyboardShortcut(.defaultAction)
+            }.padding(.top)
+        }
+        .fixedSize()
+    }
+}
+
+
+private extension NoDocumentOnLaunchOption {
+    
+    var label: LocalizedStringResource {
+        
+        switch self {
+            case .untitledDocument:
+                .init("NoDocumentOnLaunchOption.untitledDocument.label",
+                      defaultValue: "Create New Document",
+                      table: "GeneralSettings",
+                      comment: "verb; menu item")
+            case .openPanel:
+                .init("NoDocumentOnLaunchOption.openPanel.label",
+                      defaultValue: "Show Open Dialog",
+                      table: "GeneralSettings",
+                      comment: "verb; menu item")
+            case .none:
+                .init("NoDocumentOnLaunchOption.none.label",
+                      defaultValue: "Do Nothing",
+                      table: "GeneralSettings",
+                      comment: "verb; menu item")
+        }
+    }
+}
+
+
+private extension DocumentConflictOption {
+    
+    var label: LocalizedStringResource {
+        
+        switch self {
+            case .ignore:
+                .init("DocumentConflictOption.ignore.label",
+                      defaultValue: "Keep CotEditor’s version",
+                      table: "GeneralSettings",
+                      comment: "verb; button; version refers to the document’s contents")
+            case .notify:
+                .init("DocumentConflictOption.notify.label",
+                      defaultValue: "Ask how to resolve",
+                      table: "GeneralSettings",
+                      comment: "verb; button")
+            case .revert:
+                .init("DocumentConflictOption.revert.label",
+                      defaultValue: "Update to modified version",
+                      table: "GeneralSettings",
+                      comment: "verb; button; version refers to the document’s contents")
+        }
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview {
+    GeneralSettingsView(showsUpdaterSettings: false)
+        .scenePadding()
+}
+
+#Preview("with Sparkle") {
+    GeneralSettingsView(showsUpdaterSettings: true)
+        .scenePadding()
+}
+
+#Preview("Warnings Setting") {
+    WarningsSettingView()
+        .scenePadding()
+}

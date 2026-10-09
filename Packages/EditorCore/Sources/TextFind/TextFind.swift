@@ -1,0 +1,537 @@
+//
+//  TextFind.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2017-02-02.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2015-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+public import Foundation
+public import LineEnding
+public import ValueRange
+import StringUtils
+
+public struct TextFind: Equatable, Sendable {
+    
+    public typealias ReplacementItem = ValueRange<String>
+    
+    
+    public enum Action: Sendable {
+        
+        case find
+        case replace
+    }
+    
+    
+    public enum Mode: Equatable, Sendable {
+        
+        case textual(options: String.CompareOptions, fullWord: Bool)  // don't include .backwards to options
+        case regularExpression(options: NSRegularExpression.Options, unescapesReplacement: Bool)
+    }
+    
+    
+    public enum Error: Swift.Error, Equatable, Sendable {
+        
+        case regularExpression(reason: String)
+        case emptyFindString
+        case emptyInSelectionSearch
+    }
+
+
+    public struct Pattern: Equatable, Sendable {
+        
+        public let findString: String
+        public let mode: TextFind.Mode
+        
+        fileprivate let regex: NSRegularExpression?
+        fileprivate let fullWordChecker: NSRegularExpression?
+        
+        
+        /// Creates a compiled text find pattern.
+        ///
+        /// - Parameters:
+        ///   - findString: The string for which to search.
+        ///   - mode: The settable options for the text search.
+        /// - Throws: `TextFind.Error` if the find string is empty or an invalid regular expression.
+        public init(findString: String, mode: TextFind.Mode) throws(TextFind.Error) {
+            
+            guard !findString.isEmpty else {
+                throw .emptyFindString
+            }
+            
+            switch mode {
+                case .textual(let options, let isFullWord):
+                    assert(!options.contains(.backwards))
+                    self.regex = nil
+                    self.fullWordChecker = isFullWord ? try! NSRegularExpression(pattern: #"^\b.+\b$"#) : nil
+                    
+                case .regularExpression(let options, _):
+                    do {
+                        self.regex = try NSRegularExpression(pattern: findString, options: options)
+                    } catch {
+                        throw .regularExpression(reason: error.localizedDescription)
+                    }
+                    self.fullWordChecker = nil
+            }
+            
+            self.findString = findString
+            self.mode = mode
+        }
+    }
+    
+    
+    // MARK: Public Properties
+    
+    public var findString: String  { self.pattern.findString }
+    public var mode: TextFind.Mode  { self.pattern.mode }
+    public let inSelection: Bool
+    
+    public let string: String
+    /// The line ending to use in inserted text, or `nil` to preserve its line endings.
+    public let lineEnding: LineEnding?
+    public let selectedRanges: [NSRange]
+    
+    
+    // MARK: Private Properties
+    
+    private let pattern: Pattern
+    private let scopeRanges: [NSRange]
+    
+    
+    // MARK: Lifecycle
+    
+    /// Returns a TextFind instance that searches the entire string with the specified compiled pattern.
+    ///
+    /// - Parameters:
+    ///   - string: The string to search.
+    ///   - pattern: The compiled text find pattern.
+    ///   - lineEnding: The line ending to use in inserted text, or `nil` to preserve its line endings.
+    public init(for string: String, pattern: Pattern, lineEnding: LineEnding? = nil) {
+        
+        self.pattern = pattern
+        self.inSelection = false
+        self.string = string
+        self.lineEnding = lineEnding
+        self.selectedRanges = [NSRange()]
+        self.scopeRanges = [string.range]
+    }
+    
+    
+    /// Returns a TextFind instance with the specified compiled pattern and selection options.
+    ///
+    /// - Parameters:
+    ///   - string: The string to search.
+    ///   - pattern: The compiled text find pattern.
+    ///   - lineEnding: The line ending to use in inserted text, or `nil` to preserve its line endings.
+    ///   - inSelection: Whether find string only in selectedRanges.
+    ///   - selectedRanges: The selected ranges in the text view.
+    /// - Throws: `TextFind.Error.emptyInSelectionSearch` if searching in an empty selection.
+    public init(for string: String, pattern: Pattern, lineEnding: LineEnding? = nil, inSelection: Bool = false, selectedRanges: [NSRange]) throws(TextFind.Error) {
+        
+        assert(!selectedRanges.isEmpty)
+        
+        guard !inSelection || !selectedRanges.allSatisfy(\.isEmpty) else {
+            throw .emptyInSelectionSearch
+        }
+        
+        self.pattern = pattern
+        self.inSelection = inSelection
+        self.string = string
+        self.lineEnding = lineEnding
+        self.selectedRanges = selectedRanges
+        self.scopeRanges = inSelection ? selectedRanges : [string.range]
+    }
+    
+    
+    // MARK: Public Methods
+    
+    /// The number of capture groups in the regular expression.
+    public var numberOfCaptureGroups: Int {
+        
+        self.pattern.regex?.numberOfCaptureGroups ?? 0
+    }
+    
+    
+    /// The range large enough to contain all scope ranges.
+    public var scopeRange: Range<Int> {
+        
+        self.scopeRanges.map(\.lowerBound).min()!..<self.scopeRanges.map(\.upperBound).max()!
+    }
+    
+    
+    /// All matched ranges.
+    ///
+    /// - Throws: `CancellationError`.
+    public var matches: [NSRange] {
+        
+        get throws(CancellationError) {
+            var ranges: [NSRange] = []
+            for range in self.scopeRanges {
+                self.enumerateMatches(in: range) { matchedRange, _, _ in
+                    ranges.append(matchedRange)
+                }
+                guard !Task.isCancelled else { throw CancellationError() }
+            }
+            return ranges
+        }
+    }
+    
+    
+    /// Returns the nearest match in `matches` from the insertion point.
+    ///
+    /// - Parameters:
+    ///   - matches: The matched ranges to find in, sorted in ascending order by range location so that both lower and upper bounds are nondecreasing.
+    ///   - forward: Whether searches forward.
+    ///   - includingSelection: Whether includes the current selection to search.
+    ///   - wraps: Whether the search wraps around.
+    /// - Returns: A character range and flag whether the search wrapped; or `nil` when not found.
+    public func find(in matches: [NSRange], forward: Bool, includingSelection: Bool = false, wraps: Bool) -> (range: NSRange, wrapped: Bool)? {
+        
+        assert(forward || !includingSelection)
+        
+        guard !matches.isEmpty else { return nil }
+        
+        if self.inSelection {
+            guard let foundRange = forward ? matches.first : matches.last else { return nil }
+            
+            return (range: foundRange, wrapped: false)
+        }
+        
+        let selectedRange = self.selectedRanges.first!
+        let startLocation = forward
+            ? (includingSelection ? selectedRange.lowerBound : selectedRange.upperBound)
+            : (includingSelection ? selectedRange.upperBound : selectedRange.lowerBound)
+        
+        if forward {
+            var index = matches.partitioningIndex { $0.lowerBound >= startLocation }
+            if !includingSelection, index < matches.endIndex, matches[index] == selectedRange {
+                matches.formIndex(after: &index)
+            }
+            if index < matches.endIndex {
+                return (range: matches[index], wrapped: false)
+            }
+        } else {
+            let index = matches.partitioningIndex { $0.upperBound > startLocation }
+            if index > matches.startIndex {
+                var foundIndex = matches.index(before: index)
+                if matches[foundIndex] == selectedRange {
+                    if foundIndex > matches.startIndex {
+                        matches.formIndex(before: &foundIndex)
+                    } else {
+                        foundIndex = matches.endIndex
+                    }
+                }
+                if foundIndex < matches.endIndex {
+                    return (range: matches[foundIndex], wrapped: false)
+                }
+            }
+        }
+        
+        guard wraps,
+              let foundRange = forward ? matches.first : matches.last
+        else { return nil }
+        
+        return (range: foundRange, wrapped: true)
+    }
+    
+    
+    /// Returns ReplacementItem replacing matched string in selection.
+    ///
+    /// - Parameters:
+    ///   - replacementString: The string with which to replace.
+    /// - Returns: The struct of a string to replace with and a range to replace if found. Otherwise, nil.
+    public func replace(with replacementString: String) -> ReplacementItem? {
+        
+        let string = self.string
+        let selectedRange = self.selectedRanges.first!
+        
+        switch self.mode {
+            case .textual(let options, _):
+                let matchedRange = (string as NSString).range(of: self.findString, options: options, range: selectedRange)
+                guard matchedRange.location != NSNotFound else { return nil }
+                guard self.checkFullWord(in: matchedRange) else { return nil }
+                
+                return ReplacementItem(value: self.normalizeLineEndings(in: replacementString), range: matchedRange)
+                
+            case .regularExpression:
+                let regex = self.pattern.regex!
+                guard let match = regex.firstMatch(in: string, options: [.withTransparentBounds, .withoutAnchoringBounds], range: selectedRange) else { return nil }
+                
+                let template = self.replacementString(from: replacementString)
+                let replacedString = regex.replacementString(for: match, in: string, offset: 0, template: template)
+                
+                return ReplacementItem(value: self.normalizeLineEndings(in: replacedString), range: match.range)
+        }
+    }
+    
+    
+    /// Finds all matches in the scopes.
+    ///
+    /// - Parameters:
+    ///   - block: The block enumerates the matches.
+    ///   - matches: The array of matches including group matches.
+    ///   - stop: The `block` can set the value to true to stop further processing.
+    /// - Throws: `CancellationError` if the task is cancelled.
+    public func findAll(using block: (_ matches: [NSRange], _ stop: inout Bool) -> Void) throws(CancellationError) {
+        
+        for range in self.scopeRanges {
+            self.enumerateMatches(in: range) { matchedRange, match, stop in
+                let matches: [NSRange] = if let match {
+                    (0..<match.numberOfRanges).map(match.range(at:))
+                } else {
+                    [matchedRange]
+                }
+                
+                block(matches, &stop)
+            }
+            
+            guard !Task.isCancelled else { throw CancellationError() }
+        }
+    }
+    
+    
+    /// Replaces all matches in the scopes.
+    ///
+    /// - Parameters:
+    ///   - replacementString: The string with which to replace.
+    ///   - block: The block notifying the replacement progress.
+    ///   - range: The matched range.
+    ///   - stop: The `block` can set the value to true to stop further processing.
+    /// - Returns:
+    ///   - replacementItems: ReplacementItem per selectedRange.
+    ///   - selectedRanges: New selections for textView only if the replacement is performed within selection. Otherwise, `nil`.
+    /// - Throws: `CancellationError` if the task is cancelled.
+    public func replaceAll(with replacementString: String, using block: @escaping (_ range: NSRange, _ count: Int, _ stop: inout Bool) -> Void) throws(CancellationError) -> (replacementItems: [ReplacementItem], selectedRanges: [NSRange]?) {
+        
+        let replacementString = self.replacementString(from: replacementString)
+        var replacementItems: [ReplacementItem] = []
+        var selectedRanges: [NSRange] = []
+        var locationOffset = 0
+        
+        for scopeRange in self.scopeRanges {
+            let scopeString = NSMutableString(string: (self.string as NSString).substring(with: scopeRange))
+            var ioStop = false
+            
+            // replace string
+            switch self.mode {
+                case .textual(options: let options, fullWord: let fullWord) where !fullWord:
+                    // replace at once for performance
+                    let replacementString = self.normalizeLineEndings(in: replacementString)
+                    let count = scopeString.replaceOccurrences(of: self.findString, with: replacementString, options: options, range: scopeString.range)
+                    block(scopeRange, count, &ioStop)
+                    
+                default:
+                    var offset = 0
+                    self.enumerateMatches(in: scopeRange) { matchedRange, match, stop in
+                        let replacedString: String = if let match, let regex = match.regularExpression {
+                            regex.replacementString(for: match, in: self.string, offset: 0, template: replacementString)
+                        } else {
+                            replacementString
+                        }
+                        
+                        let normalizedString = self.normalizeLineEndings(in: replacedString)
+                        
+                        let localRange = matchedRange.shifted(by: -scopeRange.location - offset)
+                        scopeString.replaceCharacters(in: localRange, with: normalizedString)
+                        offset += matchedRange.length - normalizedString.length
+                        
+                        block(matchedRange, 1, &ioStop)
+                        stop = ioStop
+                    }
+            }
+            
+            guard !Task.isCancelled else { throw CancellationError() }
+            guard !ioStop else { break }
+            
+            // append only when actually modified
+            // -> Use literal comparison to detect normalization-equivalent scalar changes.
+            let originalString = (self.string as NSString).substring(with: scopeRange)
+            if scopeString.compare(originalString, options: .literal) != .orderedSame {
+                replacementItems.append(ReplacementItem(value: scopeString.copy() as! String, range: scopeRange))
+            }
+            
+            // build selectedRange
+            if self.inSelection {
+                let location = scopeRange.location + locationOffset
+                selectedRanges.append(NSRange(location: location, length: scopeString.length))
+                locationOffset += scopeString.length - scopeRange.length
+            }
+        }
+        
+        selectedRanges.unique()
+        
+        return (replacementItems, self.inSelection ? selectedRanges : nil)
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// Normalizes line endings in replacement text.
+    ///
+    /// - Parameter string: The expanded replacement text.
+    /// - Returns: The normalized text, or the original text if no line ending is specified.
+    private func normalizeLineEndings(in string: String) -> String {
+        
+        guard let lineEnding = self.lineEnding, string.contains(where: \.isNewline) else { return string }
+        
+        return string.replacingLineEndings(with: lineEnding)
+    }
+    
+    
+    /// Unescapes the given string for use as the replacement template as needed.
+    ///
+    /// - Parameters:
+    ///   - string: The string to use as the replacement template.
+    /// - Returns: Unescaped replacement template string.
+    private func replacementString(from string: String) -> String {
+        
+        switch self.mode {
+            case .regularExpression(_, let unescapes) where unescapes:
+                string.unescapedTemplate
+            case .regularExpression, .textual:
+                string
+        }
+    }
+    
+    
+    /// Checks if the given range is a range of whole word.
+    ///
+    /// - Parameters:
+    ///   - range: The character range to test.
+    /// - Returns: Whether the substring of the given range is full word.
+    private func checkFullWord(in range: NSRange) -> Bool {
+        
+        guard let fullWordChecker = self.pattern.fullWordChecker else { return true }
+        
+        return fullWordChecker.firstMatch(in: self.string, options: .withTransparentBounds, range: range) != nil
+    }
+    
+    
+    /// Enumerates matches in string using current settings.
+    ///
+    /// - Parameters:
+    ///   - range: The range of the string to search.
+    ///   - block: The block that enumerates the matches.
+    private func enumerateMatches(in range: NSRange, using block: (_ matchedRange: NSRange, _ match: NSTextCheckingResult?, _ stop: inout Bool) -> Void) {
+        
+        switch self.mode {
+            case let .textual(options, fullWord):
+                self.enumerateTextualMatches(in: range, options: options, fullWord: fullWord, using: block)
+            case .regularExpression:
+                self.enumerateRegularExpressionMatches(in: range, using: block)
+        }
+    }
+    
+    
+    /// Enumerates matches in string using textual search.
+    ///
+    /// - Parameters:
+    ///   - range: The range of the string to search.
+    ///   - options: The search options.
+    ///   - fullWord: When `true`, only full words are matched.
+    ///   - block: The block that enumerates the matches.
+    private func enumerateTextualMatches(in range: NSRange, options: String.CompareOptions, fullWord: Bool, using block: (_ matchedRange: NSRange, _ match: NSTextCheckingResult?, _ stop: inout Bool) -> Void) {
+        
+        guard !self.string.isEmpty else { return }
+        
+        let string = self.string as NSString
+        var searchRange = range
+        
+        while searchRange.location != NSNotFound {
+            guard !Task.isCancelled else { return }
+            
+            searchRange.length = range.upperBound - searchRange.location
+            let foundRange = string.range(of: self.findString, options: options, range: searchRange)
+            
+            guard !foundRange.isNotFound else { break }
+            
+            searchRange.location = foundRange.upperBound
+            
+            guard self.checkFullWord(in: foundRange) else { continue }
+            
+            var stop = false
+            block(foundRange, nil, &stop)
+            
+            guard !stop else { return }
+        }
+    }
+    
+    
+    /// Enumerates matches in string using regular expression.
+    ///
+    /// - Parameters:
+    ///   - range: The range of the string to search.
+    ///   - block: The block that enumerates the matches.
+    private func enumerateRegularExpressionMatches(in range: NSRange, using block: (_ matchedRange: NSRange, _ match: NSTextCheckingResult?, _ stop: inout Bool) -> Void) {
+        
+        let string = self.string
+        let options: NSRegularExpression.MatchingOptions = [.withTransparentBounds, .withoutAnchoringBounds, .reportProgress]
+        var progressCount = 0
+        
+        unsafe self.pattern.regex!.enumerateMatches(in: string, options: options, range: range) { result, _, stop in
+            if result == nil {
+                // -> Progress callbacks arrive at every scan position, so check cancellation only occasionally to keep the overhead low.
+                progressCount &+= 1
+                guard progressCount.isMultiple(of: 256) else { return }
+            }
+            
+            guard !Task.isCancelled else {
+                unsafe stop.pointee = true
+                return
+            }
+            
+            guard let result else { return }
+            
+            var ioStop = false
+            block(result.range, result, &ioStop)
+            
+            if ioStop {
+                unsafe stop.pointee = ObjCBool(ioStop)
+            }
+        }
+    }
+}
+
+
+private extension String {
+    
+    /// Unescaped version of the string for use as the ICU replacement template.
+    ///
+    /// Unlike `unescaped`, escaped backslashes remain escaped
+    /// so that the ICU template engine, which consumes backslashes as the escape character,
+    /// interprets them as literal backslashes.
+    var unescapedTemplate: String {
+        
+        self.replacing(/\\([0tnr"'\\])/) { match in
+            // -> According to the Swift documentation, these are the all combinations with backslash.
+            //    cf. https://docs.swift.org/swift-book/LanguageGuide/StringsAndCharacters.html#ID295
+            switch match.1 {
+                case "0": "\0"  // null character
+                case "t": "\t"  // horizontal tab
+                case "n": "\n"  // line feed
+                case "r": "\r"  // carriage return
+                case "\"": "\""  // double quotation mark
+                case "'": "'"  // single quotation mark
+                case "\\": #"\\"#  // escaped backslash (keep escaped for the template)
+                default: fatalError()
+            }
+        }
+    }
+}

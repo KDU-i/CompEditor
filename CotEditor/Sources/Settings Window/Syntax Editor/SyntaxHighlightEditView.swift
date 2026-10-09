@@ -1,0 +1,161 @@
+//
+//  SyntaxHighlightEditView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2023-01-18.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2023-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import SyntaxFormat
+
+struct SyntaxHighlightEditView: View {
+    
+    typealias Item = SyntaxObject.Highlight
+    
+    
+    @Binding var items: [Item]
+    
+    @State private var selection: Set<Item.ID> = []
+    @State private var sortOrder: [KeyPathComparator<Item>] = []
+    @FocusState private var focusedField: Item.ID?
+    
+    
+    // MARK: View
+    
+    var body: some View {
+        
+        VStack(alignment: .leading) {
+            // pre-calculate the item positions to avoid a linear search for each cell
+            let itemIndexes: [Item.ID: Int] = self.items.enumerated()
+                .reduce(into: [:]) { indexes, item in indexes[item.element.id] = item.offset }
+            
+            // create a table with wrapped values and then find the editable item again in each column to enable sorting (2025-07, macOS 26)
+            Table(self.items, selection: $selection, sortOrder: $sortOrder) {
+                TableColumn(.init("RE", table: "SyntaxEditor", comment: "table column header (RE for Regular Expression)"), value: \.value.isRegularExpression, comparator: BoolComparator()) { wrappedItem in
+                    if let item = self.item(with: wrappedItem.id, in: itemIndexes) {
+                        Toggle(isOn: $items.selectionBinding(for: item, selection: $selection, keyPath: \.value.isRegularExpression), label: EmptyView.init)
+                            .help(.init("Regular Expression", table: "SyntaxEditor", comment: "tooltip for RE checkbox"))
+                            .accessibilityLabel(.init("Regular Expression", table: "SyntaxEditor", comment: "tooltip for RE checkbox"))
+                    }
+                }
+                .width(24)
+                .alignment(.center)
+                
+                TableColumn(.init("IC", table: "SyntaxEditor", comment: "table column header (IC for Ignore Case)"), value: \.value.ignoreCase, comparator: BoolComparator()) { wrappedItem in
+                    if let item = self.item(with: wrappedItem.id, in: itemIndexes) {
+                        Toggle(isOn: $items.selectionBinding(for: item, selection: $selection, keyPath: \.value.ignoreCase), label: EmptyView.init)
+                            .help(.init("Ignore Case", table: "SyntaxEditor", comment: "tooltip for IC checkbox"))
+                            .accessibilityLabel(.init("Ignore Case", table: "SyntaxEditor", comment: "tooltip for IC checkbox"))
+                    }
+                }
+                .width(24)
+                .alignment(.center)
+                
+                TableColumn(.init("Begin String", table: "SyntaxEditor", comment: "noun; table column header; the string or pattern marking the beginning of a syntax element"), value: \.value.begin) { wrappedItem in
+                    if let item = self.item(with: wrappedItem.id, in: itemIndexes) {
+                        HStack {
+                            RegexTextField(text: item.value.begin)
+                                .regexHighlighted(item.value.isRegularExpression.wrappedValue)
+                                .style(.table)
+                            
+                            if wrappedItem.value.isRegularExpression {
+                                RegexValidationMark(pattern: wrappedItem.value.begin)
+                            }
+                        }
+                        .focused($focusedField, equals: item.id)
+                    }
+                }
+                
+                TableColumn(.init("End String", table: "SyntaxEditor", comment: "noun; table column header; the string or pattern marking the end of a syntax element"), sortUsing: KeyPathComparator(\.value.end)) { wrappedItem in
+                    if let item = self.item(with: wrappedItem.id, in: itemIndexes) {
+                        HStack {
+                            RegexTextField(text: item.value.end ?? "")
+                                .regexHighlighted(item.value.isRegularExpression.wrappedValue)
+                                .style(.table)
+                            
+                            if let end = wrappedItem.value.end, wrappedItem.value.isRegularExpression {
+                                RegexValidationMark(pattern: end)
+                            }
+                        }
+                    }
+                }
+                
+                TableColumn(.init("Multiline", table: "SyntaxEditor", comment: "table column header, keep short"), value: \.value.isMultiline, comparator: BoolComparator()) { wrappedItem in
+                    if let item = self.item(with: wrappedItem.id, in: itemIndexes) {
+                        Toggle(isOn: $items.selectionBinding(for: item, selection: $selection, keyPath: \.value.isMultiline), label: EmptyView.init)
+                    }
+                }
+                .alignment(.center)
+                
+                TableColumn(.init("Description", table: "SyntaxEditor", comment: "table column header"), sortUsing: KeyPathComparator(\.value.description)) { wrappedItem in
+                    if let item = self.item(with: wrappedItem.id, in: itemIndexes) {
+                        TextField(text: item.value.description ?? "", label: EmptyView.init)
+                    }
+                }
+            }
+            .tableStyle(.bordered)
+            .border(Color(nsColor: .gridColor))
+            .onChange(of: self.sortOrder) { _, newValue in
+                self.items.sort(using: newValue)
+            }
+            
+            HStack {
+                AddRemoveButton($items, selection: $selection, newItem: Item()) { item in
+                    self.focusedField = item.id
+                }
+                ItemCountView(count: self.items.count)
+            }
+            
+            HStack {
+                Spacer()
+                HelpLink(anchor: "syntax_highlight_settings")
+            }
+        }
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// Returns the binding to the item with the given ID.
+    ///
+    /// - Parameters:
+    ///   - id: The ID of the item to find.
+    ///   - indexes: The pre-calculated table of the item positions.
+    /// - Returns: The binding to the item, or `nil` if not found.
+    private func item(with id: Item.ID, in indexes: [Item.ID: Int]) -> Binding<Item>? {
+        
+        indexes[id].map { self.$items[$0] }
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview {
+    @Previewable @State var items: [SyntaxObject.Highlight] = [
+        .init(value: .init(begin: "(inu)", end: "(dog)")),
+        .init(value: .init(begin: "[Cc]at", end: "$0", isRegularExpression: true, description: "note")),
+        .init(value: .init(begin: "[]", isRegularExpression: true, ignoreCase: true)),
+    ]
+    
+    SyntaxHighlightEditView(items: $items)
+        .scenePadding()
+}

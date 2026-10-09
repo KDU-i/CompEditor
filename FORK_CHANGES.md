@@ -1,0 +1,105 @@
+# Unofficial fork modifications
+
+Base: efd522f9fc9362a5211aef528b96a87dcad11335
+Snapshot: 6564009c8aa28c7cb7d34e550bace60929d91a77
+
+Java/Python LSP features, isolated settings, private build compatibility and release preparation. Original attribution and licenses retained. Staging fixture paths generalized; code-comment change notices added. Generated JSON/project metadata differences are listed below. No Git history is included.
+
+- .gitattributes
+- Configurations/SemanticEditor.xcconfig
+- CotEditor.xcodeproj/project.pbxproj
+- CotEditor.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+- CotEditor.xcodeproj/xcshareddata/xcschemes/CotEditor-Sparkle.xcscheme
+- CotEditor.xcodeproj/xcshareddata/xcschemes/CotEditor.xcscheme
+- CotEditor/Info.plist
+- CotEditor/Localizables/Application/ForkIdentity.xcstrings
+- CotEditor/Localizables/InfoPlist.xcstrings
+- CotEditor/Sources/Application/AppDelegate.swift
+- CotEditor/Sources/Application/ForkDisplayNameController.swift
+- CotEditor/Sources/Application/ForkIdentity.swift
+- CotEditor/Sources/Document Window/Content View/EditorTextViewController.swift
+- CotEditor/Sources/Document Window/Content View/FilePreviewView.swift
+- CotEditor/Sources/Document Window/Sidebar/File Browser/FileBrowserViewController+QuickLook.swift
+- CotEditor/Sources/Document Window/Sidebar/File Browser/FileBrowserViewController.swift
+- CotEditor/Sources/Document Window/Sidebar/Folder Find/FolderFindFileScopeView.swift
+- CotEditor/Sources/Document Window/Sidebar/Folder Find/FolderFinder.swift
+- CotEditor/Sources/Document Window/Text View/EditorTextView.swift
+- CotEditor/Sources/Document Window/Text View/NSTextView+LineNumber.swift
+- CotEditor/Sources/Document/DirectoryDocument.swift
+- CotEditor/Sources/Document/Document.swift
+- CotEditor/Sources/Document/PreviewDocument.swift
+- CotEditor/Sources/Document/RemoteDocument.swift
+- CotEditor/Sources/Models/Remote Editing/RemoteEditingController.swift
+- CotEditor/Sources/Models/Settings/PortableSettingsDocument.swift
+- CotEditor/Sources/Models/Syntax/SyntaxController.swift
+- CotEditor/Sources/Panels/AboutView.swift
+- CotEditor/Sources/Panels/DonationView.swift
+- CotEditor/Sources/Panels/SettingsPortViews.swift
+- CotEditor/Sources/Scanners/EditorCounter.swift
+- CotEditor/Sources/Scanners/URLDetector.swift
+- CotEditor/Sources/Semantic Completion/LSPClient.swift
+- CotEditor/Sources/Semantic Completion/LSPModel.swift
+- CotEditor/Sources/Semantic Completion/LSPSemanticDefaults.swift
+- CotEditor/Sources/Semantic Completion/SemanticAssistanceView.swift
+- CotEditor/Sources/Semantic Completion/SemanticCandidatePanel.swift
+- CotEditor/Sources/Semantic Completion/SemanticCompletionController.swift
+- CotEditor/Sources/Semantic Completion/SemanticGhostPreview.swift
+- CotEditor/Sources/Semantic Completion/SemanticHoverView.swift
+- CotEditor/Sources/Semantic Completion/SemanticSuggestStyle.swift
+- CotEditor/Sources/Setting Managers/SettingFileManaging.swift
+- CotEditor/Sources/Setting Managers/SyntaxManager.swift
+- CotEditor/Sources/Settings Window/Other Views/ThemeView.swift
+- CotEditor/Sources/Settings Window/Panes/AppearanceSettingsView.swift
+- CotEditor/Sources/Settings Window/Panes/FormatSettingsView.swift
+- CotEditor/Sources/Settings Window/Panes/GeneralSettingsView.swift
+- CotEditor/Sources/Settings Window/Panes/ModeSettingsView.swift
+- CotEditor/Sources/Settings Window/Syntax Editor/SyntaxEditView.swift
+- CotEditor/Sources/Text Finder/Multiple Replace/Views/MultipleReplaceListView.swift
+- CotEditor/Sources/Text Finder/Multiple Replace/Views/MultipleReplaceView.swift
+- CotEditor/Sources/Text Finder/TextFinder.swift
+- CotEditor/Sources/Utilities/SwiftUI/View+Alert.swift
+- CotEditor/Sources/Utilities/SwiftUI/View+ItemDialogs.swift
+- CotEditor/Sources/Utilities/TextKit/NSTextElementProvider.swift
+- Examples/servers.example.json
+- Packages/MacUI/Sources/ControlUI/ValidationItems/NSTouchBar+Validation.swift
+- Packages/Syntax/Sources/SyntaxParsers/RegexParser/Syntax+RegexParsers.swift
+- README.md
+- Release/ARTWORK_ATTRIBUTION.md
+- Release/CHECKLIST.md
+- Release/NOTICE.md
+- Release/PUBLICATION.md
+- Release/README.md
+- Release/RELEASE_NOTES_DRAFT.md
+- Release/THIRD_PARTY.md
+- RuntimeNotices/Node-v24.14.1-LICENSE.txt
+- RuntimeNotices/README.md
+- RuntimeNotices/VSCode-MIT-LICENSE.txt
+- SEMANTIC_COMPLETION.md
+- Scripts/audit-release-artifact.py
+- Scripts/build-release-candidate.sh
+- Scripts/build-semantic-editor.sh
+- Scripts/finalize-private-app.py
+- Scripts/finalize-release-candidate.py
+- Scripts/package-release-archive.py
+- Scripts/package-semantic-servers.py
+- Scripts/patch-jdt-diagnostics.py
+- Scripts/prepare-release-source.py
+- Scripts/test-completion-performance.sh
+- Scripts/test-real-assistance.sh
+- Scripts/test-real-servers.sh
+- Scripts/test-semantic-core.sh
+- SemanticTests/CompletionPerformance.swift
+- SemanticTests/CoreTests.swift
+- SemanticTests/ForkIdentityHarness.swift
+- SemanticTests/GuiCompletion.py
+- SemanticTests/PackageTests.py
+- SemanticTests/RealAssistanceTests.swift
+- SemanticTests/RealServerTests.swift
+- SemanticTests/gui-error-config.json
+- SemanticTests/mock_server.py
+- ServerPatches/jdtls-1.61/README.md
+- ServerPatches/jdtls-1.61/server-input.json
+- ServerPatches/jdtls-1.61/sources.json
+- ServerPatches/jdtls-1.61/upstream/BaseDiagnosticsHandler.java
+- ServerPatches/jdtls-1.61/upstream/BaseDocumentLifeCycleHandler.java
+- Tests/Sources/TextView/SemanticCompletionTests.swift

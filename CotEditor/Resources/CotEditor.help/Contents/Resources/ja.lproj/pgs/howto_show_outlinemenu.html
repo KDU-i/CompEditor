@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="アウトライン">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>MacのCotEditorで書類のアウトラインを一覧する</title>
+</head>
+
+<body>
+
+<h1>MacのCotEditorで書類のアウトラインを一覧する</h1>
+
+<p>CotEditorの<dfn>アウトライン</dfn>機能は、シンタックス定義に従って書類の該当する部分を抽出し、一覧（アウトライン）を生成する機能です。</p>
+
+<p>生成されたアウトラインはナビゲーションバーとインスペクタの2箇所に表示できます。</p>
+
+
+<section>
+<h2>「アウトライン」メニューを表示する</h2>
+
+<p>「アウトライン」メニューは、エディタの上にあるナビゲーションバーにポップアップメニューとして表示されます。メニューには、現在の挿入ポイントの直前にあるアウトライン項目が表示されます。メニューを開いて項目を選択すると、エディタ内で相当する部分が選択され移動します。</p>
+
+<figure>
+	<img class="bordered" src="../gfx/outline@2x.png" srcset="../gfx/outline@2x.png 2x" alt="アウトラインメニューのスクリーンショット">
+</figure>
+
+<ol>
+	<li><p>MacのCotEditorアプリ<img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt="">で、書類を開きます。</p></li>
+	<li><p>「表示」＞「ナビゲーションバーを表示」と選択します。</p></li>
+</ol>
+</section>
+
+
+<section>
+<h2>「アウトライン」インスペクタを表示する</h2>
+
+<p>「アウトライン」インスペクタは、インスペクタ内の「アウトライン」ペインに表示される表形式のリストです。目次のようにアウトライン項目を一覧でき、項目を選択すると書類内の対応する位置へ移動できます。</p>
+
+<ol>
+	<li><p>MacのCotEditorアプリ<img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt="">で、書類を開きます。</p></li>
+	<li><p>以下のいずれかの操作を行います:</p><ul>
+		<li><p>「表示」＞「インスペクタ」＞「アウトライン」と選択します。</p></li>
+		<li><p>ツールバーの「インスペクタ」をクリックしてインスペクタを表示し、リストアイコンで示される「アウトライン」ペインを選択します。</p></li>
+	</ul></li>
+</ol>
+</section>
+
+
+<section>
+<h2>エディタのアウトライン項目の位置に移動する</h2>
+
+<p>エディタ内で任意のアウトライン項目の位置に移動するには、以下のいずれかの操作を行います:</p>
+
+<ul>
+	<li><p>任意のアウトライン項目に移動する:</p><ul>
+		<li><p>ナビゲーションバーのアウトラインメニュー、または「アウトライン」インスペクタで目的のアウトライン項目を選択します。</p></li>
+	</ul></li>
+	
+	<li><p>現在の挿入ポイントの直前または直後のアウトライン項目に移動する:</p><ul>
+		<li><p>「検索」＞「前/次のアウトライン項目を選択」と選択します。</p></li>
+		<li><p>ナビゲーションバーのアウトラインメニューの横にある矢印ボタンをクリックします。</p></li>
+	</ul></li>
+</ul>
+
+</section>
+
+
+<section>
+<h2>抽出ルールをカスタマイズする</h2>
+
+<p>アウトラインに表示する項目とその表示方法の設定は、シンタックスごとに行います。<a href="syntax_definition.html">シンタックス定義</a>の<a href="syntax_outline_settings.html">アウトライン設定</a>で抽出ルールを設定できます。</p>
+</section>
+
+
+<section id="cf">
+<h2>関連項目</h2>
+<ul>
+	<li><a href="syntax_overview.html">MacのCotEditorでシンタックスを解析する</a></li>
+	<li><a href="syntax_outline_settings.html">MacのCotEditorでアウトライン抽出ルールを定義する</a></li>
+</ul>
+</section>
+
+</body>
+</html>

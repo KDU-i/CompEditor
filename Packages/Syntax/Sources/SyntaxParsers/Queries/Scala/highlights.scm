@@ -1,0 +1,205 @@
+;
+;  highlights.scm
+;  for Scala
+;
+;  CotEditor
+;  https://coteditor.com
+;
+;  © 2026 1024jp
+;
+
+; MARK: Keywords
+; ----------------------------
+
+[
+  "abstract"
+  "as"
+  "case"
+  "catch"
+  "class"
+  "def"
+  "derives"
+  "do"
+  "else"
+  "enum"
+  "export"
+  "extends"
+  "extension"
+  "final"
+  "finally"
+  "for"
+  "given"
+  "if"
+  "implicit"
+  "import"
+  "lazy"
+  "match"
+  "new"
+  "object"
+  "override"
+  "package"
+  "private"
+  "protected"
+  "return"
+  "sealed"
+  "then"
+  "throw"
+  "trait"
+  "try"
+  "type"
+  "using"
+  "val"
+  "var"
+  "while"
+  "with"
+  "yield"
+] @keywords
+
+[
+  (opaque_modifier)
+  (infix_modifier)
+  (transparent_modifier)
+  (open_modifier)
+  (inline_modifier)
+] @keywords
+
+(end_marker) @keywords
+
+((identifier) @keywords
+  (#match? @keywords "^this$|^super$"))
+
+
+; MARK: Commands
+; ----------------------------
+
+(function_declaration
+  name: (identifier) @commands)
+
+(function_definition
+  name: (identifier) @commands)
+
+(call_expression
+  function: (identifier) @commands)
+
+(call_expression
+  function: (operator_identifier) @commands)
+
+(call_expression
+  function: (field_expression
+    field: (identifier) @commands))
+
+(generic_function
+  function: (identifier) @commands)
+
+
+; MARK: Types
+; ----------------------------
+
+(type_identifier) @types
+
+(class_definition
+  name: (identifier) @types)
+
+(enum_definition
+  name: (identifier) @types)
+
+(object_definition
+  name: (identifier) @types)
+
+(trait_definition
+  name: (identifier) @types)
+
+(full_enum_case
+  name: (identifier) @types)
+
+(simple_enum_case
+  name: (identifier) @types)
+
+(type_definition
+  name: (type_identifier) @types)
+
+(field_expression
+  value: (identifier) @types
+  (#match? @types "^[A-Z]"))
+
+; MARK: Attributes
+; ----------------------------
+
+(annotation) @attributes
+
+
+; MARK: Variables
+; ----------------------------
+
+(class_parameter
+  name: (identifier) @variables)
+
+(parameter
+  name: (identifier) @variables)
+
+(binding
+  name: (identifier) @variables)
+
+(self_type
+  (identifier) @variables)
+
+(val_definition
+  pattern: (identifier) @variables)
+
+(var_definition
+  pattern: (identifier) @variables)
+
+(val_declaration
+  name: (identifier) @variables)
+
+(var_declaration
+  name: (identifier) @variables)
+
+
+; MARK: Values
+; ----------------------------
+
+[
+  (boolean_literal)
+  (null_literal)
+] @values
+
+
+; MARK: Numbers
+; ----------------------------
+
+[
+  (integer_literal)
+  (floating_point_literal)
+] @numbers
+
+
+; MARK: Strings
+; ----------------------------
+
+[
+  (string)
+  (character_literal)
+  (interpolated_string_expression)
+] @strings
+
+; -> Keep after the capture of the whole interpolated string:
+;    both captures start at the same position, and only a later pattern
+;    can repaint the interpolator over the whole-string capture.
+(interpolated_string_expression
+  interpolator: (identifier) @commands)
+
+
+; MARK: Characters
+; ----------------------------
+
+(interpolation "$" @characters)
+
+
+; MARK: Comments
+; ----------------------------
+
+[
+  (comment)
+  (block_comment)
+] @comments

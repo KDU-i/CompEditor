@@ -1,0 +1,305 @@
+//
+//  StringIndentationTests.swift
+//  TextEditingTests
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2015-11-24.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2015-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import Foundation
+import Testing
+@testable import TextEditing
+
+struct StringIndentationTests {
+    
+    // MARK: Indentation Style Detection Tests
+    
+    @Test func detectIndentStyle() {
+        
+        #expect("\t\tfoo\tbar".detectedIndentStyle == nil)
+        
+        #expect("""
+                \tfoo
+                \tbar
+                \tbaz
+                """.detectedIndentStyle == .tab)
+        
+        #expect("""
+                  foo
+                  bar
+                  baz
+                """.detectedIndentStyle == .space)
+        
+        #expect("""
+                \tfoo
+                  bar
+                """.detectedIndentStyle == nil)
+        
+        #expect("""
+                \tfoo
+                  bar
+                \tbaz
+                  qux
+                """.detectedIndentStyle == nil)
+        
+        #expect("""
+                \tfoo
+                  bar
+                \tbaz
+                  qux
+                  baz
+                \tqux
+                """.detectedIndentStyle == nil)
+    }
+    
+    
+    // MARK: Indentation Style Standardization Tests
+    
+    @Test func standardizeIndentStyleToTab() {
+        
+        let string = "     foo    bar\n  "
+        
+        // spaces to tab
+        #expect(string.standardizingIndent(to: .tab, tabWidth: 2) == "\t\t foo    bar\n\t")
+        #expect(string.standardizingIndent(to: .space, tabWidth: 2) == string)
+    }
+    
+    
+    @Test func standardizeIndentStyleToSpace() {
+        
+        let string = "\t\tfoo\tbar"
+        
+        #expect(string.standardizingIndent(to: .space, tabWidth: 2) == "    foo\tbar")
+        #expect(string.standardizingIndent(to: .tab, tabWidth: 2) == string)
+    }
+    
+    
+    // MARK: Text Editing Tests
+    
+    @Test func indent() {
+        
+        let string = "foo\nbar\nbaz"
+        let range = NSRange(location: 4, length: 3)
+        
+        let context = string.indent(style: .space, indentWidth: 2, in: [range])
+        
+        #expect(context.strings == ["  bar\n"])
+        #expect(context.ranges == [NSRange(location: 4, length: 4)])
+        #expect(context.selectedRanges == [NSRange(location: 6, length: 3)])
+    }
+    
+    
+    @Test func indentMultipleSelections() {
+        
+        // the restored selections must cover all lines of each selection,
+        // also for the selections after the first one
+        let string = "aaa\nbbb\nccc\nddd"
+        let ranges = [NSRange(location: 0, length: 7), NSRange(location: 8, length: 7)]
+        
+        let context = string.indent(style: .space, indentWidth: 4, in: ranges)
+        
+        #expect(context.strings == ["    aaa\n", "    bbb\n", "    ccc\n", "    ddd"])
+        #expect(context.selectedRanges == [NSRange(location: 4, length: 11), NSRange(location: 20, length: 11)])
+    }
+    
+    
+    @Test func outdent() throws {
+        
+        let string = "  foo\n\tbar\nbaz"
+        let range = NSRange(location: 0, length: string.utf16.count)
+        
+        let context = try #require(string.outdent(style: .space, indentWidth: 2, in: [range]))
+        
+        #expect(context.strings == ["foo\n", "bar\n", "baz"])
+        #expect(context.ranges == [
+            NSRange(location: 0, length: 6),
+            NSRange(location: 6, length: 5),
+            NSRange(location: 11, length: 3),
+        ])
+        #expect(context.selectedRanges == [NSRange(location: 0, length: range.length - 3)])
+    }
+    
+    
+    @Test func outdentNoChange() {
+        
+        let string = "foo\nbar"
+        let range = NSRange(location: 0, length: string.utf16.count)
+        
+        #expect(string.outdent(style: .space, indentWidth: 2, in: [range]) == nil)
+    }
+    
+    
+    @Test func outdentSelectionInsideIndent() throws {
+        
+        // the selection starting inside the leading indent must not underflow
+        let string = "    abcdefgh\n"
+        
+        let context = try #require(string.outdent(style: .space, indentWidth: 4, in: [NSRange(location: 1, length: 10)]))
+        
+        #expect(context.strings == ["abcdefgh\n"])
+        #expect(context.ranges == [NSRange(location: 0, length: 13)])
+        #expect(context.selectedRanges == [NSRange(location: 0, length: 7)])
+        
+        let caretContext = try #require(string.outdent(style: .space, indentWidth: 4, in: [NSRange(location: 2, length: 0)]))
+        
+        #expect(caretContext.selectedRanges == [NSRange(location: 0, length: 0)])
+    }
+    
+    @Test func smartOutdentLevel() {
+        
+        let tokens: [IndentToken] = [IndentToken(begin: "{", end: "}")!]
+        
+        let string = "{\n    foo\n    "
+        let range = NSRange(location: string.utf16.count, length: 0)
+        
+        #expect(string.smartOutdentLevel(with: "}", indentWidth: 4, tokens: tokens, in: range) == 1)
+        #expect(string.smartOutdentLevel(with: ")", indentWidth: 4, tokens: tokens, in: range) == 0)
+        
+        let noOutdentString = "{\n    foo\n    bar"
+        let noOutdentRange = NSRange(location: noOutdentString.utf16.count, length: 0)
+        
+        #expect(noOutdentString.smartOutdentLevel(with: "}", indentWidth: 4, tokens: tokens, in: noOutdentRange) == 0)
+    }
+    
+    
+    @Test func smartOutdentLevelSearchRange() {
+        
+        let tokens: [IndentToken] = [IndentToken(begin: "{", end: "}")!]
+        
+        // the opening token within the search margin is matched even in a large text
+        let nearString = "{\n" + String(repeating: " ", count: 40_000) + "\n    "
+        let nearRange = NSRange(location: nearString.utf16.count, length: 0)
+        #expect(nearString.smartOutdentLevel(with: "}", indentWidth: 4, tokens: tokens, in: nearRange) == 1)
+        
+        // the opening token farther than the search margin is left unmatched
+        let farString = "{\n" + String(repeating: " ", count: 60_000) + "\n    "
+        let farRange = NSRange(location: farString.utf16.count, length: 0)
+        #expect(farString.smartOutdentLevel(with: "}", indentWidth: 4, tokens: tokens, in: farRange) == 0)
+    }
+    
+    
+    @Test func convertIndentation() throws {
+        
+        #expect("".convertIndentation(to: .space, indentWidth: 2, in: [NSRange(0..<0)]) == nil)
+        
+        let string = "\tfoo\n\tbar"
+        let range = NSRange(location: 0, length: 0)
+        let context = try #require(string.convertIndentation(to: .space, indentWidth: 2, in: [range]))
+        
+        #expect(context.strings == ["  foo\n  bar"])
+        #expect(context.ranges == [NSRange(location: 0, length: string.utf16.count)])
+        #expect(context.selectedRanges == nil)
+    }
+    
+    
+    @Test func convertIndentationMidLineSelection() throws {
+        
+        // a selection starting mid-line must not convert whitespace that is not indentation
+        let string = "foo\tbar\n\tbaz\n"
+        let context = try #require(string.convertIndentation(to: .space, indentWidth: 4, in: [NSRange(location: 3, length: 9)]))
+        
+        #expect(context.strings == ["foo\tbar\n    baz\n"])
+        #expect(context.ranges == [NSRange(location: 0, length: 13)])
+    }
+    
+    
+    @Test func convertIndentationWithMixedSelections() throws {
+        
+        // an insertion point must not extend the conversion beyond non-empty selections
+        let string = "\tfoo\n\tbar\n"
+        let context = try #require(string.convertIndentation(to: .space, indentWidth: 4, in: [
+            NSRange(location: 1, length: 1),
+            NSRange(location: 5, length: 0),
+        ]))
+        
+        #expect(context.strings == ["    foo\n"])
+        #expect(context.ranges == [NSRange(location: 0, length: 5)])
+    }
+    
+    
+    // MARK: Editing Range Detection Tests
+    
+    @Test func rangeOfIndent() {
+        
+        let string = "  foo\n\tbar\nbaz"
+        
+        #expect(string.rangeOfIndent(at: 0) == NSRange(location: 0, length: 2))
+        #expect(string.rangeOfIndent(at: 3) == NSRange(location: 0, length: 2))
+        #expect(string.rangeOfIndent(at: 7) == NSRange(location: 6, length: 1))
+        #expect(string.rangeOfIndent(at: 11) == nil)
+        
+        let index = string.index(string.startIndex, offsetBy: 7)
+        #expect(string.rangeOfIndent(at: index) == string.index(string.startIndex, offsetBy: 6)..<string.index(string.startIndex, offsetBy: 7))
+    }
+    
+    @Test func detectIndentLevel() {
+        
+        #expect("    foo".indentLevel(at: 0, tabWidth: 4) == 1)
+        #expect("    foo".indentLevel(at: 4, tabWidth: 2) == 2)
+        #expect("\tfoo".indentLevel(at: 4, tabWidth: 2) == 1)
+        
+        // tab-space mix
+        #expect("  \t foo".indentLevel(at: 4, tabWidth: 2) == 2)
+        #expect("   \t foo".indentLevel(at: 4, tabWidth: 2) == 3)
+        
+        // multiline
+        #expect("    foo\n  bar".indentLevel(at: 10, tabWidth: 2) == 1)
+    }
+    
+    
+    @Test func softTabs() {
+        
+        // take the column shifts by the preceding insertions in the same line into account
+        #expect("ab cd".softTabs(for: [NSRange(location: 2, length: 0), NSRange(location: 5, length: 0)], tabWidth: 4) == ["  ", " "])
+        
+        // cursors in different lines are not affected
+        #expect("a\nb".softTabs(for: [NSRange(location: 1, length: 0), NSRange(location: 3, length: 0)], tabWidth: 4) == ["   ", "   "])
+        
+        // non-empty ranges shift the following columns by the replaced width
+        #expect("aa bb cc".softTabs(for: [NSRange(location: 2, length: 3), NSRange(location: 8, length: 0)], tabWidth: 4) == ["  ", " "])
+    }
+    
+    
+    @Test func deleteSoftTab() {
+        
+        let string = "     foo\n  bar   "
+        
+        #expect(string.rangeForSoftTabDeletion(in: NSRange(0..<0), tabWidth: 2) == nil)
+        #expect(string.rangeForSoftTabDeletion(in: NSRange(4..<5), tabWidth: 2) == nil)
+        #expect(string.rangeForSoftTabDeletion(in: NSRange(6..<6), tabWidth: 2) == nil)
+        #expect(string.rangeForSoftTabDeletion(in: NSRange(5..<5), tabWidth: 2) == NSRange(4..<5))
+        #expect(string.rangeForSoftTabDeletion(in: NSRange(4..<4), tabWidth: 2) == NSRange(2..<4))
+        #expect(string.rangeForSoftTabDeletion(in: NSRange(10..<10), tabWidth: 2) == nil)
+        #expect(string.rangeForSoftTabDeletion(in: NSRange(11..<11), tabWidth: 2) == NSRange(9..<11))
+        #expect(string.rangeForSoftTabDeletion(in: NSRange(16..<16), tabWidth: 2) == nil)
+    }
+}
+
+
+private extension String {
+    
+    func indentLevel(at location: Int, tabWidth: Int) -> Int {
+        
+        let index = self.index(self.startIndex, offsetBy: location)
+        
+        return self.indentLevel(at: index, tabWidth: tabWidth)
+    }
+}

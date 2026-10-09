@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="「一般」設定, 一般設定, 一般">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>MacのCotEditorで「一般」設定を変更する</title>
+</head>
+
+<body>
+<a name="settings_general"></a>
+
+<h1>MacのCotEditorで「一般」設定を変更する</h1>
+
+<p>MacのCotEditorアプリ<img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt="">で、起動時の動作などCotEditorの全体的な振る舞いを選択するには、「一般」設定を使用します。</p>
+
+<p>これらの設定を変更するには、「CotEditor」＞「設定」と選択してから、「一般」をクリックします。</p>
+
+
+<table class="settings">
+<thead>
+	<tr><th>オプション</th><th>説明</th></tr>
+</thead>
+
+<tbody>
+	<tr>
+		<th>最後のセッションのウインドウを開く</th>
+		<td><p>CotEditorを起動したときに、前回の終了時に開いていた書類を自動的に開いて表示します。この設定の変更は次回起動時に適用され、そのさらに次の起動から反映されます。</p></td>
+	</tr>
+	
+	<tr>
+		<th>何も開かれていなければ</th>
+		<td><p>起動時に何も書類がないときの振る舞いを設定します。</p>
+			<ul>
+				<li><em>新規書類を作成</em>: 空の書類を開きます。</li>
+				<li><em>「開く」ダイアログを表示</em>: 開くダイアログを表示します。</li>
+				<li><em>何もしない</em>: ただアプリを起動し何も新たに表示しません。</li>
+			</ul></td>
+	</tr>
+	
+	<tr>
+		<th>オートセーブとバージョンを有効にする</th>
+		<td><p>書類の編集中適宜変更を自動的にファイルに上書き保存します。また同時に、過去のバージョンを復帰できるシステムの機能「バージョン」も有効化し、さらにウインドウのタイトルバーからファイル名や保存位置を変更できるようになります。</p>
+			<p>この機能がオフのときも、CotEditorは予期しない終了に備えて常に最新版のバックアップを作成しています。</p>
+			<p>詳しくは、<a href="howto_save_document.html">書類を保存する</a>を参照してください。</p></td>
+	</tr>
+	
+	<tr>
+		<th>書類が別のアプリによって変更されたとき</th>
+		<td><p>CotEditorで編集している書類ファイルが別のアプリによって変更され内容が競合したときの挙動を設定します。</p>
+			<ul>
+				<li><em>CotEditorの編集内容を保持</em>: 現在の書類内容を保ったまま編集を続けます。書類を保存するときに改めてダイアログが出現し、上書きするかを尋ねます。</li>
+				
+				<li><em>解決方法を確認</em>: ファイルが別のアプリによって変更されるとダイアログが出現し、エディタの内容を保つか新しいファイルの内容に更新するかを選択できます。</li>
+				
+				<li><em>変更された内容に更新</em>: ファイルが別のアプリによって更新されるとCotEditorのウインドウ内のテキストを自動的に新しいファイルの内容に更新します。更新されると今までのアンドゥ履歴がリセットされることに留意してください。</li>
+			</ul></td>
+	</tr>
+	
+	<tr>
+		<th>警告ダイアログ</th>
+		<td><p>書類のエラーなどを見つけた際に警告ダイアログを表示するかどうかを管理します。各項目については、<a href="howto_manage_warnings.html">警告ダイアログを管理する</a>を参照してください。</p></td>
+	</tr>
+</tbody>
+</table>
+
+
+<table class="settings">
+<caption>ソフトウェアアップデート<span class="note">(非App Store版のみ)</span></caption>
+
+<thead>
+	<tr><th>オプション</th><th>説明</th></tr>
+</thead>
+
+<tbody>
+	<tr>
+		<th>自動的にアップデートを確認</th>
+		<td><p>起動時にCotEditorの新しいバージョンがリリースされているかをインターネット経由で自動で確認します。新しいバージョンがあるときは、その情報をダイアログで通知します。</p></td>
+	</tr>
+	
+	<tr>
+		<th>プレリリース版を対象に含める</th>
+		<td><p>ベータ版などプレリリースのバージョンもアップデート確認の対象になります。プレリリースは安定版ではないことに留意してください。</p></td>
+	</tr>
+</tbody>
+</table>
+
+
+<section id="cf">
+<h2>関連項目</h2>
+<ul>
+	<li><a href="settings.html">MacのCotEditorで設定を変更する</a></li>
+</ul>
+</section>
+
+</body>
+</html>

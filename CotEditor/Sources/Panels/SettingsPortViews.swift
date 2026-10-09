@@ -1,0 +1,274 @@
+// Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
+//
+//  SettingsPortViews.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2025-11-04.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2025-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import SemanticVersioning
+
+struct ExportSettingsView: View {
+    
+    typealias Types = PortableSettingsDocument.SettingTypes
+    
+    var includedTypes: [Types: [String]]
+    
+    
+    @Environment(\.dismiss) private var dismiss
+    
+    @State private var types: Types = .all
+    @State private var document: PortableSettingsDocument?
+    @State private var isFileExporterPresented = false
+    @State private var error: (any Error)?
+    
+    
+    var body: some View {
+        
+        VStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Export Settings", tableName: "SettingsPorting")
+                    .font(.system(size: 14, weight: .bold))
+                Text("Export selected settings as an archive to allow importing into other computers.", tableName: "SettingsPorting")
+            }
+            .padding(.bottom, 12)
+            
+            PortableTypesView(types: $types, includedTypes: self.includedTypes)
+            
+            SubmitButtonGroup(.init("Action.export.label", defaultValue: "Export…"), helpAnchor: "howto_port_settings", action: self.exportSettings)
+                .disabled(self.types.isEmpty)
+                .padding(.top)
+        }
+        .fileExporter(isPresented: $isFileExporterPresented, document: self.document, contentTypes: [.cotSettings], defaultFilename: nil) { result in
+            self.document = nil
+            switch result {
+                case .success:
+                    self.dismiss()
+                case .failure(let error):
+                    self.error = error
+            }
+        } onCancellation: {
+            self.document = nil
+        }
+        .alert(error: $error)
+        .frame(width: 340)
+    }
+    
+    
+    /// Exports the selected settings.
+    private func exportSettings() {
+        
+        do {
+            self.document = try PortableSettingsDocument(including: self.types)
+        } catch {
+            self.error = error
+            return
+        }
+        
+        self.isFileExporterPresented = true
+    }
+}
+
+
+struct ImportSettingsView: View {
+    
+    typealias Types = PortableSettingsDocument.SettingTypes
+    
+    var name: String
+    var document: PortableSettingsDocument
+    
+    
+    @Environment(\.dismiss) private var dismiss
+    
+    @State private var types: Types = .all
+    @State private var documentError: PortableSettingsDocument.Error?
+    @State private var error: (any Error)?
+    
+    
+    var body: some View {
+        
+        VStack(alignment: .leading, spacing: 8) {
+            Text(self.name)
+                .font(.system(size: 14, weight: .bold))
+            
+            if let documentError {
+                DocumentErrorView(error: documentError)
+                    .padding(.bottom, 8)
+            }
+            
+            Text("Select the items to import:", tableName: "SettingsPorting")
+            PortableTypesView(types: $types, includedTypes: self.document.bundledSettings)
+            
+            SubmitButtonGroup(.init("Action.import.ellipsis.label", defaultValue: "Import…"), helpAnchor: "howto_port_settings", action: self.importSettings)
+                .disabled(self.types.isEmpty)
+                .padding(.top)
+        }
+        .onAppear {
+            self.documentError = nil
+            do throws(PortableSettingsDocument.Error) {
+                try self.document.checkVersion()
+            } catch {
+                self.documentError = error
+            }
+        }
+        .alert(error: $error)
+        .frame(width: 340)
+    }
+    
+    
+    /// Imports the selected settings.
+    private func importSettings() {
+        
+        do {
+            try self.document.applySettings(types: self.types)
+        } catch {
+            self.error = error
+            return
+        }
+        
+        self.dismiss()
+    }
+    
+    
+    private struct DocumentErrorView: View {
+        
+        var error: PortableSettingsDocument.Error
+        
+        
+        var body: some View {
+            
+            Label {
+                if let recoverySuggestion = self.error.recoverySuggestion {
+                    Text(self.error.localizedDescription + " " + recoverySuggestion)
+                } else {
+                    Text(self.error.localizedDescription)
+                }
+            } icon: {
+                Image(systemName: "exclamationmark.triangle")
+            }
+            .symbolVariant(.fill)
+            .symbolRenderingMode(.multicolor)
+            .fixedSize(horizontal: false, vertical: true)
+            .controlSize(.small)
+            .padding(6)
+            .background(RoundedRectangle(cornerRadius: 7)
+                .fill(.yellow.opacity(0.05))
+                .stroke(.yellow)
+            )
+        }
+    }
+}
+
+
+private struct PortableTypesView: View {
+    
+    typealias Types = PortableSettingsDocument.SettingTypes
+    
+    @Binding var types: Types
+    
+    var includedTypes: [Types: [String]]
+    
+    
+    var body: some View {
+        
+        Form {
+            Toggle(isOn: $types.bind(.settings)) {
+                Text(.init("SettingTypes.settings.label", defaultValue: "Settings", table: "SettingsPorting"))
+                Text(.init("SettingTypes.settings.description", defaultValue: "All settings in the Settings window", table: "SettingsPorting"))
+            }
+            
+            if let names = self.includedTypes[.themes], !names.isEmpty {
+                Toggle(isOn: $types.bind(.themes)) {
+                    Text(.init("SettingTypes.themes.label", defaultValue: "Themes", table: "SettingsPorting"))
+                    Text("\(names.count) custom themes", tableName: "SettingsPorting")
+                }
+            }
+            
+            if let names = self.includedTypes[.syntaxes], !names.isEmpty {
+                Toggle(isOn: $types.bind(.syntaxes)) {
+                    Text(.init("SettingTypes.syntaxes.label", defaultValue: "Syntaxes", table: "SettingsPorting"))
+                    Text("\(names.count) custom syntaxes", tableName: "SettingsPorting")
+                }
+            }
+            
+            if let names = self.includedTypes[.replacements], !names.isEmpty {
+                Toggle(isOn: $types.bind(.replacements)) {
+                    Text(.init("SettingTypes.replacements.label", defaultValue: "Multiple Replace Definitions", table: "SettingsPorting"))
+                    Text("\(names.count) definitions", tableName: "SettingsPorting",
+                         comment: "unit for multiple replace settings")
+                }
+            }
+            
+            if let names = self.includedTypes[.fileScopes], !names.isEmpty {
+                Toggle(isOn: $types.bind(.fileScopes)) {
+                    Text(.init("SettingTypes.fileScopes.label", defaultValue: "File Scopes", table: "SettingsPorting"))
+                    Text("\(names.count) items", tableName: "SettingsPorting",
+                         comment: "unit for file scopes")
+                }
+            }
+        }
+        .monospacedDigit()
+        .formStyle(.grouped)
+        .scrollBounceBehavior(.basedOnSize)
+        .padding(-20)  // cancel paddings automatically added to grouped form (2026-09, macOS 26)
+    }
+}
+
+
+extension PortableSettingsDocument.Error: LocalizedError {
+    
+    var localizedDescription: String {
+        
+        switch self {
+            case .versionMismatch(let version):
+                String(localized: "Error.versionMismatch.description",
+                       defaultValue: "This settings archive was created by a different version of CotEditor (\(version, format: .version)).",
+                       table: "SettingsPorting")
+        }
+    }
+    
+    var recoverySuggestion: String? {
+        
+        switch self {
+            case .versionMismatch:
+                String(localized: "Error.versionMismatch.recoverySuggestion",
+                       defaultValue: "You can still import these items, but some settings may be incompatible.",
+                       table: "SettingsPorting")
+        }
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview("Export Settings") {
+    ExportSettingsView(includedTypes: PortableSettingsDocument.exportableSettings)
+        .scenePadding()
+}
+
+#Preview("Import Settings") {
+    var document = try! PortableSettingsDocument(including: .all)
+    document.info.version = Version(6, 0, 0)
+    
+    return ImportSettingsView(name: "Untitled", document: document)
+        .scenePadding()
+}

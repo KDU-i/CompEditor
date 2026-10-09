@@ -1,0 +1,338 @@
+// Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
+//
+//  AboutView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2024-03-15.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2024-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import AppKit.NSApplication
+
+struct AboutView: View {
+    
+    private enum Pane: CaseIterable {
+        
+        case credits
+        case license
+        
+        var label: LocalizedStringResource {
+            
+            switch self {
+                case .credits:
+                    .init("Credits", table: "About", comment: "noun; pane")
+                case .license:
+                    .init("Licenses", table: "About", comment: "noun; pane")
+            }
+        }
+    }
+    
+    
+    @State private var pane: Pane = .credits
+    @AppStorage(ForkIdentity.legacyDisplayNameKey) private var usesCotEditorDisplayName = false
+    
+    
+    var body: some View {
+        
+        HStack(spacing: 0) {
+            VStack(spacing: 6) {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .accessibilityLabel(.init("\(ForkIdentity.displayName(useCotEditor: self.usesCotEditorDisplayName)) icon", table: "About", comment: "%@ is application name"))
+                Text(ForkIdentity.displayName(useCotEditor: self.usesCotEditorDisplayName))
+                    .font(.title)
+                Text("Unofficial Java/Python fork of CotEditor", tableName: "ForkIdentity")
+                    .font(.caption)
+                Text("Version \(Bundle.main.shortVersion!) (\(Bundle.main.bundleVersion!))",
+                     tableName: "About",
+                     comment: "%1$@ is version number and %2$@ is build number")
+                
+                Link(String("KDU-i/CompEditor"), destination: ForkIdentity.supportURL)
+                    .foregroundStyle(.tint)
+                Link("Original icon: CotEditor Project · CC BY-NC-ND 4.0",
+                     destination: URL(string: "https://creativecommons.org/licenses/by-nc-nd/4.0/")!)
+                    .font(.caption2)
+                
+                Text(Bundle.main.copyright!)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .textSelection(.enabled)
+            .multilineTextAlignment(.center)
+            .accessibilitySortPriority(1)
+            .scenePadding([.leading, .vertical])
+            .padding(.trailing)
+            .frame(maxHeight: .infinity)
+            .frame(width: 200)
+            .background(.fill.quaternary)
+            
+            Divider()
+            
+            ScrollView(.vertical) {
+                switch self.pane {
+                    case .credits:
+                        CreditsView()
+                    case .license:
+                        LicenseView()
+                }
+            }
+            .safeAreaBar(edge: .top) {
+                Picker(selection: $pane.animation()) {
+                    ForEach(Pane.allCases, id: \.self) {
+                        Text($0.label)
+                    }
+                } label: {
+                    EmptyView()
+                }
+                .modifier { container in
+                    if #available(macOS 27, *) {
+                        container
+                            .pickerStyle(.tabs)
+                    } else {
+                        container
+                            .pickerStyle(.segmented)
+                            .tint(.secondary.opacity(0.5))
+                    }
+                }
+                .buttonBorderShape(.capsule)
+                .padding(10)
+            }
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .contentMargins(20, for: .scrollContent)
+            .frame(width: 350)
+        }
+        .controlSize(.small)
+        .frame(height: 360)
+    }
+}
+
+
+// MARK: -
+
+private struct Credits: Decodable {
+    
+    struct Contributor: Decodable {
+        
+        var name: String
+        var url: String?
+    }
+    
+    var project: [Contributor] = []
+    var original: Contributor?
+    var localization: [String: [Contributor]] = [:]
+    var contributors: [Contributor] = []
+}
+
+
+private struct CreditsView: View {
+    
+    @Namespace private var accessibility
+    
+    @State private var credits: Credits = .init()
+    
+    
+    var body: some View {
+        
+        LazyVStack(spacing: 6) {
+            SectionView(.init("The CotEditor Project", table: "About", comment: "section heading")) {
+                ForEach(self.credits.project, id: \.name) {
+                    ContributorView(contributor: $0)
+                }
+            }
+            
+            SectionView(.init("Localization", table: "About", comment: "section heading")) {
+                Grid(alignment: .leadingFirstTextBaseline, verticalSpacing: 4) {
+                    ForEach(self.credits.localization.sorted(using: KeyPathComparator(\.key)), id: \.key) { item in
+                        GridRow {
+                            Text(Locale.current.localizedString(forIdentifier: item.key)!)
+                                .foregroundStyle(.secondary)
+                                .gridColumnAlignment(.trailing)
+                                .accessibilityLabeledPair(role: .label, id: item.key, in: self.accessibility)
+                            VStack(alignment: .leading, spacing: 3) {
+                                ForEach(item.value, id: \.name) {
+                                    ContributorView(contributor: $0)
+                                }
+                            }
+                            .accessibilityLabeledPair(role: .content, id: item.key, in: self.accessibility)
+                        }
+                    }
+                }
+            }
+            
+            SectionView(.init("Code Contributors", table: "About", comment: "section heading")) {
+                Text(self.credits.contributors.map(\.name).sorted(using: .localized), format: .list(type: .and))
+                    .textSelection(.enabled)
+            }
+            
+            SectionView(.init("Special Thanks", table: "About", comment: "section heading")) {
+                Grid(alignment: .leadingFirstTextBaseline, verticalSpacing: 4) {
+                    GridRow {
+                        Text("original developer", tableName: "About")
+                            .foregroundStyle(.secondary)
+                            .gridColumnAlignment(.trailing)
+                        if let original = self.credits.original {
+                            ContributorView(contributor: original)
+                        }
+                    }
+                    Text("and everyone who supports CotEditor!", tableName: "About",
+                         comment: "last line of the Special Thanks section")
+                }
+            }
+            
+            Image(systemName: "dog")
+                .symbolVariant(.fill)
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+            
+            Text("CotEditor is an open source program\nlicensed under the Apache License, Version 2.0.", tableName: "About")
+                .textSelection(.enabled)
+            Link(String("https://github.com/coteditor"),
+                 destination: URL(string: "https://github.com/coteditor")!)
+            .foregroundStyle(.tint)
+        }
+        .task {
+            guard
+                let url = Bundle.main.url(forResource: "Credits", withExtension: "json"),
+                let data = try? Data(contentsOf: url),
+                let credits = try? JSONDecoder().decode(Credits.self, from: data)
+            else { return assertionFailure() }
+            self.credits = credits
+        }
+        .multilineTextAlignment(.center)
+        .lineSpacing(2)
+        .frame(maxWidth: .infinity)
+    }
+    
+    
+    private struct SectionView<Content: View>: View {
+        
+        var titleResource: LocalizedStringResource
+        @ContentBuilder var content: Content
+        
+        
+        init(_ titleResource: LocalizedStringResource, @ContentBuilder content: () -> Content) {
+            
+            self.titleResource = titleResource
+            self.content = content()
+        }
+        
+        
+        var body: some View {
+            
+            Section {
+                self.content
+                    .padding(.bottom, 14)
+            } header: {
+                Text(self.titleResource)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+    
+    
+    private struct ContributorView: View {
+        
+        var contributor: Credits.Contributor
+        
+        
+        var body: some View {
+            
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(self.contributor.name)
+                    .textSelection(.enabled)
+                LinkButton(url: self.contributor.url ?? "")
+                    .foregroundStyle(.tint)
+            }
+        }
+    }
+}
+
+
+// MARK: -
+
+private struct LicenseView: View {
+    
+    var body: some View {
+        
+        LazyVStack(alignment: .leading, spacing: 12) {
+            Text("CotEditor uses the following awesome technologies. We are deeply grateful to the people who make their valuable work available to us.", tableName: "About")
+                .lineSpacing(2)
+            
+            ForEach(LicenseItem.items, content: ItemView.init(item:))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    
+    
+    private struct ItemView: View {
+        
+        var item: LicenseItem
+        
+        @State private var content: String = ""
+        
+        
+        var body: some View {
+            
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .center, spacing: 4) {
+                    Text(self.item.name)
+                        .fontWeight(.semibold)
+                    
+                    LinkButton(url: self.item.url)
+                        .foregroundStyle(.tint)
+                    
+                    if let description = self.item.description {
+                        Text(" (\(description))")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                
+                Text(self.item.copyright)
+                
+                DisclosureGroup(self.item.license.name ?? String(localized: "License", table: "About")) {
+                    Text(self.content)
+                        .onAppear {
+                            guard self.content.isEmpty else { return }
+                            guard let content = try? self.item.license.content else { return assertionFailure() }
+                            
+                            self.content = content
+                        }
+                        .environment(\.locale, Locale(languageCode: .english))
+                        .environment(\.layoutDirection, .leftToRight)
+                }
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+
+extension LicenseItem: Identifiable {
+    
+    var id: String  { self.url }
+}
+
+
+// MARK: - Preview
+
+#Preview {
+    AboutView()
+}

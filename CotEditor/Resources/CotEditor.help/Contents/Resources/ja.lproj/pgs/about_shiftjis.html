@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="エンコーディング, Shift JIS, Windows">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>MacのCotEditorでShift JIS系のエンコーディングを使い分ける</title>
+</head>
+
+<body>
+
+<h1>MacのCotEditorでShift JIS系のエンコーディングを使い分ける</h1>
+
+<p>日本語のShift JIS系エンコーディングには複数のバリエーションがあります。用途に応じて使い分けることで、意図しない文字化けを防げます。</p>
+
+
+<p>CotEditorでは、以下の4種類のShift JIS系エンコーディングを区別して扱います:</p>
+
+<table>
+	<thead>
+		<tr><th>エンコーディング名</th><th>IANA文字セット名</th><th>説明</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>日本語（Shift JIS）</th><td>shift_jis</td><td><p>最も基本的なShift JISで、JIS第一・第二水準の漢字を扱えます。</p></td></tr>
+		<tr><th>日本語（Shift JIS X0213）</th><td>Shift_JIS</td><td><p>文字コード規格JIS X0213に対応し、JIS第一〜第四水準の漢字を扱えます。</p></td></tr>
+		<tr><th>日本語（Mac OS）</th><td>x-mac-japanese</td><td><p>Shift JISをもとに、Mac固有の文字を拡張したもので、Mac OS 9以前で使われていました。</p></td></tr>
+		<tr><th>日本語（Windows, DOS）</th><td>cp932</td><td><p>Shift JISをもとに、Windows固有の文字を拡張したものです。</p></td></tr>
+	</tbody>
+</table>
+
+<p>これらのエンコーディング名はmacOS標準の名称です。「日本語（Mac OS）」と「日本語（Windows, DOS）」は名称に「Shift JIS」を含みませんが、どちらもShift JISの拡張版です。</p>
+
+<p>適切なエンコーディングは場合によって異なりますが、一般には「日本語（Shift JIS）」が無難です。</p>
+
+
+<section>
+<h2>Shift JIS系エンコーディングにおける一部の文字の取り扱い</h2>
+
+<p>同じShift JISファミリーでも、一部の文字の取り扱いについて下記のような違いがあります:</p>
+
+<table>
+	<thead>
+		<tr><th></th><th>半角円マーク（&#x00A5;）</th><th>半角バックスラッシュ（&#x005C;）</th><th>半角チルダ（&#x007E;）</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>Shift JIS</th><td>使用可</td><td>全角バックスラッシュ（＼）に置換</td><td>クエスチョンマーク（?）に置換</td></tr>
+		<tr><th>Shift JIS X0213</th><td>使用可</td><td>全角バックスラッシュ（＼）に置換</td><td>全角チルダ（〜）に置換</td></tr>
+		<tr><th>Mac OS</th><td>使用可</td><td>使用可</td><td>使用可</td></tr>
+		<tr><th>Windows, DOS</th><td>半角バックスラッシュに置換（\）</td><td>使用可</td><td>使用可</td></tr>
+	</tbody>
+</table>
+
+<p>書類でこれらの文字を使うときにはテキストエンコーディングの違いに注意してください。</p>
+
+<p>これらの互換性のない文字が書類に含まれているかどうかを確認する方法は、<a href="howto_inspect_usedchar.html">書類のエンコーディングと非互換な文字を見つける</a>を参照してください。</p>
+</section>
+
+
+<section id="cf">
+<h2>関連項目</h2>
+<ul>
+	<li><a href="howto_inspect_usedchar.html">MacのCotEditorで書類のエンコーディングと非互換な文字を見つける</a></li>
+</ul>
+</section>
+
+</body>
+</html>

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en-us</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.coteditor.CotEditor.help</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>CotEditor</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>7.1.1</string>
+	<key>CFBundleSignature</key>
+	<string>hbwr</string>
+	<key>CFBundleVersion</key>
+	<string>850</string>
+	<key>HPDBookAccessPath</key>
+	<string>CotEditor.html</string>
+	<key>HPDBookIconPath</key>
+	<string>../Shared/gfx/icon_32x32@2x.png</string>
+	<key>HPDBookCSIndexPath</key>
+	<string>CotEditor.cshelpindex</string>
+	<key>HPDBookTitle</key>
+	<string>CotEditor User Guide</string>
+	<key>HPDBookType</key>
+	<string>3</string>
+</dict>
+</plist>

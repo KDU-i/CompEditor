@@ -1,0 +1,181 @@
+{
+    "project" : [
+        {
+            "name": "1024jp",
+            "url": "https://github.com/1024jp"
+        }
+    ],
+    "original" : {
+        "name": "nakamuxu",
+        "url": "https://www.aynimac.com"
+    },
+    "localization" : {
+        "en" : [
+            {
+                "name" : "1024jp"
+            }
+        ],
+        "ja" : [
+            {
+                "name" : "1024jp"
+            }
+        ],
+        "de" : [
+            {
+                "name" : "1024jp"
+            }
+        ],
+        "zh-Hans" : [
+            {
+                "name" : "Wei Wang (onevcat)",
+                "url" : "https://onevcat.com"
+            }
+        ],
+        "zh-hant" : [
+            {
+                "name" : "Shiki Suen",
+                "url" : "https://shiki.inmu.pro/about/"
+            },
+            {
+                "name" : "Wei Wang (onevcat)"
+            }
+        ],
+        "zh-HK" : [
+            {
+                "name" : "Tiffany Fung",
+                "url" : "https://github.com/changanmoon"
+            }
+        ],
+        "cs" : [
+            {
+                "name" : "Martin Růžička",
+                "url" : "https://github.com/martinr-kytka"
+            }
+        ],
+        "nl" : [
+            {
+                "name" : "Yasin Gunaydin",
+                "url" : "https://github.com/yasingunaydiin"
+            }
+        ],
+        "fr" : [
+            {
+                "name" : "Aurélien Roy",
+                "url" : "https://github.com/aurelien-roy"
+            }
+        ],
+        "it" : [
+            {
+                "name" : "Agostino Maiello",
+                "url" : "https://github.com/AgostinoM"
+            }
+        ],
+        "ko" : [
+            {
+                "name" : "Minseok Choe",
+                "url" : "https://github.com/stonechoe"
+            }
+        ],
+        "pt" : [
+            {
+                "name" : "Thiago Holanda",
+                "url" : "https://github.com/unnamedd"
+            },
+            {
+                "name" : "BR Lingo"
+            }
+        ],
+        "es" : [
+            {
+                "name" : "Agustín Borrego",
+                "url" : "https://github.com/techagus"
+            }
+        ],
+        "tr" : [
+            {
+                "name" : "Emir SARI",
+                "url" : "https://github.com/bitigchi"
+            }
+        ],
+        "pl" : [
+            {
+                "name" : "Rafał Kopicki",
+                "url" : "https://github.com/rkopicki"
+            }
+        ],
+        "ru" : [
+            {
+                "name" : "Andrey Lysikov",
+                "url" : "https://github.com/andrey-lysikov"
+            }
+        ],
+        "uk" : [
+            {
+                "name" : "Yaroslav Savchenko",
+                "url" : "https://github.com/sylion"
+            }
+        ],
+        "hi" : [
+            {
+                "name" : "Prajwal Raj",
+                "url" : "https://github.com/prajwal-raj"
+            }
+        ]
+    },
+    "contributors" : [
+        {
+            "name" : "M.Daimon",
+            "url" : "https://github.com/VoD",
+            "description": "syntax: METAFONT"
+        },
+        {
+            "name" : "cbnbg",
+            "description": "syntax: Pascal"
+        },
+        {
+            "name" : "kaz",
+            "url" : "https://github.com/kaz6120",
+            "description": "syntax: PHP"
+        },
+        {
+            "name" : "konn",
+            "url" : "https://konn-san.com",
+            "description": "syntax: Haskell"
+        },
+        {
+            "name" : "Aybars Nazlica",
+            "url" : "https://github.com/aybarsnazlica",
+            "description": "syntax: Metal"
+        },
+        {
+            "name" : "Kaito Udagawa",
+            "url" : "https://github.com/umireon",
+            "description": "scripting hook implementation"
+        },
+        {
+            "name" : "Naotaka Morimoto",
+            "url" : "http://naotaka.com",
+            "description": "automatic indent improvement"
+        },
+        {
+            "name" : "Yusuke Terada",
+            "url" : "https://doratex.hatenablog.jp",
+            "description": "improvement of the character inspector, and addition of normalizations in NFKC case-fold, modified NFC, and modified NFD"
+        },
+        {
+            "name" : "Hetima",
+            "url" : "http://hetima.com",
+            "description": "improvement of text coloring and completion"
+        },
+        {
+            "name" : "Haruka Kataoka",
+            "url" : "https://drumsoft.com",
+            "description": "improvement of completion list"
+        },
+        {
+            "name" : "Hiroto Sakai",
+            "url" : "http://www.fan.gr.jp/~sakai/",
+            "description": "original Japanese help book"
+        }
+    ]
+}

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "servers": [
+    {
+      "language": "python",
+      "executable": "/ABSOLUTE/PATH/TO/node",
+      "arguments": ["/ABSOLUTE/PATH/TO/pyright/langserver.index.js", "--stdio"]
+    },
+    {
+      "language": "java",
+      "executable": "/ABSOLUTE/PATH/TO/JDK/Contents/Home/bin/java",
+      "arguments": [
+        "-Declipse.application=org.eclipse.jdt.ls.core.id1",
+        "-Dosgi.bundles.defaultStartLevel=4",
+        "-Declipse.product=org.eclipse.jdt.ls.core.product",
+        "-Xmx1G",
+        "--add-modules=ALL-SYSTEM",
+        "--add-opens", "java.base/java.util=ALL-UNNAMED",
+        "--add-opens", "java.base/java.lang=ALL-UNNAMED",
+        "-jar", "/ABSOLUTE/PATH/TO/jdtls/plugins/org.eclipse.equinox.launcher_VERSION.jar",
+        "-configuration", "/ABSOLUTE/PATH/TO/YOUR/PRIVATE/jdtls-config_mac",
+        "-data", "{workspaceStorage}"
+      ]
+    }
+  ]
+}

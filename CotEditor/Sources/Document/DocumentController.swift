@@ -1,0 +1,593 @@
+//
+//  DocumentController.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by nakamuxu on 2004-12-14.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2004-2007 nakamuxu
+//  © 2014-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import AppKit
+import Combine
+import SwiftUI
+import UniformTypeIdentifiers
+import Defaults
+import RMate
+import StringUtils
+import URLUtils
+
+protocol AdditionalDocumentPreparing: NSDocument {
+    
+    func didMakeDocumentForExistingFile(url: URL)
+}
+
+
+@Observable final class DocumentController: NSDocumentController {
+    
+    // MARK: Public Properties
+    
+    private(set) var currentSyntaxName: String?
+    
+    
+    // MARK: Private Properties
+    
+    private var deferredDocuments: [Document]?  // non-nil while replacing a transient document
+    
+    private var mainWindowObserver: AnyCancellable?
+    private var fileDocumentObserver: AnyCancellable?
+    private var syntaxObserver: Task<Void, Never>?
+    
+    
+    // MARK: Lifecycle
+    
+    override init() {
+        
+        super.init()
+        
+        self.autosavingDelay = 5.0
+        
+        // observe the frontmost syntax change
+        self.mainWindowObserver = NSApp.publisher(for: \.mainWindow)
+            .debounce(for: .seconds(0.1), scheduler: RunLoop.main)
+            .map { $0?.windowController as? DocumentWindowController }
+            .sink { [unowned self] windowController in
+                guard let windowController else {
+                    self.fileDocumentObserver = nil
+                    self.observeSyntax(of: nil)
+                    return
+                }
+                
+                self.fileDocumentObserver = windowController.publisher(for: \.fileDocument, options: .initial)
+                    .debounce(for: .seconds(0.1), scheduler: RunLoop.main)
+                    .sink { [unowned self] in self.observeSyntax(of: $0 as? Document) }
+            }
+    }
+    
+    
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    
+    // MARK: Document Controller Methods
+    
+    override func openDocument(withContentsOf url: URL, display displayDocument: Bool) async throws -> (NSDocument, Bool) {
+        
+        defer {
+            // remove options selected in the open panel after the document opening flow finishes
+            PendingOpenOptions.remove(for: url)
+        }
+        
+        // do nothing for DirectoryDocument
+        if try url.isDirectory {
+            return try await super.openDocument(withContentsOf: url, display: displayDocument)
+        }
+        
+        // obtain transient document if exists
+        let transientDocument: Document?
+        if let document = self.transientDocument,
+           document.windowForSheet?.attachedSheet == nil
+        {
+            document.isTransient = false
+            self.deferredDocuments = []
+            transientDocument = document
+        } else {
+            transientDocument = nil
+        }
+        
+        let document: NSDocument
+        let documentWasAlreadyOpen: Bool
+        do {
+            (document, documentWasAlreadyOpen) = try await super.openDocument(withContentsOf: url, display: false)
+        } catch {
+            if let transientDocument {
+                // check the transient document is still intact
+                // -> The user may have edited the transient document while the file was being loaded.
+                if transientDocument.textStorage.length == 0 {
+                    if let document = self.deferredDocuments?.first {
+                        self.deferredDocuments?.removeFirst()
+                        self.replaceTransientDocument(transientDocument, with: document)
+                        document.makeWindowControllers()
+                        document.showWindows()
+                    } else {
+                        // restore the reserved transient document when the opening flow failed
+                        transientDocument.isTransient = true
+                    }
+                }
+                self.displayDeferredDocuments()
+            }
+            throw error
+        }
+        
+        if let document = document as? Document {
+            if let transientDocument {
+                // check the transient document is still intact
+                // -> The user may have edited the transient document while the file was being loaded.
+                if transientDocument.textStorage.length == 0 {
+                    self.replaceTransientDocument(transientDocument, with: document)
+                }
+                if displayDocument {
+                    document.makeWindowControllers()
+                    document.showWindows()
+                }
+                
+                self.displayDeferredDocuments()
+                
+            } else if displayDocument {
+                if self.deferredDocuments != nil {
+                    // defer displaying this document, because the transient document has not yet been replaced
+                    self.deferredDocuments?.append(document)
+                } else {
+                    // display the document immediately, because the transient document has been replaced
+                    document.makeWindowControllers()
+                    document.showWindows()
+                }
+            }
+            
+        } else {
+            assertionFailure("The opened document should be Document.")
+            
+            transientDocument?.isTransient = true
+            self.displayDeferredDocuments()
+            if displayDocument {
+                document.makeWindowControllers()
+                document.showWindows()
+            }
+        }
+        
+        return (document, documentWasAlreadyOpen)
+    }
+    
+    
+    override func openUntitledDocumentAndDisplay(_ displayDocument: Bool) throws -> NSDocument {
+        
+        let document = try super.openUntitledDocumentAndDisplay(displayDocument)
+        
+        if let document = document as? Document {
+            // set default syntax
+            document.setSyntax(name: UserDefaults.standard[.syntax])
+            
+            // make document transient when it is an open or reopen event
+            if self.documents.count == 1, NSAppleEventManager.shared().isOpenEvent {
+                document.isTransient = true
+            }
+        }
+        
+        return document
+    }
+    
+    
+    override func makeDocument(withContentsOf url: URL, ofType typeName: String) throws -> NSDocument {
+        
+        // [caution] This method may be called from a background thread due to concurrent-opening.
+        
+        do {
+            try self.checkOpeningSafetyOfDocument(at: url, type: typeName)
+        } catch {
+            // ask user for opening file
+            try DispatchQueue.syncOnMain {
+                guard self.presentError(error) else { throw CocoaError(.userCancelled) }
+            }
+        }
+        
+        let document: NSDocument = if RemoteEditingController.fileStore.isBackingFile(url) {
+            try RemoteDocument(contentsOf: url, ofType: typeName)
+        } else {
+            try super.makeDocument(withContentsOf: url, ofType: typeName)
+        }
+        
+        (document as? any AdditionalDocumentPreparing)?.didMakeDocumentForExistingFile(url: url)
+        
+        return document
+    }
+    
+    
+    override func makeDocument(for url: URL?, withContentsOf contentsURL: URL, ofType typeName: String) throws -> NSDocument {
+        
+        // [caution] This method may be called from a background thread during restoration.
+        
+        guard let url, RemoteEditingController.fileStore.isBackingFile(url) else {
+            return try super.makeDocument(for: url, withContentsOf: contentsURL, ofType: typeName)
+        }
+        
+        return try RemoteDocument(restoring: url, withContentsOf: contentsURL, ofType: typeName)
+    }
+    
+    
+    override func addDocument(_ document: NSDocument) {
+        
+        // clear the first document's transient status when a second document is added
+        // -> This happens when the user selects "New" when a transient document already exists.
+        self.transientDocument?.isTransient = false
+        
+        super.addDocument(document)
+    }
+    
+    
+    override func beginOpenPanel(_ openPanel: NSOpenPanel, forTypes inTypes: [String]?) async -> Int {
+        
+        let model = OpenPanelModel(fileEncodings: EncodingManager.shared.fileEncodings)
+        let accessory = OpenPanelAccessory(model: model, openPanel: openPanel).padding()
+        let accessoryView = NSHostingView(rootView: accessory)
+        accessoryView.sizingOptions = .intrinsicContentSize
+        
+        openPanel.delegate = model
+        openPanel.canChooseDirectories = true
+        openPanel.accessoryView = accessoryView
+        openPanel.isAccessoryViewDisclosed = true
+        
+        let result = await super.beginOpenPanel(openPanel, forTypes: inTypes)
+        
+        if result == NSApplication.ModalResponse.OK.rawValue {
+            PendingOpenOptions.register(model.options, for: openPanel.urls)
+        }
+        
+        return result
+    }
+    
+    
+    override func closeAllDocuments(withDelegate delegate: Any?, didCloseAllSelector: Selector?, contextInfo: UnsafeMutableRawPointer?) {
+        
+        guard (NSApp.delegate as? AppDelegate)?.needsRelaunch == true else {
+            return super.closeAllDocuments(withDelegate: delegate, didCloseAllSelector: didCloseAllSelector, contextInfo: contextInfo)
+        }
+        
+        let context = DelegateContext(delegate: delegate, selector: didCloseAllSelector, contextInfo: contextInfo)
+        
+        super.closeAllDocuments(withDelegate: self, didCloseAllSelector: #selector(documentController(_:didCloseAll:contextInfo:)), contextInfo: bridgeWrapped(context))
+    }
+    
+    
+    override func openDocument(_ sender: Any?) {
+        
+        // be called on the open event when iCloud Drive is enabled (2024-05, macOS 14).
+        // -> Otherwise, AppDelegate.applicationShouldOpenUntitledFile(_:) is called on launch.
+        
+        if NSAppleEventManager.shared().isOpenEvent {
+            return self.performOnLaunchAction()
+        }
+        
+        super.openDocument(sender)
+    }
+    
+    
+    override func noteNewRecentDocumentURL(_ url: URL) {
+        
+        guard !RemoteEditingController.fileStore.isBackingFile(url) else { return }
+        
+        super.noteNewRecentDocumentURL(url)
+    }
+    
+    
+    override func noteNewRecentDocument(_ document: NSDocument) {
+        
+        guard !(document is PreviewDocument) else { return }
+        
+        super.noteNewRecentDocument(document)
+    }
+    
+    
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        
+        switch item.action {
+            case #selector(newDocumentAsTab):
+                return self.currentDocument is Document
+            default:
+                break
+        }
+        
+        return super.validateUserInterfaceItem(item)
+    }
+    
+    
+    // MARK: Public Methods
+    
+    /// The current `Document`.
+    var currentPlainTextDocument: Document? {
+        
+        switch self.currentDocument {
+            case let document as Document:
+                document
+            case let document as DirectoryDocument:
+                document.currentDocument as? Document
+            default:
+                nil
+        }
+    }
+    
+    
+    /// Opens an untitled document with the given content or recycles the transient document if available.
+    ///
+    /// - Parameters:
+    ///   - content: The text to fill in the created document.
+    ///   - title: The document title to display in the window, or `nil` to leave it as untitled.
+    ///   - displayDocument: `true` if the user interface for the document should be shown, otherwise `false`.
+    /// - Returns: Returns the new Document object.
+    @discardableResult func openUntitledDocument(content: String, title: String? = nil, display displayDocument: Bool) throws -> Document {
+        
+        let document: Document = if let transientDocument,
+                                    transientDocument.windowForSheet?.attachedSheet == nil
+        {
+            transientDocument
+        } else {
+            try self.openUntitledDocumentAndDisplay(false) as! Document
+        }
+        
+        if !content.isEmpty {
+            document.textStorage.replaceCharacters(in: document.textStorage.range, with: content)
+            document.updateChangeCount(.changeDone)
+        }
+        
+        if let title {
+            document.displayName = title
+        }
+        
+        if displayDocument {
+            document.makeWindowControllers()
+            document.showWindows()
+        }
+        
+        if title != nil {
+            document.windowControllers
+                .forEach { $0.synchronizeWindowTitleWithDocumentName() }
+        }
+        
+        return document
+    }
+    
+    
+    /// Performs the user-defined action on the open/reopen event.
+    func performOnLaunchAction() {
+        
+        switch UserDefaults.standard[.noDocumentOnLaunchOption] {
+            case .untitledDocument:
+                self.newDocument(nil)
+            case .openPanel:
+                // invoke super to avoid infinite loop
+                super.openDocument(nil)
+            case .none:
+                break
+        }
+    }
+    
+    
+    // MARK: Action Messages
+    
+    /// Opens a new document as a new window.
+    @IBAction func newDocumentAsWindow(_ sender: Any?) {
+        
+        DocumentWindow.tabbingPreference = .manual
+        self.newDocument(sender)
+        DocumentWindow.tabbingPreference = nil
+    }
+    
+    
+    /// Opens a new document as a tab in the existing frontmost window.
+    @IBAction func newDocumentAsTab(_ sender: Any?) {
+        
+        DocumentWindow.tabbingPreference = .always
+        self.newDocument(sender)
+        DocumentWindow.tabbingPreference = nil
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// Transient document to be replaced or `nil`.
+    private var transientDocument: Document? {
+        
+        guard
+            self.documents.count == 1,
+            let document = self.documents.first as? Document,
+            document.isTransient,
+            document.textStorage.length == 0
+        else { return nil }
+        
+        return document
+    }
+    
+    
+    /// Replaces window controllers in documents.
+    ///
+    /// - Parameters:
+    ///   - transientDocument: The transient document to be replaced.
+    ///   - document: The new document to replace.
+    private func replaceTransientDocument(_ transientDocument: Document, with document: Document) {
+        
+        for controller in transientDocument.windowControllers {
+            document.addWindowController(controller)
+            transientDocument.removeWindowController(controller)
+        }
+        transientDocument.close()
+        
+        // move focus on editor
+        document.windowControllers.first?.window?.makeFirstResponderDiscardingMarkedText(document.textView)
+    }
+    
+    
+    /// Observes the given document's syntax as the current syntax.
+    ///
+    /// - Parameter document: The document to observe.
+    private func observeSyntax(of document: Document?) {
+        
+        self.syntaxObserver?.cancel()
+        
+        if let document {
+            self.syntaxObserver = Task { [weak self, document] in
+                for await syntaxName in Observations({ document.syntaxName }) {
+                    self?.currentSyntaxName = syntaxName
+                }
+            }
+        } else {
+            self.syntaxObserver = nil
+            self.currentSyntaxName = nil
+        }
+    }
+    
+    
+    /// Checks file before creating a new document instance.
+    ///
+    /// - Parameters:
+    ///   - url: The location of the new document object.
+    ///   - typeName: The type of the document.
+    private func checkOpeningSafetyOfDocument(at url: URL, type typeName: String) throws(DocumentOpeningError) {
+        
+        // check if the file is possible binary
+        if SyntaxManager.shared.settingName(documentName: url.lastPathComponent) == nil,
+           let type = UTType(typeName),
+           !type.isPlainText,
+           [.image, .audiovisualContent, .archive].contains(where: type.conforms(to:))
+        {
+            throw DocumentOpeningError(.binaryFile(type: type), url: url)
+        }
+        
+        // check if the file is enormously large
+        let fileSizeThreshold = UserDefaults.standard[.largeFileAlertThreshold]
+        if fileSizeThreshold > 0,
+           let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
+           fileSize > fileSizeThreshold
+        {
+            throw DocumentOpeningError(.tooLarge(size: Int64(fileSize)), url: url)
+        }
+    }
+    
+    
+    /// Callback from document after calling `closeAllDocuments(withDelegate:didCloseAllSelector:contextInfo)`.
+    ///
+    /// - Parameters:
+    ///   - documentController: The sender.
+    ///   - didCloseAll: The flag if the sender close all documents.
+    ///   - contextInfo: The context info.
+    @objc private func documentController(_ documentController: NSDocumentController, didCloseAll: Bool, contextInfo: UnsafeMutableRawPointer) {
+        
+        // cancel relaunching
+        if !didCloseAll {
+            (NSApp.delegate as? AppDelegate)?.needsRelaunch = false
+        }
+        
+        // manually invoke the original delegate method
+        let context: DelegateContext = bridgeUnwrapped(contextInfo)
+        context.perform(from: self, flag: didCloseAll)
+    }
+    
+    
+    /// Displays all documents deferred while replacing a transient document.
+    private func displayDeferredDocuments() {
+        
+        guard let deferredDocuments else { return }
+        
+        for deferredDocument in deferredDocuments {
+            deferredDocument.makeWindowControllers()
+            deferredDocument.showWindows()
+        }
+        self.deferredDocuments = nil
+    }
+}
+
+
+// MARK: - Error
+
+private struct DocumentOpeningError: LocalizedError, RecoverableError {
+    
+    enum Code {
+        
+        case binaryFile(type: UTType)
+        case tooLarge(size: Int64)
+    }
+    
+    var code: Code
+    var url: URL
+    
+    
+    init(_ code: Code, url: URL) {
+        
+        self.code = code
+        self.url = url
+    }
+    
+    
+    var errorDescription: String? {
+        
+        switch self.code {
+            case .binaryFile:
+                String(localized: "DocumentOpeningError.binaryFile.description",
+                       defaultValue: "The file “\(self.url.lastPathComponent)” doesn’t appear to be text data.")
+                
+            case .tooLarge(let size):
+                String(localized: "DocumentOpeningError.tooLarge.description",
+                       defaultValue: "The file “\(self.url.lastPathComponent)” has a size of \(size, format: .byteCount(style: .file)).")
+        }
+    }
+    
+    
+    var recoverySuggestion: String? {
+        
+        switch self.code {
+            case .binaryFile(let type):
+                let localizedTypeName = type.localizedDescription ?? String(
+                    localized: "DocumentOpeningError.binaryFile.recoverySuggestion.unknownFileType",
+                    defaultValue: "an unknown type",
+                    comment: "string that is inserted as the variable (%@) in the binary file alert when the type of file cannot be determined"
+                )
+                return String(localized: "DocumentOpeningError.binaryFile.recoverySuggestion",
+                              defaultValue: "The file appears to be \(localizedTypeName).\n\nDo you really want to open the file?",
+                              comment: "%@ is a file type")
+                
+            case .tooLarge:
+                return String(localized: "DocumentOpeningError.tooLarge.recoverySuggestion",
+                              defaultValue: "Opening such a large file can make the application slow or unresponsive.\n\nDo you really want to open the file?")
+        }
+    }
+    
+    
+    var recoveryOptions: [String] {
+        
+        [String(localized: "DocumentOpeningError.recoveryOption.open", defaultValue: "Open", comment: "verb; button"),
+         String(localized: .cancel)]
+    }
+    
+    
+    func attemptRecovery(optionIndex recoveryOptionIndex: Int) -> Bool {
+        
+        (recoveryOptionIndex == 0)
+    }
+}

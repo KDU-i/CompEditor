@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="検索, 置換, 改行">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>MacのCotEditorで改行を検索する/置換する</title>
+</head>
+
+<body>
+
+<h1>MacのCotEditorで改行を検索する/置換する</h1>
+
+<p>CotEditorの検索は改行コードを厳密に扱います。特定の改行コードを探すことができる一方で、指定を誤ると意図した改行に一致しない場合があるので注意が必要です。</p>
+
+<p><em class="tip">ヒント:</em> 検索ウインドウのテキストフィールドでは、<kbd>Option</kbd>+<kbd>Return</kbd>で改行ができます。</p>
+
+
+<section>
+<h2>改行を検索する</h2>
+
+<h3>テキスト検索</h3>
+
+<p>検索フィールドに入力した改行は、検索対象の書類で使われている改行コードとして扱われます。したがって、書類内に別の種類の改行コードが混在していても、その改行には一致しません。</p>
+
+
+<h3>正規表現検索</h3>
+
+<p>正規表現パターンに通常の改行文字を直接入力した場合も、通常のテキスト検索と同様に、検索対象の書類で使われている現在の改行コードと同一の改行として扱われます。一方、正規表現中でメタ文字やUnicodeコードポイントを使って指定した改行は、書類の改行コードに関わらず、指定した改行文字としてそのまま使われます。</p>
+
+<p>以下のメタ文字が正規表現パターンで改行を表します:</p>
+<table>
+	<thead>
+		<tr><th>メタ文字</th><th>説明</th></tr>
+	</thead>
+	
+	<tbody>
+		<tr><td>\n</td><td><p><code>U+000A</code>、LFの改行コード。</p></td></tr>
+		<tr><td>\r</td><td><p><code>U+000D</code>、CRの改行コード。</p></td></tr>
+		<tr><td>\r\n</td><td><p><code>U+000D</code>と<code>U+000A</code>の組み合わせ、CRLFの改行コード。</p></td></tr>
+		<tr><td>\R</td><td><p>汎用の改行表現。<code>U+000A</code> (LF), <code>U+000B</code>, <code>U+000C</code>, <code>U+000D</code> (CR), <code>U+0085</code>, <code>U+2028</code>, <code>U+2029</code>, および<code>U+000D</code> <code>U+000A</code>の組み合わせ (CRLF)のいずれでも一致します。</p></td></tr>
+	</tbody>
+</table>
+</section>
+
+
+<section>
+<h2>改行を置換する</h2>
+
+<p>置換では、<code>\n</code>のようなメタ文字での指定や捕捉したテキストへの差し替えも含めて、挿入される置換後のテキストのすべての改行が書類の改行コードと同一の改行に差し替えられます。</p>
+
+<p>例えば、改行コードがLF（<code>\n</code>）の書類で、正規表現を使って検索テキスト「dog\Rcow」を置換テキスト「$0\r」で置換したとき、書類内のテキスト「dog<span class="invisible">\r\n</span>cow」にも一致して正規表現上は「dog<span class="invisible">\r\n</span>cow<span class="invisible">\r</span>」に置換されることになりますが、CotEditorは一致した「dog<span class="invisible">\r\n</span>cow」を「dog<span class="invisible">\n</span>cow<span class="invisible">\n</span>」に置換します。</p>
+
+<p>現在、書類の改行コード以外の改行文字に置換する方法は提供されていません。</p>
+</section>
+
+
+<section id="cf">
+<h2>関連項目</h2>
+<ul>
+	<li><a href="howto_find.html">MacのCotEditorでテキストを検索する/置換する</a></li>
+	<li><a href="about_line_endings.html">MacのCotEditorで多様な改行コードを扱う</a></li>
+	<li><a href="about_regex.html">MacのCotEditorで正規表現を使う</a></li>
+</ul>
+</section>
+
+</body>
+</html>

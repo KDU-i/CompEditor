@@ -1,0 +1,316 @@
+//
+//  ColorCodePanelController.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2014-04-22.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2014-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import AppKit
+import SwiftUI
+import ColorCode
+import Defaults
+
+@objc protocol ColorCodeReceiver: AnyObject {
+    
+    @MainActor func insertColorCode(_ colorCode: String)
+}
+
+
+@MainActor final class ColorCodePanelController: NSObject, NSWindowDelegate {
+    
+    static let shared = ColorCodePanelController()
+    
+    
+    // MARK: Private Properties
+    
+    private let stylesheetColorList: NSColorList = KeywordColor.stylesheetColors
+        .reduce(into: NSColorList(name: String(localized: "Stylesheet Keywords", table: "ColorCode", comment: "color list name"))) { list, color in
+            list.setColor(NSColor(hex: color.value)!, forKey: color.keyword)
+        }
+    
+    
+    // MARK: Window Delegate
+    
+    func windowWillClose(_ notification: Notification) {
+        
+        guard let panel = notification.object as? NSColorPanel else { return assertionFailure() }
+        
+        panel.detachColorList(self.stylesheetColorList)
+        panel.showsAlpha = false
+        panel.delegate = nil
+        panel.accessoryView = nil
+    }
+    
+    
+    // MARK: Public Methods
+    
+    /// Shows the color panel with the color code accessory.
+    ///
+    /// - Parameter colorCode: The color code of the color to set to the panel.
+    func showWindow(colorCode: String? = nil) {
+        
+        // setup the shared color panel
+        let panel = NSColorPanel.shared
+        panel.attachColorList(self.stylesheetColorList)
+        panel.showsAlpha = true
+        panel.delegate = self
+        
+        let accessory = ColorCodePanelAccessory(colorCode: colorCode, panel: panel)
+            .padding((ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27) ? .top : .all, 10)
+        let view = NSHostingView(rootView: accessory)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        panel.accessoryView = view
+        
+        // make position of accessory view center
+        if let superview = view.superview {
+            NSLayoutConstraint.activate([
+                superview.topAnchor.constraint(equalTo: view.topAnchor),
+                superview.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                superview.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                superview.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            ])
+        }
+        
+        panel.orderFront(self)
+    }
+}
+
+
+// MARK: -
+
+private struct ColorCodePanelAccessory: View {
+    
+    @State private var colorCode: String
+    @AppStorage(.colorCodeType) private var type: Int
+    
+    private var panel: NSColorPanel
+    
+    
+    // MARK: View
+    
+    init(colorCode: String?, panel: NSColorPanel) {
+        
+        self.panel = panel
+        
+        var type: ColorCodeType?
+        if let colorCode, let color = NSColor(colorCode: colorCode, type: &type), let type {
+            self.colorCode = colorCode
+            self.type = type.rawValue
+            panel.color = color
+        } else {
+            self.colorCode = ""
+        }
+    }
+    
+    
+    var body: some View {
+        
+        VStack {
+            TextField(.init("Color Code", table: "ColorCode", comment: "noun; placeholder"), text: $colorCode)
+                .font(.system(size: 14, design: .monospaced))
+                .multilineTextAlignment(.center)
+                .onSubmit {
+                    self.apply(colorCode: self.colorCode)
+                }
+            
+            HStack(alignment: .firstTextBaseline) {
+                Picker(selection: $type) {
+                    Section {
+                        ForEach(ColorCodeType.hexTypes, id: \.self) { type in
+                            Text(type.label).tag(type.rawValue)
+                        }
+                    }
+                    Section {
+                        ForEach(ColorCodeType.cssTypes, id: \.self) { type in
+                            Text(type.label).tag(type.rawValue)
+                        }
+                    }
+                } label: {
+                    EmptyView()
+                }
+                .onChange(of: self.type) { _, newValue in
+                    self.apply(type: newValue)
+                }
+                .labelsVisibility(.hidden)
+                .buttonSizing(.flexible)
+                
+                Button(.init("Insert", table: "ColorCode", comment: "verb; button"), action: self.submit)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .controlSize(.small)
+        }
+        .onReceive(self.panel.publisher(for: \.color), perform: self.apply(color:))
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// Inserts the color code to the selection of the frontmost document.
+    private func submit() {
+        
+        guard
+            self.apply(colorCode: self.colorCode),
+            NSApp.sendAction(#selector((any ColorCodeReceiver).insertColorCode), to: nil, from: self.colorCode)
+        else { return NSSound.beep() }
+    }
+    
+    
+    /// Sets the color representing the given code to the color panel and selects the corresponding color code type.
+    ///
+    /// - Parameters:
+    ///   - colorCode: The color code of the color to set.
+    /// - Returns: `true` if the given code represents a color; otherwise, `false`.
+    @discardableResult private func apply(colorCode: String) -> Bool {
+        
+        var type: ColorCodeType?
+        guard
+            let color = NSColor(colorCode: colorCode, type: &type),
+            let type
+        else { return false }
+        
+        self.panel.color = color
+        self.type = type.rawValue
+        
+        return true
+    }
+    
+    
+    /// Converts the color code to the specified code type.
+    ///
+    /// - Parameter rawValue: The rawValue of ColorCodeType.
+    private func apply(type rawValue: Int) {
+        
+        guard
+            var type = ColorCodeType(rawValue: rawValue),
+            let color = self.panel.color.usingColorSpace(.genericRGB),
+            let colorCode = self.colorCode(for: color, type: &type)
+        else { return }
+        
+        if self.type != type.rawValue {
+            self.type = type.rawValue
+        }
+        self.colorCode = colorCode
+    }
+    
+    
+    /// Updates color code for new color.
+    ///
+    /// - Parameter color: The color.
+    private func apply(color: NSColor) {
+        
+        var type = ColorCodeType(rawValue: self.type) ?? .hex
+        let color = color.usingColorSpace(.genericRGB)
+        
+        guard let color, let colorCode = self.colorCode(for: color, type: &type) else { return assertionFailure() }
+        
+        if self.type != type.rawValue {
+            self.type = type.rawValue
+        }
+        self.colorCode = colorCode
+    }
+    
+    
+    /// Returns the color code for a color.
+    ///
+    /// - Parameters:
+    ///   - color: The color.
+    ///   - type: The color code type to use. When the value is `.cssKeyword`, it falls back to `.hex` if the color has no CSS keyword.
+    /// - Returns: The color code in the given type.
+    private func colorCode(for color: NSColor, type: inout ColorCodeType) -> String? {
+        
+        var colorCode = color.colorCode(type: type)
+        
+        if colorCode == nil, type == .cssKeyword {
+            type = .hex
+            colorCode = color.colorCode(type: type)
+        }
+        
+        // keep letter case
+        if ColorCodeType.hexTypes.contains(type), self.colorCode.contains(where: \.isUppercase) {
+            colorCode = colorCode?.uppercased()
+        }
+        
+        return colorCode
+    }
+}
+
+
+private extension ColorCodeType {
+    
+    var label: LocalizedStringResource {
+        
+        switch self {
+            case .hex:
+                .init("ColorCodeType.hex.label",
+                      defaultValue: "Hexadecimal",
+                      table: "ColorCode")
+            case .hexWithAlpha:
+                .init("ColorCodeType.hexWithAlpha.label",
+                      defaultValue: "Hexadecimal with Alpha",
+                      table: "ColorCode")
+            case .shortHex:
+                .init("ColorCodeType.shortHex.label",
+                      defaultValue: "Hexadecimal (Short)",
+                      table: "ColorCode")
+            case .shortHexWithAlpha:
+                .init("ColorCodeType.shortHexWithAlpha.label",
+                      defaultValue: "Hexadecimal with Alpha (Short)",
+                      table: "ColorCode")
+            case .cssRGB:
+                .init("ColorCodeType.cssRGB.label",
+                      defaultValue: "CSS RGB",
+                      table: "ColorCode")
+            case .cssRGBa:
+                .init("ColorCodeType.cssRGBa.label",
+                      defaultValue: "CSS RGBa",
+                      table: "ColorCode")
+            case .cssHSL:
+                .init("ColorCodeType.cssHSL.label",
+                      defaultValue: "CSS HSL",
+                      table: "ColorCode")
+            case .cssHSLa:
+                .init("ColorCodeType.cssHSLa.label",
+                      defaultValue: "CSS HSLa",
+                      table: "ColorCode")
+            case .cssHWB:
+                .init("ColorCodeType.cssHWB.label",
+                      defaultValue: "CSS HWB",
+                      table: "ColorCode")
+            case .cssHWBWithAlpha:
+                .init("ColorCodeType.cssHWBWithAlpha.label",
+                      defaultValue: "CSS HWB with Alpha",
+                      table: "ColorCode")
+            case .cssKeyword:
+                .init("ColorCodeType.cssKeyword.label",
+                      defaultValue: "CSS Keyword",
+                      table: "ColorCode")
+        }
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview {
+    ColorCodePanelAccessory(colorCode: "#006699", panel: .shared)
+        .frame(width: 240)
+        .scenePadding()
+}

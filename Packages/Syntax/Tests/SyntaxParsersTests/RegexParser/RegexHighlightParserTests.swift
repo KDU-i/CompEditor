@@ -1,0 +1,236 @@
+//
+//  RegexHighlightParserTests.swift
+//  SyntaxParsersTests
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2026-02-01.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import Testing
+import Foundation
+import ValueRange
+import StringUtils
+import SyntaxFormat
+@testable import SyntaxParsers
+
+struct RegexHighlightParserTests {
+    
+    /// Minimal stub extractor to feed deterministic ranges.
+    private struct StubExtractor: HighlightExtractable {
+        
+        let ranges: [NSRange]
+        
+        func ranges(in string: String, range: NSRange) -> [NSRange] { self.ranges }
+    }
+    
+    
+    @Test func returnsEmptyWhenNoParsers() async throws {
+        
+        let parser = RegexHighlightParser(extractors: [:], nestables: [:])
+        let result = try #require(await parser.parseHighlights(in: "", range: NSRange(0..<0)))
+        
+        #expect(result.highlights.isEmpty)
+    }
+    
+    
+    @Test func mergesExtractorsAndNestables() async throws {
+        
+        let extractors: [SyntaxType: [any HighlightExtractable]] = [
+            .keywords: [StubExtractor(ranges: [NSRange(location: 0, length: 3)])],
+            .strings: [StubExtractor(ranges: [NSRange(location: 10, length: 2)])],
+        ]
+        let nestables: [NestableToken: SyntaxType] = [
+            .inline("#", leadingOnly: false): .comments
+        ]
+        let parser = RegexHighlightParser(extractors: extractors, nestables: nestables)
+        let source = """
+                     abc def ghi # cmt
+                     ..........
+                     
+                     """
+        
+        let result = try #require(await parser.parseHighlights(in: source, range: source.nsRange))
+        let highlights = result.highlights
+        
+        #expect(highlights.count >= 3)
+        #expect(highlights == highlights.sorted(using: KeyPathComparator(\.range.location)))
+        
+        // -> The order is not specified.
+        #expect(highlights.contains { $0.value == .keywords && $0.range == NSRange(location: 0, length: 3) })
+        #expect(highlights.contains { $0.value == .strings && $0.range == NSRange(location: 10, length: 2) })
+        #expect(highlights.contains { $0.value == .comments })
+    }
+    
+    
+    @Test func overlapIsResolvedAndCoverageMaintained() async throws {
+        
+        let valueRange = NSRange(location: 0, length: 10)
+        let numberRange = NSRange(location: 3, length: 4)
+        let extractors: [SyntaxType: [any HighlightExtractable]] = [
+            .values: [StubExtractor(ranges: [valueRange])],
+            .numbers: [StubExtractor(ranges: [numberRange])],
+        ]
+        let parser = RegexHighlightParser(extractors: extractors, nestables: [:])
+        let source = String(repeating: "x", count: 10)
+        
+        let result = try #require(await parser.parseHighlights(in: source, range: source.nsRange))
+        let highlights = result.highlights
+        
+        #expect(highlights.map(\.range).union == [valueRange, numberRange].union)
+        
+        for (index, highlight) in highlights.enumerated() {
+            for nextHighlight in highlights[(index + 1)...] {
+                #expect(!(highlight.lowerBound < nextHighlight.upperBound && nextHighlight.lowerBound < highlight.upperBound))
+            }
+        }
+    }
+    
+    
+    @Test func cancellation() async throws {
+        
+        let many = [NSRange](repeating: NSRange(location: 0, length: 5000), count: 40)
+        let extractors: [SyntaxType: [any HighlightExtractable]] = [
+            .keywords: [StubExtractor(ranges: many)],
+            .strings: [StubExtractor(ranges: many)],
+        ]
+        let parser = RegexHighlightParser(extractors: extractors, nestables: [:])
+        let source = String(repeating: "a", count: 5000)
+        
+        let task = Task {
+            try Task.checkCancellation()
+            return try await parser.parseHighlights(in: source, range: source.nsRange)
+        }
+        task.cancel()
+        
+        await #expect(throws: CancellationError.self) {
+            _ = try await task.value
+        }
+    }
+    
+    
+    @Test func stringDelimitersUseOwnEscapeRule() async throws {
+        
+        let syntax = Syntax(
+            stringDelimiters: [.init(begin: "'", end: "'", escapeCharacter: "'")]
+        )
+        let parser = try #require(syntax.highlightParser)
+        let source = "a 'x''y' 'z'"
+        
+        let result = try #require(await parser.parseHighlights(in: source, range: source.nsRange))
+        let stringRanges = result.highlights
+            .filter { $0.value == .strings }
+            .map(\.range)
+        let matches = stringRanges.map((source as NSString).substring(with:))
+        
+        #expect(matches == ["'x''y'", "'z'"])
+    }
+    
+    
+    @Test func characterDelimitersUseOwnEscapeRule() async throws {
+        
+        let syntax = Syntax(
+            characterDelimiters: [.init(begin: "'", end: "'", escapeCharacter: "'")]
+        )
+        let parser = try #require(syntax.highlightParser)
+        let source = "a 'x''y' 'z'"
+        
+        let result = try #require(await parser.parseHighlights(in: source, range: source.nsRange))
+        let characterRanges = result.highlights
+            .filter { $0.value == .characters }
+            .map(\.range)
+        let matches = characterRanges.map((source as NSString).substring(with:))
+        
+        #expect(matches == ["'x''y'", "'z'"])
+    }
+    
+    
+    @Test func emptyDelimitersAreIgnored() {
+        
+        let syntax = Syntax(
+            commentDelimiters: .init(
+                inlines: [.init()],
+                blocks: [
+                    .init(begin: "", end: "*/"),
+                    .init(begin: "/*", end: ""),
+                ]
+            ),
+            stringDelimiters: [
+                .init(begin: "", end: "\""),
+                .init(begin: "\"", end: ""),
+            ],
+            characterDelimiters: [
+                .init(begin: "", end: "'"),
+                .init(begin: "'", end: ""),
+            ]
+        )
+        
+        #expect(syntax.highlightParser == nil)
+    }
+    
+    
+    @Test func emptyHighlightsAreIgnored() {
+        
+        let syntax = Syntax(
+            highlights: [
+                .comments: [
+                    .init(begin: "", end: "", description: "empty pair"),
+                    .init(begin: "", description: "empty word"),
+                    .init(begin: "", isRegularExpression: true, description: "empty regex"),
+                ],
+            ]
+        )
+        
+        #expect(syntax.highlightParser == nil)
+    }
+    
+    
+    @Test func emptyHighlightEndsAreTreatedAsSinglePatterns() async throws {
+        
+        let syntax = Syntax(
+            highlights: [
+                .keywords: [
+                    .init(begin: "foo", end: ""),
+                ],
+                .values: [
+                    .init(begin: #"\d+"#, end: "", isRegularExpression: true),
+                ],
+            ]
+        )
+        let parser = try #require(syntax.highlightParser)
+        let source = "foo 123"
+        
+        let result = try #require(await parser.parseHighlights(in: source, range: source.nsRange))
+        
+        #expect(result.highlights.contains { $0.value == .keywords && (source as NSString).substring(with: $0.range) == "foo" })
+        #expect(result.highlights.contains { $0.value == .values && (source as NSString).substring(with: $0.range) == "123" })
+    }
+}
+
+
+// MARK: -
+
+private extension [NSRange] {
+    
+    var union: IndexSet {
+        
+        self.reduce(into: IndexSet()) { $0.insert(integersIn: $1.lowerBound..<$1.upperBound) }
+    }
+}

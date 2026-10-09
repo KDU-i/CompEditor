@@ -1,0 +1,126 @@
+// swift-tools-version: 6.3
+
+import PackageDescription
+
+let package = Package(
+    name: "Syntax",
+    defaultLocalization: "en",
+    platforms: [
+        .macOS(.v26),
+    ],
+    products: [
+        .library(name: "Syntax", targets: [
+            "SyntaxFormat",
+            "SyntaxParsers",
+        ]),
+    ],
+    dependencies: [
+        .package(name: "EditorCore", path: "../EditorCore"),
+        
+        .package(url: "https://github.com/apple/swift-argument-parser", from: Version(1, 7, 0)),
+        .package(url: "https://github.com/jpsim/Yams", from: Version(6, 2, 0)),
+        .package(url: "https://github.com/SimplyDanny/SwiftLintPlugins", from: Version(0, 62, 0)),
+        .package(url: "https://github.com/tree-sitter/swift-tree-sitter", exact: Version(0, 10, 0)),
+        
+        .package(url: "https://github.com/tree-sitter/tree-sitter-bash", from: Version(0, 25, 1)),
+        .package(url: "https://github.com/tree-sitter/tree-sitter-c", from: Version(0, 24, 2)),
+        .package(url: "https://github.com/tree-sitter/tree-sitter-cpp", from: Version(0, 23, 4)),
+        .package(url: "https://github.com/tree-sitter/tree-sitter-c-sharp", from: Version(0, 23, 1)),
+        .package(url: "https://github.com/1024jp/tree-sitter-css", branch: "swiftPackage"),
+        .package(url: "https://github.com/tree-sitter/tree-sitter-go", from: Version(0, 25, 0)),
+        .package(url: "https://github.com/tree-sitter/tree-sitter-html", from: Version(0, 23, 2)),
+        .package(url: "https://github.com/tree-sitter/tree-sitter-java", from: Version(0, 23, 5)),
+        .package(url: "https://github.com/1024jp/tree-sitter-javascript", branch: "swiftPackage"),
+        .package(url: "https://github.com/fwcd/tree-sitter-kotlin", from: Version(0, 3, 8)),
+        .package(url: "https://github.com/1024jp/tree-sitter-latex", branch: "swiftPackage"),
+        .package(url: "https://github.com/1024jp/tree-sitter-lua", branch: "swiftPackage"),
+        .package(url: "https://github.com/tree-sitter-grammars/tree-sitter-make", from: Version(1, 1, 1)),
+        .package(url: "https://github.com/tree-sitter-grammars/tree-sitter-markdown", from: Version(0, 5, 3)),
+        .package(url: "https://github.com/tree-sitter/tree-sitter-php", from: Version(0, 25, 0)),
+        .package(url: "https://github.com/1024jp/tree-sitter-python", branch: "swiftPackage"),
+        .package(url: "https://github.com/tree-sitter/tree-sitter-ruby", from: Version(0, 23, 1)),
+        .package(url: "https://github.com/tree-sitter/tree-sitter-rust", from: Version(0, 24, 0)),
+        .package(url: "https://github.com/tree-sitter/tree-sitter-scala", from: Version(0, 26, 2)),
+        .package(url: "https://github.com/DerekStride/tree-sitter-sql", branch: "gh-pages"),
+        .package(url: "https://github.com/alex-pinkus/tree-sitter-swift", branch: "with-generated-files"),
+        .package(url: "https://github.com/tree-sitter/tree-sitter-typescript", from: Version(0, 23, 2)),
+    ],
+    targets: [
+        .target(
+            name: "SyntaxFormat",
+            dependencies: ["EditorCore", "Yams"]
+        ),
+        .testTarget(
+            name: "SyntaxFormatTests",
+            dependencies: ["SyntaxFormat", "EditorCore"],
+            resources: [.copy("Syntaxes")]
+        ),
+        
+        .target(
+            name: "SyntaxParsers",
+            dependencies: [
+                "EditorCore",
+                "SyntaxFormat",
+                .product(name: "SwiftTreeSitterLayer", package: "swift-tree-sitter"),
+                .product(name: "TreeSitterBash", package: "tree-sitter-bash"),
+                .product(name: "TreeSitterC", package: "tree-sitter-c"),
+                .product(name: "TreeSitterCPP", package: "tree-sitter-cpp"),
+                .product(name: "TreeSitterCSharp", package: "tree-sitter-c-sharp"),
+                .product(name: "TreeSitterCSS", package: "tree-sitter-css"),
+                .product(name: "TreeSitterGo", package: "tree-sitter-go"),
+                .product(name: "TreeSitterHTML", package: "tree-sitter-html"),
+                .product(name: "TreeSitterJava", package: "tree-sitter-java"),
+                .product(name: "TreeSitterJavaScript", package: "tree-sitter-javascript"),
+                .product(name: "TreeSitterKotlin", package: "tree-sitter-kotlin"),
+                .product(name: "TreeSitterLatex", package: "tree-sitter-latex"),
+                .product(name: "TreeSitterLua", package: "tree-sitter-lua"),
+                .product(name: "TreeSitterMake", package: "tree-sitter-make"),
+                .product(name: "TreeSitterMarkdown", package: "tree-sitter-markdown"),
+                .product(name: "TreeSitterPHP", package: "tree-sitter-php"),
+                .product(name: "TreeSitterPython", package: "tree-sitter-python"),
+                .product(name: "TreeSitterRuby", package: "tree-sitter-ruby"),
+                .product(name: "TreeSitterRust", package: "tree-sitter-rust"),
+                .product(name: "TreeSitterScala", package: "tree-sitter-scala"),
+                .product(name: "TreeSitterSql", package: "tree-sitter-sql"),
+                .product(name: "TreeSitterSwift", package: "tree-sitter-swift"),
+                .product(name: "TreeSitterTypeScript", package: "tree-sitter-typescript"),
+            ],
+            resources: [.copy("Queries")]
+        ),
+        .testTarget(
+            name: "SyntaxParsersTests",
+            dependencies: ["SyntaxParsers", "EditorCore"],
+            resources: [.copy("Samples")]
+        ),
+        
+        .executableTarget(
+            name: "SyntaxMapBuilder",
+            dependencies: [
+                "SyntaxFormat",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ]),
+    
+        .executableTarget(
+            name: "SyntaxMigrator",
+            dependencies: [
+                "SyntaxFormat",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ]),
+    ],
+    swiftLanguageModes: [.v6]
+)
+
+
+for target in package.targets {
+    target.plugins = (target.plugins ?? []) + [
+        .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
+    ]
+    target.swiftSettings = (target.swiftSettings ?? []) + [
+        .strictMemorySafety(),
+        .enableUpcomingFeature("ExistentialAny"),
+        .enableUpcomingFeature("InternalImportsByDefault"),
+        .enableUpcomingFeature("MemberImportVisibility"),
+        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+        .enableUpcomingFeature("InferIsolatedConformances"),
+    ]
+}

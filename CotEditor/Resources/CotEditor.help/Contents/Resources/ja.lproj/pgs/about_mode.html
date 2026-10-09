@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="モード, mode, フォント, インデント">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>MacのCotEditorでエディタのモードを切り替える</title>
+</head>
+
+<body>
+
+<h1>MacのCotEditorでエディタのモードを切り替える</h1>
+
+<p>モード機能を使うと、書類の種類に合わせて表示フォント、インデント、入力補助の設定をまとめて切り替えられます。文章作成とコード編集のように、異なる用途でも、その作業に合った編集環境へスムーズに切り替えられます。</p>
+
+
+<p>モードでは次の設定を切り替えられます:</p>
+
+<ul>
+	<li><p>エディタのフォント:</p><ul>
+		<li><p>表示に使うフォント（標準フォント/等幅フォント）</p></li>
+	</ul></li>
+	<li><p>エディタの振る舞い:</p><ul>
+		<li><p>入力中の自動補完（スマート引用符、テキストの置換など）</p></li>
+		<li><p>スペルチェック</p></li>
+		<li><p>入力補完</p></li>
+	</ul></li>
+	<li><p>インデント:</p><ul>
+		<li><p>インデントに使用する文字（スペース/タブ）とインデント幅</p></li>
+	</ul></li>
+</ul>
+
+<p>モードの編集と管理は「モード」設定で行います。具体的に設定できる項目や、モードの追加・削除については、<a href="settings_mode.html">「モード」設定を変更する</a>を参照してください。</p>
+
+
+<section>
+<h2>モードのフォントを指定する</h2>
+
+<p>CotEditorのモード設定では、書類に応じて標準フォントと等幅フォントのどちらを使うかを指定できます。CotEditorのフォントの扱いについて詳しくは、<a href="howto_customize_font.html">フォントを変更する</a>を参照してください。</p>
+</section>
+
+
+<section>
+<h2>モードをシンタックスに割り当てる</h2>
+
+<p>CotEditorは、開く書類のシンタックスに合わせてエディタのモードを自動的に切り替えます。これにより、特定の言語や形式の書類を開いたときに、常に同じモードを使えるようになります。</p>
+
+<p>モードは、シンタックスの種類ごとにも、個別のシンタックスごとにも作成できます。個別のシンタックス用モードがあればそれが使われ、なければそのシンタックスの種類に割り当てられたモードが使われます。デフォルトでは種類ごとのモードだけが用意されていて、「一般」は文章作成向け、「コード」はプログラミング向けの設定になっています。これらのデフォルトモードは「モード」設定でカスタマイズできます。</p>
+
+<p>さらに、個別のシンタックスに対して専用のモードを作成することもできます。たとえば、LaTeXシンタックスの種類は「一般」ですが、LaTeX専用のモードを作成すれば、標準フォントに指定したプロポーショナルフォントを使いながら、スマート引用符のようにコード記述の邪魔になりやすい機能は無効にできます。</p>
+
+<p>CotEditorのシンタックスについて詳しくは、<a href="syntax_overview.html">シンタックスを解析する</a>を参照してください。</p>
+</section>
+
+
+<section id="cf">
+<h2>関連項目</h2>
+<ul>
+	<li><a href="howto_customize_font.html">MacのCotEditorでフォントを変更する</a></li>
+	<li><a href="howto_complete.html">MacのCotEditorで入力を補完する</a></li>
+	<li><a href="settings_mode.html">MacのCotEditorで「モード」設定を変更する</a></li>
+	<li><a href="syntax_overview.html">MacのCotEditorで書類のシンタックスを解析する</a></li>
+</ul>
+</section>
+
+</body>
+</html>

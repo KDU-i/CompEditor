@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="keywords" content="find,replace,replacement,regex,regular expression,batch">
+	<link rel="stylesheet" href="../../Shared/sty/standard.css">
+	<script defer src="../../Shared/js/toc.js"></script>
+	
+	<title>Replace text using multiple rules in CotEditor on Mac</title>
+</head>
+
+<body>
+<a name="howto_multiple_replace"></a>
+
+<h1>Replace text using multiple rules in CotEditor on Mac</h1>
+
+<p>The <dfn>Multiple Replace</dfn> feature applies multiple text replacements sequentially. You can save each set of replacement rules as a named definition and reuse it whenever needed.</p>
+
+
+<section>
+<h2>Open the Multiple Replace window</h2>
+
+<p>Use the Multiple Replace window to manage and perform text replacements in your document.</p>
+
+<ol>
+	<li><p>Go to the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac.</p></li>
+	<li><p>Choose Find &gt; Multiple Replace &gt; Manage Multiple Replace.</p></li>
+</ol>
+
+<p><img src="../gfx/multiple_replace_panel@2x.png" srcset="../gfx/multiple_replace_panel@2x.png 2x" alt="Screenshot of the Multiple Replace window"></p>
+</section>
+
+
+<section>
+<h2>Manage replace definitions</h2>
+
+<p>Stored replace definitions appear in the list in the sidebar.</p>
+
+<p>In the sidebar, do any of the following:</p>
+<ul>
+	<li><p><em>Create a definition</em>: Click the Add + button at the bottom of the list.</p></li>
+	<li><p><em>Delete a definition</em>: Select a definition, then click the Delete - button at the bottom of the list.</p></li>
+	<li><p><em>Rename a definition</em>: Select a definition, then click it again.</p></li>
+	<li><p><em>More actions</em>: Click <object type="image/svg+xml" class="symbol" data="../../Shared/gfx/ellipsis.circle.svg">the More button</object> at the bottom of the list.</p></li>
+</ul>
+
+
+<h3>Export and import replace definitions</h3>
+
+<p>You can export replace definitions to transfer them to another computer. Each definition is saved as a <dfn>CotEditor Replace Definition</dfn> file with the .cotrpl extension. The file format is JSON.</p>
+
+<ul>
+	<li><p><em>Export</em>: Select a definition, then choose Export or Share from the Action menu.</p></li>
+	<li><p><em>Import</em>: Drag replace definition files into the list, or choose Import from the Action menu and select the files to import.</p></li>
+</ul>
+
+
+<h3>Import TSV data as replace definitions</h3>
+
+<p>You can also create a replace definition from a UTF-8–encoded TSV file. Each line must contain a pair of search and replacement text separated by a tab. To import this format, choose a file with the .tsv extension using the Import command. This format doesn’t support options such as case sensitivity or regular expressions. After importing a TSV file, configure any required options manually.</p>
+</section>
+
+
+<section>
+<h2>Edit a replace definition</h2>
+
+<p>To edit a replace definition in the editor on the right side of the Multiple Replace window, do any of the following:</p>
+
+<ul>
+	<li><p><em>Add a replacement rule:</em> Click the Add + button, then enter the replacement rule in the new row.</p></li>
+	<li><p><em>Delete replacement rules:</em> Select the rules to remove, then click the Delete - button.</p></li>
+	<li><p><em>Change advanced find options:</em> Click <object type="image/svg+xml" class="symbol" data="../../Shared/gfx/ellipsis.circle.svg">the More button</object>, then select the options you want. These settings apply to all replacement rules in the definition. For details about each option, see <a href="howto_find.html">Find and replace text</a>.</p></li>
+</ul>
+
+<p>Changes save automatically as you work.</p>
+
+<p>For each replacement rule, you can configure the following options:</p>
+
+<table>
+	<thead>
+		<tr><th>Option</th><th>Description</th></tr>
+	</thead>
+	<tbody>
+		<tr><th>(checkbox)</th><td><p>If the checkbox is deselected, the rule is skipped. Use this option to temporarily disable a rule without removing it from the definition.</p></td></tr>
+		<tr><th>Find</th><td><p>The text to search for. This field can’t be left empty. Empty rules are considered invalid and skipped.</p></td></tr>
+		<tr><th>Replace With</th><td><p>The replacement text. If left empty, the matched text is removed.</p></td></tr>
+		<tr><th>RE</th><td><p>Search using regular expressions (abbreviation of <u>R</u>egular <u>E</u>xpression).</p></td></tr>
+		<tr><th>IC</th><td><p>Search ignoring case (abbreviation of <u>I</u>gnore <u>C</u>ase).</p></td></tr>
+		<tr><th>Description</th><td><p>Add a note for your reference. The description doesn’t affect replacement and can be left blank.</p></td></tr>
+	</tbody>
+</table>
+
+<p>Replacement rules are applied sequentially from top to bottom.</p>
+
+<p><em class="note">Note:</em> If a rule is invalid, it is skipped when replacements are performed.</p>
+</section>
+
+
+<section>
+<h2>Perform multiple replacements</h2>
+
+<p>To perform multiple replacements using a replace definition, do the following:</p>
+
+<ol>
+	<li><p>In the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac, open a document.</p></li>
+		<li><p>Choose Find &gt; Multiple Replace.</p></li>
+	<li><p>Do one of the following:</p>
+		<ul>
+			<li><p>Choose the replace definition in the Multiple Replace submenu.</p></li>
+			<li><p>Choose Manage Multiple Replace, select the replace definition to use in the sidebar, then click Replace All.</p></li>
+		</ul>
+	</li>
+</ol>
+</section>
+
+
+<section>
+<h2>Highlight matches using a multiple replace definition</h2>
+
+<p>You can also highlight all matches in the current document using a multiple replace definition.</p>
+
+<ol>
+	<li><p>In the CotEditor app <img class="appicon" src="../../Shared/gfx/icon_32x32@2x.png" alt=""> on your Mac, open a document.</p></li>
+	<li><p>Choose Find &gt; Multiple Replace &gt; Manage Multiple Replace.</p></li>
+	<li><p>Select the replace definition to use in the sidebar.</p></li>
+	<li><p>Click Highlight.</p></li>
+</ol>
+
+<p><em class="note">Note:</em> Highlighted matches may differ from the actual replacement results. This is because Replace All applies rules sequentially, and each rule is applied after the previous rules have already taken effect.</p>
+</section>
+
+
+<section id="cf">
+<h2>See also</h2>
+<ul>
+	<li><a href="howto_find.html">Find and replace text in CotEditor on Mac</a></li>
+	<li><a href="about_regex.html">Use regular expressions in CotEditor on Mac</a></li>
+</ul>
+</section>
+
+</body>
+</html>

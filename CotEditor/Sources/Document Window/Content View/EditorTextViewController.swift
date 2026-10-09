@@ -1,0 +1,654 @@
+// Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
+//
+//  EditorTextViewController.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2016-06-18.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2004-2007 nakamuxu
+//  © 2014-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import AppKit
+import Combine
+import SwiftUI
+import ControlUI
+import CharacterInfo
+import Defaults
+import Invisible
+import LineEnding
+import StringUtils
+import SyntaxFormat
+import TextClipping
+import TextEditing
+import ValueRange
+
+final class EditorTextViewController: NSViewController, NSServicesMenuRequestor, NSTextViewDelegate {
+    
+    // MARK: Enums
+    
+    private enum SerializationKey {
+        
+        static let showsAdvancedCounter = "showsAdvancedCounter"
+    }
+    
+    
+    // MARK: Public Properties
+    
+    @ViewLoading private(set) var textView: EditorTextView
+    
+    
+    // MARK: Private Properties
+    
+    private let document: Document
+    
+    @ViewLoading private var scrollView: BidiScrollView
+    private weak var advancedCounterView: NSView?
+    
+    private var documentObservers: [Task<Void, Never>] = []
+    private var observers: Set<AnyCancellable> = []
+    
+    
+    // MARK: Lifecycle
+    
+    init(document: Document) {
+        
+        self.document = document
+        
+        super.init(nibName: nil, bundle: nil)
+        
+        // set identifier for state restoration
+        self.identifier = NSUserInterfaceItemIdentifier("EditorTextViewController")
+    }
+    
+    
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    
+    isolated deinit {
+        self.documentObservers.forEach { $0.cancel() }
+        
+        guard self.isViewLoaded else { return }
+        
+        self.document.undoManager?.removeAllActions(withTarget: self.textView)
+        
+        // detach layoutManager safely
+        guard
+            let textStorage = self.textView.textStorage,
+            let layoutManager = self.textView.layoutManager
+        else { return assertionFailure() }
+        
+        textStorage.removeLayoutManager(layoutManager)
+    }
+    
+    
+    override func loadView() {
+        
+        let textView = EditorTextView(
+            textStorage: self.document.textStorage,
+            lineEndingScanner: self.document.lineEndingScanner
+        )
+        textView.semanticDocumentContext = { [weak self] in
+            (self?.document.fileURL, self?.document.syntaxName ?? "")
+        }
+        textView.delegate = self
+        textView.usesRuler = false
+        textView.accessibilityHelpProvider = { [weak self] in self?.editorAccessibilityHelp }
+        
+        let scrollView = BidiScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.contentView.automaticallyAdjustsContentInsets = false
+        scrollView.documentView = textView
+        scrollView.verticalRulerView = LineNumberView(textView: textView, scrollView: scrollView, orientation: .verticalRuler)
+        scrollView.horizontalRulerView = LineNumberView(textView: textView, scrollView: scrollView, orientation: .horizontalRuler)
+        scrollView.autoresizingMask = [.width, .height]
+        scrollView.identifier = NSUserInterfaceItemIdentifier("EditorScrollView")
+        
+        let view = NSView()
+        view.addSubview(scrollView)
+        
+        self.view = view
+        self.scrollView = scrollView
+        self.textView = textView
+    }
+    
+    
+    override func viewDidLoad() {
+        
+        super.viewDidLoad()
+        
+        let defaults = UserDefaults.standard
+        self.observers = [
+            // apply user settings to the text view
+            defaults.publisher(for: .lineHeight, initial: true)
+                .assign(to: \.lineHeight, on: self.textView),
+            defaults.publisher(for: .tabWidth, initial: true)
+                .filter { [document] _ in ModeManager.shared.setting(for: document.mode).indentOptions == nil }
+                .assign(to: \.tabWidth, on: self.textView),
+            
+            defaults.publisher(for: .autoExpandTab, initial: true)
+                .filter { [document] _ in ModeManager.shared.setting(for: document.mode).indentOptions == nil }
+                .assign(to: \.isAutomaticTabExpansionEnabled, on: self.textView),
+            defaults.publisher(for: .modes, initial: true)
+                .map { [document] _ in ModeManager.shared.setting(for: document.mode).indentOptions }
+                .removeDuplicates()
+                .sink { [textView] options in textView.applyIndentOptions(options) },
+            defaults.publisher(for: .autoIndent, initial: true)
+                .assign(to: \.isAutomaticIndentEnabled, on: self.textView),
+            defaults.publisher(for: .trimsWhitespaceOnlyLines, initial: true)
+                .assign(to: \.trimsWhitespaceOnlyLines, on: self.textView),
+            defaults.publisher(for: .indentWithTabKey, initial: true)
+                .assign(to: \.indentsWithTabKey, on: self.textView),
+            defaults.publisher(for: .autoTrimsTrailingWhitespace, initial: true)
+                .assign(to: \.isAutomaticWhitespaceTrimmingEnabled, on: self.textView),
+            
+            Publishers.MergeMany(Invisible.allCases.map(\.visibilityDefaultKey).uniqued.map { defaults.publisher(for: $0) })
+                .merge(with: Just(true))  // initial setting
+                .map { _ in defaults.shownInvisible }
+                .assign(to: \.shownInvisibles, on: self.textView),
+            defaults.publisher(for: .showIndentGuides, initial: true)
+                .assign(to: \.showsIndentGuides, on: self.textView),
+            defaults.publisher(for: .enablesHangingIndent, initial: true)
+                .assign(to: \.isHangingIndentEnabled, on: self.textView),
+            defaults.publisher(for: .hangingIndentWidth, initial: true)
+                .assign(to: \.hangingIndentWidth, on: self.textView),
+            
+            defaults.publisher(for: .insertsCommentDelimitersAfterIndent, initial: true)
+                .assign(to: \.commentsOutAfterIndent, on: self.textView),
+            defaults.publisher(for: .appendsCommentSpacer, initial: true)
+                .assign(to: \.appendsCommentSpacer, on: self.textView),
+            
+            defaults.publisher(for: .pageGuideColumn, initial: true)
+                .assign(to: \.pageGuideColumn, on: self.textView),
+            defaults.publisher(for: .overscrollRate, initial: true)
+                .assign(to: \.overscrollRate, on: self.textView),
+            defaults.publisher(for: .highlightCurrentLine, initial: true)
+                .assign(to: \.highlightsCurrentLines, on: self.textView),
+            defaults.publisher(for: .highlightBraces, initial: true)
+                .assign(to: \.highlightsBraces, on: self.textView),
+            defaults.publisher(for: .highlightSelectionInstance, initial: true)
+                .assign(to: \.highlightsSelectionInstance, on: self.textView),
+            defaults.publisher(for: .selectionInstanceHighlightDelay, initial: true)
+                .assign(to: \.selectionInstanceHighlightDelay, on: self.textView),
+            
+            // observe text orientation for line number view
+            self.textView.publisher(for: \.layoutOrientation, options: .initial)
+                .sink { [weak scrollView] orientation in
+                    scrollView?.hasVerticalRuler = (orientation != .vertical)
+                    scrollView?.hasHorizontalRuler = (orientation == .vertical)
+                },
+            
+            // let line number view's position follow the writing direction
+            self.textView.publisher(for: \.baseWritingDirection, options: .initial)
+                .removeDuplicates()
+                .map { ($0 == .rightToLeft) ? NSUserInterfaceLayoutDirection.rightToLeft : .leftToRight }
+                .assign(to: \.contentDirection, on: self.scrollView),
+        ]
+        
+        // apply initial document settings immediately
+        self.textView.applySyntax(self.document.syntaxController.syntax)
+        self.textView.lineEnding = self.document.lineEnding
+        self.textView.applyMode(ModeManager.shared.setting(for: self.document.mode))
+        
+        // observe document setting changes
+        self.documentObservers = [
+            Task { [textView, document] in
+                for await _ in Observations({ document.syntaxName }) {
+                    textView.applySyntax(document.syntaxController.syntax)
+                }
+            },
+            Task { [textView, document] in
+                for await lineEnding in Observations({ document.lineEnding }) {
+                    textView.lineEnding = lineEnding
+                }
+            },
+            Task { [textView, document] in
+                for await modeName in Observations({ document.mode }) {
+                    textView.applyMode(ModeManager.shared.setting(for: modeName))
+                }
+            },
+        ]
+    }
+    
+    
+    override func encodeRestorableState(with coder: NSCoder, backgroundQueue queue: OperationQueue) {
+        
+        super.encodeRestorableState(with: coder, backgroundQueue: queue)
+        
+        if self.advancedCounterView != nil {
+            coder.encode(true, forKey: SerializationKey.showsAdvancedCounter)
+        }
+    }
+    
+    
+    override func restoreState(with coder: NSCoder) {
+        
+        super.restoreState(with: coder)
+        
+        if coder.decodeBool(forKey: SerializationKey.showsAdvancedCounter) {
+            self.showAdvancedCharacterCounter()
+        }
+    }
+    
+    
+    // MARK: View Controller
+    
+    override func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?, returnType: NSPasteboard.PasteboardType?) -> Any? {
+        
+        // accept continuity camera
+        //   - Take Photo: .jpeg, .tiff
+        //   - Scan Documents: .pdf, .tiff
+        //   - Sketch: .png
+        if let returnType, NSImage.imageTypes.contains(returnType.rawValue), self.textView.isEditable {
+            return (returnType != .png) ? self : nil
+        }
+        
+        return super.validRequestor(forSendType: sendType, returnType: returnType)
+    }
+    
+    
+    // MARK: Services Menu Requestor
+    
+    nonisolated func readSelection(from pboard: NSPasteboard) -> Bool {
+        
+        // scan from continuity camera
+        if pboard.canReadItem(withDataConformingToTypes: NSImage.imageTypes),
+           let image = NSImage(pasteboard: pboard)
+        {
+            Task { @MainActor in
+                self.popoverLiveText(image: image)
+            }
+            
+            return true
+        }
+        
+        return false
+    }
+    
+    
+    // MARK: Text View Delegate
+    
+    func undoManager(for view: NSTextView) -> UndoManager? {
+        
+        self.document.undoManager
+    }
+    
+    
+    func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+        
+        // restore previously accepted text without normalizing it again
+        if let undoManager = textView.undoManager, undoManager.isUndoing || undoManager.isRedoing {
+            return true
+        }
+        
+        guard let textView = textView as? EditorTextView else { return true }
+        
+        if textView.isApprovedTextChange { return true }
+        
+        // standardize line endings to the document line ending
+        if let replacementString,  // = only attributes changed
+           replacementString.lineEndingRanges().contains(where: { $0.value != textView.lineEnding })
+        {
+            return !textView.replace(with: replacementString.replacingLineEndings(with: textView.lineEnding),
+                                     range: affectedCharRange, selectedRange: nil)
+        }
+        
+        return true
+    }
+    
+    
+    func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+        
+        // add "Inspect Character" menu item if single character is selected
+        if self.textView.selectsSingleCharacter {
+            menu.insertItem(.init(title: String(localized: "Inspect Character", table: "MainMenu", comment: "verb; menu item"),
+                                  systemImage: "character.bubble",
+                                  action: #selector(showSelectionInfo), keyEquivalent: ""),
+                            at: 1)
+        }
+        
+        return menu
+    }
+    
+    
+    func textViewDidChangeSelection(_ notification: Notification) {
+        
+        guard
+            let textView = notification.object as? NSTextView,
+            textView == textView.window?.firstResponder,
+            !textView.hasMarkedText()
+        else { return }
+        
+        self.document.updateSelectedRanges(textView.selectedRanges.map(\.rangeValue))
+    }
+    
+    
+    // MARK: Action Messages
+    
+    /// Shows the Go To sheet.
+    @IBAction func gotoLocation(_ sender: Any?) {
+        
+        let textView = self.textView
+        
+        self.view.window?.beginSheet {
+            GoToLineView { lineRange in
+                guard let range = textView.string.rangeForLine(in: lineRange) else { return false }
+                
+                textView.select(range: range)
+                
+                return true
+            }
+            .scenePadding()
+        }
+    }
+    
+    
+    /// Shows the Unicode input view.
+    @IBAction func showUnicodeInputPanel(_ sender: Any?) {
+        
+        let textView = self.textView
+        let view = UnicodeInputView { character in
+            // flag to skip line ending sanitization
+            textView.isApprovedTextChange = true
+            defer { textView.isApprovedTextChange = false }
+            
+            textView.replace(with: String(character), range: textView.rangeForUserTextChange, selectedRange: nil)
+        }
+        .scenePadding()
+        let viewController = NSHostingController(rootView: view)
+        viewController.view.frame.size = viewController.view.intrinsicContentSize
+        
+        let positioningRect = textView.boundingRect(for: textView.selectedRange)?.insetBy(dx: -1, dy: -1) ?? .zero
+        let edge: NSRectEdge = (textView.layoutOrientation == .vertical) ? .maxX : .minY
+        
+        textView.scrollRangeToVisible(textView.selectedRange)
+        self.present(viewController, asPopoverRelativeTo: positioningRect, of: textView, preferredEdge: edge, behavior: .transient)
+    }
+    
+    
+    /// Shows the advanced counter.
+    @IBAction func toggleAdvancedCounter(_ sender: Any?) {
+        
+        // hide counter
+        if self.advancedCounterView != nil {
+            return self.dismissAdvancedCharacterCounter()
+        }
+        
+        // present option sheet
+        self.view.window?.beginSheet {
+            CharacterCountOptionsSheetView { [weak self] in
+                self?.showAdvancedCharacterCounter()
+            }
+            .scenePadding()
+        }
+    }
+    
+    
+    /// Shows the character information by popover.
+    @IBAction func showSelectionInfo(_ sender: Any?) {
+        
+        guard
+            self.textView.selectsSingleCharacter,
+            let character = self.textView.selectedString.first
+        else { return assertionFailure() }
+        
+        let view = NSHostingView(rootView: CharacterInspectorView(character).padding(14))
+        view.frame.size = view.intrinsicContentSize
+        let popoverController = DetachablePopoverViewController()
+        popoverController.view = view
+        
+        let textView = self.textView
+        let positioningRect = textView.boundingRect(for: textView.selectedRange)?.insetBy(dx: -4, dy: -4) ?? .zero
+        
+        textView.scrollRangeToVisible(textView.selectedRange)
+        textView.showFindIndicator(for: textView.selectedRange)
+        self.present(popoverController, asPopoverRelativeTo: positioningRect, of: textView, preferredEdge: .minY, behavior: .semitransient)
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// The accessibility help text for the editor text view.
+    private var editorAccessibilityHelp: String? {
+        
+        let counter = self.document.counter
+        let components = CountType.allCases
+            .filter { counter.statusBarRequirements.contains($0.counterTypes) }
+            .compactMap { type in
+                counter.result.formattedValue(type: type, forAccessibility: true)
+                    .map { "\(type.label): \($0)" }
+            }
+        
+        return components.isEmpty ? nil : components.joined(separator: ", ")
+    }
+    
+    
+    /// Shows a popover indicating the given image and live text detection.
+    ///
+    /// - Parameter image: The image to scan text.
+    private func popoverLiveText(image: NSImage) {
+        
+        let textView = self.textView
+        let rootView = LiveTextInsertionView(image: image) { [weak textView] string in
+            guard let textView else { return }
+            textView.replace(with: string, range: textView.selectedRange, selectedRange: nil)
+        }
+        let viewController = NSHostingController(rootView: rootView)
+        viewController.sizingOptions = .preferredContentSize
+        
+        let positioningRect = textView.boundingRect(for: textView.selectedRange)?.insetBy(dx: -1, dy: -1) ?? .zero
+        
+        textView.scrollRangeToVisible(textView.selectedRange)
+        self.present(viewController, asPopoverRelativeTo: positioningRect, of: textView, preferredEdge: .maxY, behavior: .transient)
+    }
+    
+    
+    /// Hides the existing advanced character counter.
+    private func dismissAdvancedCharacterCounter() {
+        
+        self.advancedCounterView?.animator().removeFromSuperview()
+        self.invalidateRestorableState()
+    }
+    
+    
+    /// Sets and shows advanced character counter.
+    private func showAdvancedCharacterCounter() {
+        
+        let textView = self.textView
+        let counter = AdvancedCharacterCounter()
+        counter.observe(textView: textView)
+        let rootView = AdvancedCharacterCounterView(counter: counter) { [weak self] in
+            self?.dismissAdvancedCharacterCounter()
+        }
+        let counterView = DraggableHostingView(rootView: rootView)
+        counterView.translatesAutoresizingMaskIntoConstraints = false
+        
+        self.view.addSubview(counterView)
+        self.advancedCounterView = counterView
+        
+        if textView.layoutOrientation == .horizontal, textView.baseWritingDirection != .rightToLeft {
+            counterView.frame.origin.x = self.view.frame.width - counterView.frame.width
+        }
+        
+        self.invalidateRestorableState()
+    }
+}
+
+
+extension EditorTextViewController: NSUserInterfaceValidations {
+    
+    func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        
+        switch item.action {
+            case #selector(showUnicodeInputPanel):
+                return self.textView.isEditable
+            case #selector(toggleAdvancedCounter):
+                (item as? NSMenuItem)?.title = (self.advancedCounterView == nil)
+                    ? String(localized: "Advanced Character Count…", table: "AdvancedCharacterCount", comment: "noun; menu item; opens options for advanced character counting")
+                    : String(localized: "Stop Advanced Character Count", table: "AdvancedCharacterCount", comment: "verb; menu item")
+                return true
+                
+            case #selector(showSelectionInfo):
+                return self.textView.selectsSingleCharacter
+                
+            case nil:
+                return false
+                
+            default:
+                return true
+        }
+    }
+}
+
+
+extension EditorTextViewController: EditorTextView.Delegate {
+    
+    /// Inserts string representation of dropped files applying the user's file drop snippets.
+    ///
+    /// - Parameter urls: The file URLs of dropped files.
+    /// - Returns: Whether the file drop was performed.
+    func editorTextView(_ textView: EditorTextView, readDroppedURLs urls: [URL]) -> Bool {
+        
+        guard !urls.isEmpty else { return false }
+        
+        let fileDropItems = UserDefaults.standard[.fileDropArray].map(FileDropItem.init(dictionary:))
+        
+        guard !fileDropItems.isEmpty else { return false }
+        
+        let replacementString = urls.reduce(into: "") { string, url in
+            if url.pathExtension == TextClipping.pathExtension, let textClipping = try? TextClipping(contentsOf: url) {
+                string += textClipping.string
+                return
+            }
+            
+            if let fileDropItem = fileDropItems.first(where: { $0.supports(extension: url.pathExtension, scope: self.document.syntaxName) }) {
+                string += fileDropItem.dropText(forFileURL: url, documentURL: self.document.fileURL)
+                return
+            }
+            
+            // just insert the absolute path if no specific setting for the file type was found
+            // -> This is the default behavior of NSTextView by file dropping.
+            if !string.isEmpty {
+                string += textView.lineEnding.string
+            }
+            
+            string += url.isFileURL ? url.path(percentEncoded: false) : url.absoluteString
+        }
+        
+        guard !replacementString.isEmpty else { return true }
+        
+        let standardizedReplacementString = replacementString.replacingLineEndings(with: textView.lineEnding)
+        
+        // insert snippets to view
+        guard textView.shouldChangeText(in: textView.rangeForUserTextChange, replacementString: standardizedReplacementString) else { return false }
+        
+        textView.replaceCharacters(in: textView.rangeForUserTextChange, with: standardizedReplacementString)
+        textView.didChangeText()
+        
+        return true
+    }
+}
+
+
+extension EditorTextViewController: NSFontChanging {
+    
+    // MARK: Font Changing Methods
+    
+    /// Restricts items in the font panel toolbar.
+    func validModesForFontPanel(_ fontPanel: NSFontPanel) -> NSFontPanel.ModeMask {
+        
+        [.collection, .face, .size]
+    }
+}
+
+
+// MARK: Extensions
+
+private extension EditorTextView {
+    
+    /// Applies the given syntax settings.
+    ///
+    /// - Parameter syntax: The syntax to apply.
+    func applySyntax(_ syntax: Syntax) {
+        
+        self.commentDelimiters = syntax.commentDelimiters
+        self.indentTokens = syntax.indentation.blockDelimiters.compactMap {
+            IndentToken(begin: $0.begin, end: $0.end, ignoreCase: $0.ignoreCase)
+        }
+        self.quoteDelimiters = syntax.stringDelimiters + syntax.characterDelimiters
+        self.syntaxCompletionWords = syntax.completionWords
+    }
+    
+    
+    /// Updates the settings for the given mode.
+    ///
+    /// - Parameter mode: The mode options to apply.
+    func applyMode(_ mode: ModeOptions) {
+        
+        self.defaultFontType = mode.fontType
+        self.setFont(type: mode.fontType)
+        
+        self.applyIndentOptions(mode.indentOptions)
+        
+        self.smartInsertDeleteEnabled = mode.smartInsertDelete
+        self.isAutomaticDashSubstitutionEnabled = mode.automaticDashSubstitution
+        self.isAutomaticQuoteSubstitutionEnabled = mode.automaticQuoteSubstitution
+        self.isAutomaticTextReplacementEnabled = mode.automaticTextReplacement
+        self.isAutomaticPeriodSubstitutionEnabled = mode.automaticPeriodSubstitution
+        self.isAutomaticSymbolBalancingEnabled = mode.automaticSymbolBalancing
+        
+        self.isContinuousSpellCheckingEnabled = mode.continuousSpellChecking
+        self.isGrammarCheckingEnabled = mode.grammarChecking
+        self.isAutomaticSpellingCorrectionEnabled = mode.automaticSpellingCorrection
+        
+        self.completionWordTypes = mode.completionWordTypes
+        self.isAutomaticCompletionEnabled = mode.automaticCompletion && !mode.completionWordTypes.isEmpty
+    }
+    
+    
+    /// Applies the given indentation settings, falling back to the default settings.
+    ///
+    /// - Parameter options: The indentation settings to apply.
+    func applyIndentOptions(_ options: ModeOptions.IndentOptions?) {
+        
+        if let options {
+            self.isAutomaticTabExpansionEnabled = options.expandsTab
+            self.tabWidth = options.width
+        } else {
+            self.isAutomaticTabExpansionEnabled = UserDefaults.standard[.autoExpandTab]
+            self.tabWidth = UserDefaults.standard[.tabWidth]
+        }
+    }
+}
+
+
+// MARK: -
+
+private extension MultiCursorEditing {
+    
+    /// Whether only a single character is selected.
+    var selectsSingleCharacter: Bool {
+        
+        !self.hasMultipleInsertions && self.selectedString.compareCount(with: 1) == .equal
+    }
+}

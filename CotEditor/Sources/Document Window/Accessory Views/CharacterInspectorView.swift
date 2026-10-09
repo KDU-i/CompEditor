@@ -1,0 +1,306 @@
+//
+//  CharacterInspectorView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2021-04-28.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2021-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import CharacterInfo
+
+struct CharacterInspectorView: View {
+    
+    var character: Character
+    
+    
+    init(_ character: Character) {
+        
+        self.character = character
+    }
+    
+    
+    var body: some View {
+        
+        HStack(alignment: .top) {
+            CharacterView(character: self.character)
+                .frame(minWidth: 64)
+            CharacterDetailView(character: self.character)
+        }
+    }
+}
+
+
+private struct CharacterDetailView: View {
+    
+    var character: Character
+    
+    
+    var body: some View {
+        
+        VStack(alignment: .leading, spacing: 0) {
+            if let description = self.character.localizedDescription {
+                Text(description)
+                    .fontWeight(self.character.isComplex ? .regular : .semibold)
+                    .textSelection(.enabled)
+            } else {
+                Text("Unknown", tableName: "CharacterInspector")
+                    .foregroundStyle(.secondary)
+            }
+            
+            if !self.character.isComplex {
+                ScalarDetailView(scalar: self.character.unicodeScalars.first!)
+                    .controlSize(.small)
+                    .padding(.top, 4)
+            }
+            
+            if self.character.unicodeScalars.count > 1 {
+                VStack(spacing: 0) {
+                    ForEach(Array(self.character.unicodeScalars).enumerated(), id: \.offset) { _, scalar in
+                        DisclosureGroup {
+                            HStack(alignment: .top) {
+                                let character = Character(scalar)
+                                let pictureCharacter = character.pictureCharacter
+                                
+                                Text(String(pictureCharacter ?? character))
+                                    .font(.system(size: 28, design: .serif))
+                                    .frame(minWidth: 30, idealWidth: 30)
+                                    .border(.separator)
+                                    .foregroundStyle((pictureCharacter != nil) ? .tertiary : .primary)
+                                ScalarDetailView(scalar: scalar, items: [.block, .category])
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, 6)
+                        } label: {
+                            Text(scalar.codePoint)
+                                .monospacedDigit()
+                                .frame(minWidth: 44, alignment: .leading)
+                            if let name = scalar.name {
+                                Text(name)
+                                    .fontWeight(.medium)
+                            }
+                        }
+                    }
+                }
+                .controlSize(.small)
+                .textSelection(.enabled)
+                .padding(.top, 6)
+            }
+        }.fixedSize()
+    }
+}
+
+
+private struct ScalarDetailView: View {
+    
+    struct Items: OptionSet {
+        
+        var rawValue: Int
+        
+        static let codePoint = Self(rawValue: 1 << 0)
+        static let block     = Self(rawValue: 1 << 1)
+        static let category  = Self(rawValue: 1 << 2)
+        static let version   = Self(rawValue: 1 << 3)
+        
+        static let all: Self = [.codePoint, .block, .category, .version]
+    }
+    
+    
+    var scalar: Unicode.Scalar
+    var items: Items = .all
+    
+    @Namespace private var accessibility
+    
+    @State private var isBlockNameLocalized = true
+    
+    
+    var body: some View {
+        
+        Grid(alignment: .leadingLastTextBaseline, verticalSpacing: 2) {
+            if self.items.contains(.codePoint) {
+                GridRow {
+                    Text("Code Point:", tableName: "CharacterInspector")
+                        .accessibilityLabeledPair(role: .label, id: "codePoint", in: self.accessibility)
+                        .gridColumnAlignment(.trailing)
+                    
+                    HStack(alignment: .firstTextBaseline) {
+                        if let surrogates = self.scalar.surrogateCodePoints {
+                            Text(verbatim: "\(self.scalar.codePoint) (\(surrogates.lead) \(surrogates.trail))")
+                        } else {
+                            Text(self.scalar.codePoint)
+                        }
+                        if self.scalar.properties.isDeprecated {
+                            Spacer()
+                            DeprecatedBadge()
+                        }
+                    }
+                    .monospacedDigit()
+                    .textSelection(.enabled)
+                    .accessibilityLabeledPair(role: .content, id: "codePoint", in: self.accessibility)
+                }
+            }
+            
+            if self.items.contains(.block) {
+                GridRow {
+                    Text("Block:", tableName: "CharacterInspector")
+                        .gridColumnAlignment(.trailing)
+                        .accessibilityLabeledPair(role: .label, id: "block", in: self.accessibility)
+                    
+                    Group {
+                        if let blockName = self.isBlockNameLocalized ? self.scalar.localizedBlockName : self.scalar.blockName {
+                            Button(blockName) {
+                                self.isBlockNameLocalized.toggle()
+                            }
+                            .buttonStyle(.plain)
+                            .textSelection(.enabled)
+                        } else {
+                            Text("No Block", tableName: "CharacterInspector")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityLabeledPair(role: .content, id: "block", in: self.accessibility)
+                }
+            }
+            
+            if self.items.contains(.category) {
+                GridRow {
+                    Text("Category:", tableName: "CharacterInspector")
+                        .accessibilityLabeledPair(role: .label, id: "category", in: self.accessibility)
+                    
+                    let category = self.scalar.properties.generalCategory
+                    Text(verbatim: "\(category.longName) (\(category.shortName))")
+                        .textSelection(.enabled)
+                        .accessibilityLabeledPair(role: .content, id: "category", in: self.accessibility)
+                }
+            }
+            
+            if self.items.contains(.version), let age = self.scalar.properties.age {
+                GridRow {
+                    Text("Version:", tableName: "CharacterInspector")
+                        .accessibilityLabeledPair(role: .label, id: "version", in: self.accessibility)
+                    
+                    Text(verbatim: "Unicode \(age.major).\(age.minor)")
+                        .accessibilityLabeledPair(role: .content, id: "version", in: self.accessibility)
+                }
+            }
+        }.fixedSize()
+    }
+}
+
+
+private struct CharacterView: NSViewRepresentable {
+    
+    typealias NSViewType = NSTextField
+    
+    var character: Character
+    
+    private let fontSize: CGFloat = 64
+    
+    
+    func makeNSView(context: Context) -> NSTextField {
+        
+        let nsView = CharacterField(labelWithString: "")
+        nsView.font = .systemFont(ofSize: 0)
+            .fontDescriptor
+            .withDesign(.serif)
+            .flatMap { NSFont(descriptor: $0, size: self.fontSize) }
+        
+        return nsView
+    }
+    
+    
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        
+        nsView.stringValue = String(self.character.pictureCharacter ?? self.character)
+        nsView.textColor = (self.character.pictureCharacter != nil) ? .tertiaryLabelColor : .labelColor
+    }
+    
+    
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextField, context: Context) -> CGSize? {
+        
+        nsView.intrinsicContentSize
+    }
+}
+
+
+private struct DeprecatedBadge: View {
+    
+    var body: some View {
+        
+        Text("deprecated", tableName: "CharacterInspector", comment: "badge for when the inspected character is deprecated in the latest Unicode specification")
+            .padding(.horizontal, 3)
+            .overlay(RoundedRectangle(cornerRadius: 3).stroke(.secondary))
+            .foregroundStyle(.secondary)
+    }
+}
+
+
+private extension Character {
+    
+    var localizedDescription: String? {
+        
+        let unicodes = self.unicodeScalars
+        if self.isComplex {
+            return String(localized: "<a letter consisting of \(unicodes.count) characters>",
+                          table: "CharacterInspector",
+                          comment: "%lld is always 2 or more.")
+        }
+        
+        guard var unicodeName = unicodes.first?.name else { return nil }
+        
+        if self.isVariant, let variantDescription = unicodes.last?.variantDescription {
+            unicodeName += String(localized: " (\(variantDescription))")
+        }
+        
+        return unicodeName
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview("𓆏") {
+    CharacterInspectorView("𓆏")
+}
+
+#Preview("\\n") {
+    CharacterInspectorView("\n")
+}
+
+#Preview("ơ̟̤̖̗͖͇̍͋̀͆̓́͞͡") {
+    CharacterInspectorView("ơ̟̤̖̗͖͇̍͋̀͆̓́͞͡")
+}
+
+#Preview("✔︎") {
+    CharacterInspectorView("✔︎")
+        .frame(height: 240, alignment: .top)
+}
+
+#Preview("🏴‍☠️") {
+    CharacterInspectorView("🏴‍☠️")
+}
+
+#Preview("🇦🇦") {
+    CharacterInspectorView("🇦🇦")
+}
+
+#Preview("deprecated") {
+    CharacterInspectorView("ឣ")
+}

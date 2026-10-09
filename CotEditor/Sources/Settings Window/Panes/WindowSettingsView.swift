@@ -1,0 +1,312 @@
+//
+//  WindowSettingsView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2014-04-18.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2014-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import Defaults
+
+struct WindowSettingsView: View {
+    
+    @Namespace private var accessibility
+    
+    @Environment(\.layoutDirection) private var layoutDirection
+    
+    @AppStorage(.windowTabbing) private var windowTabbing
+    @AppStorage(.windowWidth) private var windowWidth
+    @AppStorage(.windowHeight) private var windowHeight
+    
+    @AppStorage(.showLineNumbers) private var showLineNumbers
+    @AppStorage(.showInvisibles) private var showInvisibles
+    @AppStorage(.showInvisibleNewLine) private var showInvisibleNewLine
+    @AppStorage(.showInvisibleTab) private var showInvisibleTab
+    @AppStorage(.showInvisibleSpace) private var showInvisibleSpace
+    @AppStorage(.showInvisibleWhitespaces) private var showInvisibleWhitespaces
+    @AppStorage(.showInvisibleControl) private var showInvisibleControl
+    @AppStorage(.showIndentGuides) private var showIndentGuides
+    @AppStorage(.showPageGuide) private var showPageGuide
+    @AppStorage(.pageGuideColumn) private var pageGuideColumn
+    @AppStorage(.highlightCurrentLine) private var highlightCurrentLine
+    
+    @AppStorage(.wrapLines) private var wrapLines
+    @AppStorage(.enablesHangingIndent) private var enablesHangingIndent
+    @AppStorage(.hangingIndentWidth) private var hangingIndentWidth
+    @AppStorage(.writingDirection) private var writingDirection
+    @AppStorage(.overscrollRate) private var overscrollRate
+    
+    @AppStorage(.showStatusBarLines) private var showStatusBarLines
+    @AppStorage(.showStatusBarChars) private var showStatusBarChars
+    @AppStorage(.showStatusBarWords) private var showStatusBarWords
+    @AppStorage(.showStatusBarLocation) private var showStatusBarLocation
+    @AppStorage(.showStatusBarLine) private var showStatusBarLine
+    @AppStorage(.showStatusBarColumn) private var showStatusBarColumn
+    
+    
+    var body: some View {
+        
+        Grid(alignment: .leadingFirstTextBaseline, verticalSpacing: 8) {
+            GridRow(alignment: .lastTextBaseline) {
+                Text("Open documents in tabs:", tableName: "WindowSettings",
+                     comment: "Omit “documents” if the text becomes too long.")
+                    .accessibilityLabeledPair(role: .label, id: "windowTabbing", in: self.accessibility)
+                
+                Picker(selection: $windowTabbing) {
+                    Text(
+                        AttributedString(localized: "Respect System Setting", table: "WindowSettings", comment: "verb; menu item") +
+                        AttributedString(" (\(String(localized: NSWindow.userTabbingPreference.label)))",
+                                         attributes: .init().foregroundColor(.secondary))
+                    ).tag(-1)
+                    
+                    Divider()
+                    
+                    ForEach([NSWindow.UserTabbingPreference.manual, .inFullScreen, .always], id: \.self) {
+                        Text($0.label).tag($0.rawValue)
+                    }
+                } label: {
+                    EmptyView()
+                }
+                .accessibilityLabeledPair(role: .content, id: "windowTabbing", in: self.accessibility)
+            }
+            
+            GridRow {
+                Text("Window size:", tableName: "WindowSettings")
+                    .accessibilityLabeledPair(role: .label, id: "windowSize", in: self.accessibility)
+                    .gridColumnAlignment(.trailing)
+                
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        VStack(spacing: 1) {
+                            TextField(value: $windowWidth, format: .number, prompt: Text("Auto", tableName: "WindowSettings", comment: "placeholder for window size field"), label: EmptyView.init)
+                                .monospacedDigit()
+                                .multilineTextAlignment(self.layoutDirection == .rightToLeft ? .leading : .trailing)
+                                .frame(width: 64)
+                                .accessibilityLabeledPair(role: .content, id: "windowWidth", in: self.accessibility)
+                            Text("Width", tableName: "WindowSettings")
+                                .controlSize(.small)
+                                .accessibilitySortPriority(1)
+                                .accessibilityLabeledPair(role: .label, id: "windowWidth", in: self.accessibility)
+                        }
+                        Text("px", tableName: "WindowSettings", comment: "length unit following an input field")
+                            .accessibilityLabel(.init("pixels", table: "WindowSettings", comment: "accessibility label for “px”"))
+                    }
+                    .accessibilityElement(children: .contain)
+                    
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        VStack(spacing: 1) {
+                            TextField(value: $windowHeight, format: .number, prompt: Text("Auto", tableName: "WindowSettings", comment: "placeholder for window size field"), label: EmptyView.init)
+                                .monospacedDigit()
+                                .multilineTextAlignment(self.layoutDirection == .rightToLeft ? .leading : .trailing)
+                                .frame(width: 64)
+                                .accessibilityLabeledPair(role: .content, id: "windowHeight", in: self.accessibility)
+                            Text("Height", tableName: "WindowSettings")
+                                .controlSize(.small)
+                                .accessibilitySortPriority(1)
+                                .accessibilityLabeledPair(role: .label, id: "windowHeight", in: self.accessibility)
+                        }
+                        Text("px", tableName: "WindowSettings", comment: "length unit following an input field")
+                            .accessibilityLabel(.init("pixels", table: "WindowSettings", comment: "accessibility label for “px”"))
+                    }
+                    .accessibilityElement(children: .contain)
+                }
+                .accessibilityLabeledPair(role: .content, id: "windowSize", in: self.accessibility)
+            }
+            
+            Divider()
+                .padding(.vertical, 6)
+            
+            GridRow {
+                Text("Show:", tableName: "WindowSettings")
+                    .gridColumnAlignment(.trailing)
+                
+                VStack(alignment: .leading) {
+                    Toggle(.init("Line numbers", table: "WindowSettings", comment: "noun; checkbox"), isOn: $showLineNumbers)
+                    
+                    Toggle(.init("Invisible characters", table: "WindowSettings", comment: "noun; checkbox"), isOn: $showInvisibles)
+                    Grid(alignment: .leading, horizontalSpacing: 20) {
+                        GridRow {
+                            Toggle(.init("Line ending", table: "WindowSettings", comment: "invisible character type"), isOn: $showInvisibleNewLine)
+                            Toggle(.init("Tab", table: "WindowSettings", comment: "invisible character type"), isOn: $showInvisibleTab)
+                            Toggle(.init("Space", table: "WindowSettings", comment: "invisible character type"), isOn: $showInvisibleSpace)
+                        }
+                        GridRow {
+                            Toggle(.init("Other whitespace", table: "WindowSettings", comment: "invisible character type"), isOn: $showInvisibleWhitespaces)
+                            Toggle(.init("Other control characters", table: "WindowSettings", comment: "invisible character type"), isOn: $showInvisibleControl)
+                                .gridCellColumns(2)
+                        }
+                    }
+                    .padding(.leading, 20)
+                    .fixedSize()
+                    
+                    Toggle(.init("Indent guides", table: "WindowSettings", comment: "noun; checkbox"), isOn: $showIndentGuides)
+                    HStack(alignment: .firstTextBaseline) {
+                        Toggle(.init("Page guide at column:", table: "WindowSettings"), isOn: $showPageGuide)
+                        StepperNumberField(value: $pageGuideColumn, default: UserDefaults.standard[initial: .pageGuideColumn], in: 1...999)
+                            .accessibilityLabel(.init("Page guide at column:", table: "WindowSettings", comment: "followed by a number field for the column"))
+                            .disabled(!self.showPageGuide)
+                    }
+                }
+            }
+            
+            GridRow {
+                Text("Current line:", tableName: "WindowSettings")
+                    .gridColumnAlignment(.trailing)
+                
+                Toggle(.init("Change background color", table: "WindowSettings", comment: "verb; checkbox"), isOn: $highlightCurrentLine)
+            }
+            
+            Divider()
+                .padding(.vertical, 6)
+            
+            GridRow {
+                Text("Line wrapping:", tableName: "WindowSettings")
+                    .gridColumnAlignment(.trailing)
+                
+                VStack(alignment: .leading) {
+                    Toggle(.init("Wrap lines to editor width", table: "WindowSettings", comment: "Refer to the same expression in Script Editor.app"), isOn: $wrapLines)
+                    HStack(alignment: .firstTextBaseline) {
+                        Toggle(.init("Indent wrapped lines by", table: "WindowSettings", comment: "Refer to the same expression in Script Editor.app"), isOn: $enablesHangingIndent)
+                        StepperNumberField(value: $hangingIndentWidth, default: UserDefaults.standard[initial: .hangingIndentWidth], in: 0...99)
+                            .disabled(!self.enablesHangingIndent)
+                            .accessibilityLabel(.init("wrapped line indent spaces", table: "WindowSettings", comment: "accessibility label (Refer to the same expression in Script Editor.app)"))
+                        Text("spaces", tableName: "WindowSettings", comment: "unit for indentation (Refer to the same expression in Script Editor.app)")
+                    }
+                }
+            }
+            
+            GridRow {
+                Text("Writing direction:", tableName: "WindowSettings")
+                    .accessibilityLabeledPair(role: .label, id: "writingDirection", in: self.accessibility)
+                    .gridColumnAlignment(.trailing)
+                
+                Picker(selection: $writingDirection) {
+                    ForEach(WritingDirection.allCases, id: \.self) {
+                        Text($0.label)
+                    }
+                } label: {
+                    EmptyView()
+                }
+                .pickerStyle(.radioGroup)
+                .horizontalRadioGroupLayout()
+                .labelsHidden()
+                .accessibilityLabeledPair(role: .content, id: "writingDirection", in: self.accessibility)
+            }
+            
+            GridRow {
+                Text("Overscroll:", tableName: "WindowSettings")
+                    .accessibilityLabeledPair(role: .label, id: "overscrollRate", in: self.accessibility)
+                    .gridColumnAlignment(.trailing)
+                
+                Stepper(value: $overscrollRate, in: 0...1, step: 0.1, format: .percent.precision(.fractionLength(0)), label: EmptyView.init)
+                    .monospacedDigit()
+                    .multilineTextAlignment(self.layoutDirection == .rightToLeft ? .leading : .trailing)
+                    .accessibilityLabeledPair(role: .content, id: "overscrollRate", in: self.accessibility)
+            }
+            
+            Divider()
+                .padding(.vertical, 6)
+            
+            GridRow {
+                Text("Status bar shows:", tableName: "WindowSettings")
+                    .accessibilityLabeledPair(role: .label, id: "sideBarShows", in: self.accessibility)
+                    .gridColumnAlignment(.trailing)
+                
+                HStack(alignment: .firstTextBaseline, spacing: 20) {
+                    VStack(alignment: .leading) {
+                        Toggle(.init("Line count", table: "WindowSettings"), isOn: $showStatusBarLines)
+                        Toggle(.init("Character count", table: "WindowSettings"), isOn: $showStatusBarChars)
+                        Toggle(.init("Word count", table: "WindowSettings"), isOn: $showStatusBarWords)
+                    }
+                    VStack(alignment: .leading) {
+                        Toggle(.init("Location", table: "WindowSettings"), isOn: $showStatusBarLocation)
+                        Toggle(.init("Current line", table: "WindowSettings"), isOn: $showStatusBarLine)
+                        Toggle(.init("Current column", table: "WindowSettings"), isOn: $showStatusBarColumn)
+                    }
+                }
+                .accessibilityLabeledPair(role: .content, id: "sideBarShows", in: self.accessibility)
+            }
+            .fixedSize()
+            
+            HStack {
+                Spacer()
+                HelpLink(anchor: "settings_window")
+            }.padding(.top, -8)
+        }
+    }
+}
+
+
+private extension NSWindow.UserTabbingPreference {
+    
+    var label: LocalizedStringResource {
+        
+        switch self {
+            case .manual:
+                .init("Never",
+                      table: "WindowSettings",
+                      comment: "window tabbing option")
+            case .always:
+                .init("Always",
+                      table: "WindowSettings",
+                      comment: "window tabbing option")
+            case .inFullScreen:
+                .init("Automatically",
+                      table: "WindowSettings",
+                      comment: "window tabbing option")
+            @unknown default:
+                fatalError()
+        }
+    }
+}
+
+
+private extension WritingDirection {
+    
+    var label: LocalizedStringResource {
+        
+        switch self {
+            case .leftToRight:
+                .init("WritingDirection.leftToRight.label",
+                      defaultValue: "Left to right",
+                      table: "WindowSettings",
+                      comment: "writing direction option")
+            case .rightToLeft:
+                .init("WritingDirection.rightToLeft.label",
+                      defaultValue: "Right to left",
+                      table: "WindowSettings",
+                      comment: "writing direction option")
+            case .vertical:
+                .init("WritingDirection.vertical.label",
+                      defaultValue: "Vertical",
+                      table: "WindowSettings",
+                      comment: "writing direction option")
+        }
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview {
+    WindowSettingsView()
+        .scenePadding()
+}

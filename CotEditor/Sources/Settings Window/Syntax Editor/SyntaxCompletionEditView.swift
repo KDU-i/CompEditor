@@ -1,0 +1,149 @@
+//
+//  SyntaxCompletionEditView.swift
+//
+//  CotEditor
+//  https://coteditor.com
+//
+//  Created by 1024jp on 2023-01-18.
+//
+//  ---------------------------------------------------------------------------
+//
+//  © 2023-2026 1024jp
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//  https://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//
+
+import SwiftUI
+import SyntaxFormat
+
+struct SyntaxCompletionEditView: View {
+    
+    typealias Item = SyntaxObject.CompletionWord
+    
+    
+    @Binding var items: [Item]
+    
+    var canCustomizeHighlight: Bool = true
+    
+    @State private var selection: Set<Item.ID> = []
+    @State private var sortOrder: [KeyPathComparator<Item>] = []
+    @FocusState private var focusedField: Item.ID?
+    
+    
+    // MARK: View
+    
+    var body: some View {
+        
+        VStack(alignment: .leading) {
+            // pre-calculate the item positions to avoid a linear search for each cell
+            let itemIndexes: [Item.ID: Int] = self.items.enumerated()
+                .reduce(into: [:]) { indexes, item in indexes[item.element.id] = item.offset }
+            
+            // create a table with wrapped values and then find the editable item again in each column to enable sorting (2025-07, macOS 26)
+            Table(self.items, selection: $selection, sortOrder: $sortOrder) {
+                TableColumn(.init("Completion", table: "SyntaxEditor", comment: "noun; table column header; word completion"), value: \.value.text) { wrappedItem in
+                    if let item = self.item(with: wrappedItem.id, in: itemIndexes) {
+                        TextField(text: item.value.text, label: EmptyView.init)
+                            .focused($focusedField, equals: item.id)
+                    }
+                }
+                
+                TableColumn(.init("Type", table: "SyntaxEditor", comment: "noun; table column header; syntax type"), value: \.value.type.sortValue) { wrappedItem in
+                    if let item = self.item(with: wrappedItem.id, in: itemIndexes) {
+                        Picker(.init("Type", table: "SyntaxEditor"), selection: item.value.type) {
+                            Text("None", tableName: "SyntaxEditor")
+                                .tag(Optional<SyntaxType>.none)
+                            Divider()
+                            ForEach(SyntaxType.allCases, id: \.self) { type in
+                                Text(type.label)
+                                    .tag(type, includeOptional: true)
+                            }
+                        } currentValueLabel: {
+                            if let type = wrappedItem.value.type {
+                                Text(type.label)
+                            } else {
+                                Text("None", tableName: "SyntaxEditor")
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .labelsVisibility(.hidden)
+                    }
+                }
+                .width(100)
+            }
+            .tableStyle(.bordered)
+            .border(Color(nsColor: .gridColor))
+            .onChange(of: self.sortOrder) { _, newValue in
+                self.items.sort(using: newValue)
+            }
+            
+            HStack {
+                AddRemoveButton($items, selection: $selection, newItem: Item()) { item in
+                    self.focusedField = item.id
+                }
+                ItemCountView(count: self.items.count)
+            }
+            
+            if self.canCustomizeHighlight {
+                Text("If not specified, syntax completion words are generated based on the highlighting settings.", tableName: "SyntaxEditor", comment: "message")
+                    .controlSize(.small)
+                    .padding(.top, 4)
+            }
+            
+            HStack {
+                Spacer()
+                HelpLink(anchor: "syntax_completion_settings")
+            }
+        }
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// Returns the binding to the item with the given ID.
+    ///
+    /// - Parameters:
+    ///   - id: The ID of the item to find.
+    ///   - indexes: The pre-calculated table of the item positions.
+    /// - Returns: The binding to the item, or `nil` if not found.
+    private func item(with id: Item.ID, in indexes: [Item.ID: Int]) -> Binding<Item>? {
+        
+        indexes[id].map { self.$items[$0] }
+    }
+}
+
+
+private extension SyntaxType? {
+    
+    /// The value for column sorting.
+    var sortValue: Int {
+        
+        switch self {
+            case .none:
+                99
+            case .some(let type):
+                SyntaxType.allCases.firstIndex(of: type) ?? 99
+        }
+    }
+}
+
+
+// MARK: - Preview
+
+#Preview {
+    @Previewable @State var items: [SyntaxObject.CompletionWord] = [.init(value: .init(text: "abc"))]
+    
+    SyntaxCompletionEditView(items: $items)
+        .scenePadding()
+}
