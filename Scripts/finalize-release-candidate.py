@@ -30,6 +30,10 @@ if sparkle.exists():shutil.rmtree(sparkle)
 for file in a.app.rglob('*'):
  if file.name=='.DS_Store' or file.suffix in ('.profraw','.dSYM','.mobileprovision','.provisionprofile','.p12','.pfx'):
   raise SystemExit('Forbidden release artifact: '+str(file.relative_to(a.app)))
+# Reject instrumentation before stripping; strip does not remove compressed coverage.
+from release_artifact_audit import sections
+for name, _, _ in sections((a.app/'Contents/MacOS/CompEditor').read_bytes()):
+ if name.startswith(('__llvm_cov', '__llvm_prf')):raise SystemExit('Instrumented distribution binary; rebuild with coverage disabled')
 # Remove compiler debug records from the candidate, never the user's running app.
 subprocess.run(['strip','-S','-x',str(a.app/'Contents/MacOS/CompEditor')],check=True)
 notices=a.app/'Contents/Resources/ThirdPartyNotices';notices.mkdir(exist_ok=True)

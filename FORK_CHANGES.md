@@ -1,7 +1,7 @@
 # Unofficial fork modifications
 
 Base: efd522f9fc9362a5211aef528b96a87dcad11335
-Snapshot: 6564009c8aa28c7cb7d34e550bace60929d91a77
+Snapshot: recorded by prepare-release-source.py at export time; this tracked list describes the fork changes.
 
 Java/Python LSP features, isolated settings, private build compatibility and release preparation. Original attribution and licenses retained. Staging fixture paths generalized; code-comment change notices added. Generated JSON/project metadata differences are listed below. No Git history is included.
 

@@ -2,10 +2,10 @@
 # Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
 # SPDX-License-Identifier: Apache-2.0
 """Create a LOCAL review ZIP with fixed ZIP timestamps and no host xattrs/UIDs."""
-import argparse,hashlib,json,os,stat,zipfile
+import argparse,hashlib,json,os,stat,zipfile,subprocess,sys
 from pathlib import Path
 p=argparse.ArgumentParser();p.add_argument('--input',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
-outputs=[a.output,a.output.with_suffix(a.output.suffix+'.inventory.json'),a.output.with_suffix(a.output.suffix+'.sha256')]
+outputs=[a.output,a.output.with_suffix(a.output.suffix+'.inventory.json'),a.output.with_suffix(a.output.suffix+'.sha256'),a.output.with_suffix(a.output.suffix+'.audit.json')]
 if any(p.exists() or p.is_symlink() for p in outputs):raise SystemExit('Existing archive/sidecar is protected')
 if not a.input.is_dir() or a.input.is_symlink():raise SystemExit('Regular source/app directory required')
 a.input=a.input.resolve()
@@ -17,6 +17,12 @@ for f in files:
   target=os.readlink(f)
   if Path(target).is_absolute() or not f.resolve().is_relative_to(a.input.resolve()):raise SystemExit('External symlink refused')
 a.output.parent.mkdir(parents=True,exist_ok=True)
+# Audit the exact input immediately before packing, including nested archives.
+root=Path(__file__).resolve().parent.parent
+subprocess.run([sys.executable,str(root/'Scripts/audit-release-artifact.py'),
+ '--app' if a.input.suffix=='.app' else '--input',str(a.input),
+ '--approvals',str(root/'Release/audit-reviewed-upstream.json'),
+ '--report',str(outputs[3])],check=True)
 inventory=[]
 with zipfile.ZipFile(a.output,'x',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as archive:
  for f in files:
