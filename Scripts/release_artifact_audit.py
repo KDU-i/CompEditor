@@ -192,12 +192,12 @@ class Audit:
                         self.expanded += entry.file_size
                         if entry.file_size > LIMIT or self.expanded > 4 * 1024**3:
                             raise ValueError('archive expansion limit')
+                        self.scan(entry.filename.encode('utf-8', errors='surrogateescape'), label, 'archive-member-name')
                         if entry.is_dir():
                             continue
                         parts = Path(entry.filename).parts
                         if '.git' in parts or any(x.endswith('.dSYM') for x in parts) or Path(entry.filename).suffix in ('.profraw', '.p12', '.pfx', '.mobileprovision', '.provisionprofile') or Path(entry.filename).name in ('.env', '.DS_Store', 'credentials'):
                             raise ValueError('forbidden archive member')
-                        self.scan(entry.filename.encode(), label, 'archive-member-name')
                         self.inspect(archive.read(entry), label + '!/' + entry.filename, depth + 1)
         except (ValueError, struct.error, UnicodeError, zlib.error, zipfile.BadZipFile, RuntimeError, NotImplementedError):
             self.report['errors'].append({'path': label, 'reason': 'required parsing failed or inspection limit exceeded'})

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from release_artifact_audit import Audit, LIMIT, PATTERNS, MAGICS
 import re
+import os
 
 
 def main():
@@ -27,12 +28,30 @@ def main():
             audit.report['errors'].append({'path': 'Contents/MacOS/CompEditor', 'reason': 'required main Mach-O missing or invalid'})
         if (source/'Contents/Frameworks/Sparkle.framework').exists():
             audit.report['errors'].append({'path': 'Contents/Frameworks/Sparkle.framework', 'reason': 'updater remains'})
-    files = sorted(source.rglob('*')) if source.is_dir() else [source]
+    is_directory = source.is_dir()
+    # Scan exactly the root/member names that the packager serializes, not host paths.
+    audit.scan(os.fsencode(source.name), 'input', 'root-name')
+    if source.is_symlink():
+        try:
+            audit.scan(os.fsencode(os.readlink(source)), 'input', 'symlink-target')
+        except OSError:
+            audit.report['errors'].append({'path': 'input', 'reason': 'unreadable symlink root'})
+        audit.report['errors'].append({'path': 'input', 'reason': 'symlink artifact root refused'})
+        files = []
+    else:
+        files = sorted(source.rglob('*')) if is_directory else [source]
     for file in files:
-        label = str(file.relative_to(source)) if source.is_dir() else source.name
+        label = str(file.relative_to(source)) if is_directory else source.name
+        member_name = source.name + '/' + label if is_directory else label
+        audit.scan(os.fsencode(member_name), label, 'member-name')
         if file.is_symlink():
-            if not file.resolve().is_relative_to(source.resolve()):
-                audit.report['errors'].append({'path': label, 'reason': 'external symlink'})
+            try:
+                target = os.readlink(file)
+                audit.scan(os.fsencode(target), label, 'symlink-target')
+                if Path(target).is_absolute() or not file.resolve().is_relative_to(source.resolve()):
+                    audit.report['errors'].append({'path': label, 'reason': 'external symlink'})
+            except (OSError, RuntimeError, ValueError):
+                audit.report['errors'].append({'path': label, 'reason': 'unreadable or invalid symlink'})
             continue
         if not file.is_file():
             continue

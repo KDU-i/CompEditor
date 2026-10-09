@@ -10,7 +10,7 @@
 
 `Scripts/build-release-candidate.sh` は、新しいソース・ビルドディレクトリで `clean archive` を実行します。`ENABLE_CODE_COVERAGE=NO`、`CLANG_ENABLE_CODE_COVERAGE=NO`、GCCのcoverage設定で配布計測を無効にします。SwiftとClangには匿名パスへの変換も指定します。Xcodeの `-enableCodeCoverage` はtesting専用なので、Archiveには使用しません。テストプランのcoverageは変更していません。
 
-最終処理は計測領域を見つけた時点で停止します。監査は同梱Mach-Oの全アーキテクチャ、圧縮coverageファイル名、圧縮profile名、ZIP/JARの入れ子を検査します。候補が未解決、必須解析が失敗、上限超過、入力欠落の場合は失敗します。ZIP作成処理にもこの検査を組み込みました。
+最終処理は計測領域を見つけた時点で停止します。監査は同梱Mach-Oの全アーキテクチャ、圧縮coverageファイル名、圧縮profile名、ZIP/JARの入れ子を検査します。候補が未解決、必須解析が失敗、上限超過、入力欠落の場合は失敗します。ディレクトリ監査では梱包する相対名とsymlinkのリンク先も検査します。ZIP作成処理は一時ファイルへ梱包し、完成ZIPを再監査します。両方の検査が成功するまで正式なZIP名とチェックサムを作りません。梱包前の監査後に内容が変わった場合も、完成ZIPの検査で停止します。
 
 上流のライセンス、帰属、公開サンプルは保持します。公開依存物に由来する候補は `audit-reviewed-upstream.json` にファイルのSHA-256、対象種別、理由を記録します。内容が変われば再審査が必要です。本人ホームの一致は、この審査記録で許可できません。
 
