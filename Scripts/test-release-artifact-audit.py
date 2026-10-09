@@ -90,6 +90,10 @@ class AuditTests(unittest.TestCase):
         audit = Audit(); audit.inspect(b'\xca\xfe\xba\xbe\x00\x00\x00\x2d', 'fixture.dylib')
         self.assertTrue(audit.report['errors'])
 
+    def test_public_credentials_namespace_is_directory(self):
+        audit = Audit(); audit.inspect(zipdata('org/public/credentials/', b''), 'fixture.jar')
+        self.assertTrue(audit.passed())
+
     def test_nested_profile_file_fails_closed(self):
         audit = Audit(); audit.inspect(zipdata('default.profraw', b'profile'), 'fixture.zip')
         self.assertTrue(audit.report['errors'])
