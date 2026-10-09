@@ -263,5 +263,29 @@
     ],
     "component": "CorrespondingSources/org.apache.ant__ant-1.10.17-sources.jar!/org/apache/tools/ant/taskdefs/optional/sos/SOS.java",
     "reason": "Public dependency source documentation or test fixture from the pinned corresponding-source archive. Only these exact bytes and generic path category approved."
+  },
+  {
+    "sha256": "a046f9e1a0a2be5ded7dc6569c21388961b9dcbfb708342cc7561708168a464d",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "exported-source/CotEditor/Sources/Document Window/Inspector/DocumentInspectorView.swift",
+    "reason": "Public upstream SwiftUI preview sample path; preserve public test data. Exact exported bytes only."
+  },
+  {
+    "sha256": "2fd9b5f62501aaf59e76241ee8db3cc3738c5cdf65ebb8684c07aa4424422f7b",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "exported-source/Scripts/prepare-release-source.py",
+    "reason": "Source sanitizer regular-expression literal; it describes paths to remove, not an actual host path. Exact exported bytes only."
+  },
+  {
+    "sha256": "fdc0dd00a58b33e2ddd4efc1cbe50614ad94789aff64d0d51e12a9dcc9d2aa27",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "exported-source/Scripts/test-release-artifact-audit.py",
+    "reason": "Anonymous regression fixture and string assertion; not captured host information. Exact exported bytes only."
   }
 ]
