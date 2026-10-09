@@ -42,7 +42,8 @@ let package = Package(
         .package(url: "https://github.com/tree-sitter/tree-sitter-rust", from: Version(0, 24, 0)),
         .package(url: "https://github.com/tree-sitter/tree-sitter-scala", from: Version(0, 26, 2)),
         .package(url: "https://github.com/DerekStride/tree-sitter-sql", branch: "gh-pages"),
-        .package(url: "https://github.com/alex-pinkus/tree-sitter-swift", branch: "with-generated-files"),
+        // Keep the grammar compatible with the bundled Swift queries in standalone package tests.
+        .package(url: "https://github.com/alex-pinkus/tree-sitter-swift", revision: "31d17fe7e818a2048c808b5c6fdc2dc792f4f5b5"),
         .package(url: "https://github.com/tree-sitter/tree-sitter-typescript", from: Version(0, 23, 2)),
     ],
     targets: [
