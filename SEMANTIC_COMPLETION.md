@@ -158,11 +158,11 @@ The large improvement is the policy change from 300 to 60 ms for paced warm typi
 Reproduce the measured old/new request policies using fresh output directories (run sequentially, avoiding concurrent builds):
 
 ```sh
-Scripts/test-completion-performance.sh ../Build/Build/Products/Debug/CotEditor.app ../SemanticTestBuild/recheck-before 300 3a0f0729c
+Scripts/test-completion-performance.sh ../Build/Build/Products/Debug/CotEditor.app ../SemanticTestBuild/recheck-before 300
 Scripts/test-completion-performance.sh ../Build/Build/Products/Debug/CotEditor.app ../SemanticTestBuild/recheck-after 60
 ```
 
-The optional revision compiles that local commit's exact protocol/transport sources; it does not change the checkout. Use delay `0` to measure transport alone.
+An optional public revision can compile the protocol/transport sources at that revision without changing the checkout. The historical local revision is not a reproducible public baseline; the commands above compare delays using current sources. Use delay `0` to measure transport alone.
 
 ## First-character automatic-trigger correction
 

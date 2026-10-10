@@ -1,0 +1,291 @@
+[
+  {
+    "sha256": "91d3afb67a7dc211f642f2328f822505ff1c1ad381e98ffdd21b003970deeeda",
+    "types": [
+      "provider-token-candidate",
+      "user-home-path"
+    ],
+    "component": "Contents/Resources/SemanticServers/node",
+    "reason": "Pinned bundled upstream bytes, identical to previously verified corresponding-source inventory. Public build paths/documentation/test-pattern false positives; no blanket name exemption."
+  },
+  {
+    "sha256": "2f2971154ada5cc7a8617c13a8b3580dfa378ebf6adae6c698dddf85b7ff137b",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "Contents/Resources/SemanticServers/jdk/man/man1/java.1",
+    "reason": "Pinned bundled upstream bytes, identical to previously verified corresponding-source inventory. Public build paths/documentation/test-pattern false positives; no blanket name exemption."
+  },
+  {
+    "sha256": "d85e86308abf4c0093e028abaab5c99141edc2ff5f47d9b9882b71338c6843cb",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "Contents/Resources/SemanticServers/jdk/man/man1/javadoc.1",
+    "reason": "Pinned bundled upstream bytes, identical to previously verified corresponding-source inventory. Public build paths/documentation/test-pattern false positives; no blanket name exemption."
+  },
+  {
+    "sha256": "e289ca03db7c867877367083371547b40053b49f562b89cb72caab6652414ace",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "Contents/Resources/SemanticServers/jdk/lib/modules",
+    "reason": "Pinned bundled upstream bytes, identical to previously verified corresponding-source inventory. Public build paths/documentation/test-pattern false positives; no blanket name exemption."
+  },
+  {
+    "sha256": "1c691bf9e3fa954dec751ace203beb5591b46a73e3848af5d1ee011d62540798",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "Contents/Resources/SemanticServers/pyright/pyright/dist/vendor.js",
+    "reason": "Pinned bundled upstream bytes, identical to previously verified corresponding-source inventory. Public build paths/documentation/test-pattern false positives; no blanket name exemption."
+  },
+  {
+    "sha256": "40f2f51199e4f5fc46fa6b985fb3461bb63e6cd86c62bfa9bcee45ed4438d5fb",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "Contents/Resources/SemanticServers/pyright/fsevents/fsevents.node",
+    "reason": "Pinned bundled upstream bytes, identical to previously verified corresponding-source inventory. Public build paths/documentation/test-pattern false positives; no blanket name exemption."
+  },
+  {
+    "sha256": "46a0e5eb5977ddd383763e1e278ac454ea34f8411b6088d361076c17b16818a5",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdk/lib/src.zip!/java.base/java/lang/ProcessBuilder.java",
+    "reason": "Public JDK documentation/example paths; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "e36c112d40624ad3d89f147a1e81a9375b18503b610ca79954ac2f3b8e9d6df1",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdk/lib/src.zip!/java.base/java/lang/Runtime.java",
+    "reason": "Public JDK documentation/example paths; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "646dd18062cd78adcb0d80b2d0b887a42171fb3177dae6cbdcf1a7d429a6404d",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdk/lib/src.zip!/java.base/java/net/JarURLConnection.java",
+    "reason": "Public JDK documentation/example paths; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "92e29eee20699b86b9782f12895bd82692d604238ce2532932529003ae17abcd",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdk/lib/src.zip!/java.base/java/util/Currency.java",
+    "reason": "Public JDK documentation/example paths; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "9adaf7740b7f4d5e2f18a89c82b088de9670300e5d5ff250199caf0587498212",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdk/lib/src.zip!/java.desktop/sun/awt/X11/XEmbedServerTester.java",
+    "reason": "Public JDK documentation/example paths; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "aefc4036af726fd1d40279c09850e729a7c93726320cb311b485171b5f107e69",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdk/lib/src.zip!/java.xml/com/sun/org/apache/xerces/internal/impl/XMLEntityManager.java",
+    "reason": "Public JDK documentation/example paths; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "b6b6ca86783474e2612067c9e2947a60145b56801f925896c5444a0a10c0b4d8",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdk/lib/src.zip!/jdk.crypto.cryptoki/sun/security/pkcs11/Secmod.java",
+    "reason": "Public JDK documentation/example paths; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "5cc3abad0b382cc5e1975af3f1c3b803eded962e6bce1967e816eeae4d28d6a5",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdk/lib/src.zip!/jdk.jpackage/jdk/jpackage/internal/Keychain.java",
+    "reason": "Public JDK documentation/example paths; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "8daeab82e519e512f02587645001b6f9954b1637788b1ea55b413bf6250110f1",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdk/lib/src.zip!/jdk.jpackage/jdk/jpackage/internal/MacDmgPackager.java",
+    "reason": "Public JDK documentation/example paths; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "18aa44ad161fe3c8d4b3702a96b33d180831587f89a38df14ad11b08f1803617",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdk/lib/src.zip!/jdk.zipfs/module-info.java",
+    "reason": "Public JDK documentation/example paths; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "8b62c70d0c11adf32a0c877fbaec5119e3252cc863288e5813775bd1227805c0",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdtls/features/org.eclipse.equinox.executable_3.8.3400.v20260804-1928.jar!/bin/gtk/linux/aarch64/launcher",
+    "reason": "Pinned third-party build paths or public test fixture; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "8f249de24e6ac081eb2862c920873c2edb12d93586442b64c1cdb2749d3c93e6",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdtls/features/org.eclipse.equinox.executable_3.8.3400.v20260804-1928.jar!/bin/gtk/linux/ppc64le/launcher",
+    "reason": "Pinned third-party build paths or public test fixture; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "684fde0445712c10678dae7b8c302c437270a3bf6f24b37ed0cad8fc291b4f61",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdtls/features/org.eclipse.equinox.executable_3.8.3400.v20260804-1928.jar!/bin/gtk/linux/riscv64/launcher",
+    "reason": "Pinned third-party build paths or public test fixture; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "f35258b2bef8c4c0c141721bb77a265fb173e922bac77ea711ef63d53c02ca16",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdtls/features/org.eclipse.equinox.executable_3.8.3400.v20260804-1928.jar!/bin/gtk/linux/x86_64/launcher",
+    "reason": "Pinned third-party build paths or public test fixture; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "b7fda988bd96029cb79b143b8668d67b1cc2398bae579ebeb74303f4812ac8a7",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdtls/plugins/ch.qos.logback.core_1.5.32.jar!/ch/qos/logback/core/testUtil/EnvUtilForTests.class",
+    "reason": "Pinned third-party build paths or public test fixture; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "6c55d9ec3efaaee1843795648246b3fe52de09d3990984c5b8a580cc803c6bc9",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdtls/plugins/com.sun.jna_5.19.1.v20260612-1000.jar!/com/sun/jna/linux-loongarch64/libjnidispatch.so",
+    "reason": "Pinned third-party build paths or public test fixture; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "be8a1c6a282c637cf0ce217c331ee82a3643c59ef166fdbaabf1f27c3d7fd0dc",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdtls/plugins/com.sun.jna_5.19.1.v20260612-1000.jar!/com/sun/jna/aix-ppc64/libjnidispatch.a",
+    "reason": "Pinned third-party build paths or public test fixture; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "f33d3b4c2ca35fac8befc502b408e5b5851f8850c397d59f0094459fe455d0c1",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdtls/plugins/com.sun.jna_5.19.1.v20260612-1000.jar!/com/sun/jna/aix-ppc/libjnidispatch.a",
+    "reason": "Pinned third-party build paths or public test fixture; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "5ec37b7885b23f87c932fd1f71fd47ddebddf0957ccb2a4fa20c98dc75f732e5",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdtls/plugins/org.eclipse.equinox.launcher.gtk.linux.aarch64_1.2.1600.v20260804-1928.jar!/eclipse_11924.so",
+    "reason": "Pinned third-party build paths or public test fixture; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "b2ef828af2a1bacde6ae3660ff69bc7b2a11e3178fd6d4ac8ef7654c9b67ce44",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "jdtls/plugins/org.eclipse.equinox.launcher.gtk.linux.x86_64_1.2.1600.v20260804-1928.jar!/eclipse_11924.so",
+    "reason": "Pinned third-party build paths or public test fixture; member from unmodified bundled archive with corresponding-source inventory. Hash-scoped; no user-name exemption."
+  },
+  {
+    "sha256": "7169679a0c94d89422bf7a708724926c80fa81fc09e2f82ebbab21878f00fe49",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "CorrespondingSources/ch.qos.logback__logback-core-1.5.32-sources.jar!/ch/qos/logback/core/testUtil/EnvUtilForTests.java",
+    "reason": "Public dependency source documentation or test fixture from the pinned corresponding-source archive. Only these exact bytes and generic path category approved."
+  },
+  {
+    "sha256": "5fb5266c13c4a060b0a816146851512a506ed4fd8d124c3d9e7bf98d1e4b36b6",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "CorrespondingSources/com.google.guava__guava-33.6.0-jre-sources.jar!/com/google/common/io/Files.java",
+    "reason": "Public dependency source documentation or test fixture from the pinned corresponding-source archive. Only these exact bytes and generic path category approved."
+  },
+  {
+    "sha256": "ed54f9955769080978ad2590d5775c1a10246af00e5f4211a20685432c93e51c",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "CorrespondingSources/com.google.guava__guava-33.6.0-jre-sources.jar!/com/google/common/io/MoreFiles.java",
+    "reason": "Public dependency source documentation or test fixture from the pinned corresponding-source archive. Only these exact bytes and generic path category approved."
+  },
+  {
+    "sha256": "5e1226b8c786b13331fcee395e2150597db10fa0b6feddaf6a124a8e67341e7c",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "CorrespondingSources/com.google.guava__guava-33.6.0-jre-sources.jar!/com/google/common/util/concurrent/Striped.java",
+    "reason": "Public dependency source documentation or test fixture from the pinned corresponding-source archive. Only these exact bytes and generic path category approved."
+  },
+  {
+    "sha256": "6cfc8e503b79731dc3711bf7b9ceab838caf72d7f74482dd508b1c40e7b33b10",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "CorrespondingSources/org.apache.ant__ant-1.10.17-sources.jar!/org/apache/tools/ant/taskdefs/Deltree.java",
+    "reason": "Public dependency source documentation or test fixture from the pinned corresponding-source archive. Only these exact bytes and generic path category approved."
+  },
+  {
+    "sha256": "8bb911fb4ba65d9ebe007e9f86b7219c5c3a8724be87eb48ef6d127d4942de44",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "CorrespondingSources/org.apache.ant__ant-1.10.17-sources.jar!/org/apache/tools/ant/taskdefs/cvslib/CvsVersion.java",
+    "reason": "Public dependency source documentation or test fixture from the pinned corresponding-source archive. Only these exact bytes and generic path category approved."
+  },
+  {
+    "sha256": "6b4ae7732f0f57dc22fe0cd0007c3c307c9062cb14d57bbebfa5d2e4c04bf16b",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "CorrespondingSources/org.apache.ant__ant-1.10.17-sources.jar!/org/apache/tools/ant/taskdefs/optional/sos/SOS.java",
+    "reason": "Public dependency source documentation or test fixture from the pinned corresponding-source archive. Only these exact bytes and generic path category approved."
+  },
+  {
+    "sha256": "a046f9e1a0a2be5ded7dc6569c21388961b9dcbfb708342cc7561708168a464d",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "exported-source/CotEditor/Sources/Document Window/Inspector/DocumentInspectorView.swift",
+    "reason": "Public upstream SwiftUI preview sample path; preserve public test data. Exact exported bytes only."
+  },
+  {
+    "sha256": "2fd9b5f62501aaf59e76241ee8db3cc3738c5cdf65ebb8684c07aa4424422f7b",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "exported-source/Scripts/prepare-release-source.py",
+    "reason": "Source sanitizer regular-expression literal; it describes paths to remove, not an actual host path. Exact exported bytes only."
+  },
+  {
+    "sha256": "fdc0dd00a58b33e2ddd4efc1cbe50614ad94789aff64d0d51e12a9dcc9d2aa27",
+    "types": [
+      "user-home-path"
+    ],
+    "component": "exported-source/Scripts/test-release-artifact-audit.py",
+    "reason": "Anonymous regression fixture and string assertion; not captured host information. Exact exported bytes only."
+  }
+]

@@ -1,0 +1,14 @@
+name: Release artifact audit regression
+on:
+  pull_request:
+    paths: ['Scripts/*release*', 'Release/audit-reviewed-upstream.json', '.github/workflows/release-audit.yml']
+  push:
+    paths: ['Scripts/*release*', 'Release/audit-reviewed-upstream.json', '.github/workflows/release-audit.yml']
+permissions:
+  contents: read
+jobs:
+  anonymous-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 Scripts/test-release-artifact-audit.py

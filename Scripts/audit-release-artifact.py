@@ -1,39 +1,79 @@
 #!/usr/bin/env python3
-# Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
 # SPDX-License-Identifier: Apache-2.0
-"""Bounded heuristic artifact audit; reports file/type/count, never matched values."""
-import argparse,json,re,subprocess
+"""Fail-closed release inspection, including Mach-O compression and nested ZIP/JAR."""
+import argparse
+import json
 from pathlib import Path
-p=argparse.ArgumentParser();p.add_argument('--app',type=Path,required=True);p.add_argument('--report',type=Path,required=True);a=p.parse_args()
-patterns={
- 'current-user-home':re.escape(str(Path.home()).encode()),
- 'user-home-path':rb'/(?:Users|home)/[^\s/"\x00<>]{1,80}',
- 'private-key-marker':rb'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----',
- 'provider-token-candidate':rb'(?:gh[pousr]_[A-Za-z0-9]{30,120}|github_pat_[A-Za-z0-9_]{40,160}|AKIA[A-Z0-9]{16}|sk-(?:proj-)?[A-Za-z0-9_-]{30,160}|xox[baprs]-[A-Za-z0-9-]{20,160})',
- 'credential-url':rb'https?://[^\s/:]{2,80}:[^\s/@]{2,100}@'}
-findings=[];files=0
-for f in a.app.rglob('*'):
- if f.is_symlink():continue
- if not f.is_file():continue
- files+=1
- counts={}
- if '.git' in f.parts or any(x.endswith('.dSYM') for x in f.parts) or f.suffix in ('.dSYM','.p12','.pfx','.mobileprovision','.provisionprofile','.profraw') or f.name in ('.env','.DS_Store','credentials'):
-  counts['forbidden-file']=1
- # Pattern overlap fits in 512 bytes; cap read memory even for JDK modules.
- with f.open('rb') as stream:
-  carry=b''
-  while True:
-   chunk=stream.read(4*1024*1024)
-   if not chunk:break
-   data=carry+chunk
-   for name,pattern in patterns.items():
-    matches=list(re.finditer(pattern,data));count=sum(m.end()>len(carry) for m in matches)
-    if count:counts[name]=counts.get(name,0)+count
-   carry=data[-512:]
- if counts:findings.append({'path':str(f.relative_to(a.app)),'types':counts})
-main=a.app/'Contents/MacOS/CompEditor'
-linked=subprocess.check_output(['otool','-L',str(main)],text=True)
-report={'files':files,'findings':findings,'sparkle_linked':'Sparkle.framework' in linked,'sparkle_embedded':(a.app/'Contents/Frameworks/Sparkle.framework').exists(),'limits':'Heuristic patterns; binary matches may be upstream public source paths/fixtures. No credentials outside supplied artifact accessed. Does not prove absence of secrets.'}
-a.report.write_text(json.dumps(report,indent=2)+'\n')
-print('Artifact scan completed:',files,'files;',len(findings),'finding files. Values suppressed.')
-if report['sparkle_linked'] or report['sparkle_embedded']:raise SystemExit('Updater remains in candidate')
+from release_artifact_audit import Audit, LIMIT, PATTERNS, MAGICS
+import re
+import os
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument('--app', type=Path)
+    inputs.add_argument('--input', type=Path)
+    parser.add_argument('--report', type=Path, required=True)
+    parser.add_argument('--approvals', type=Path)
+    args = parser.parse_args()
+    approvals = json.loads(args.approvals.read_text()) if args.approvals else []
+    audit = Audit(approvals)
+    source = args.app or args.input
+    if not source.exists():
+        audit.report['errors'].append({'path': 'input', 'reason': 'missing artifact'})
+    if args.app:
+        main_binary = source/'Contents/MacOS/CompEditor'
+        if not main_binary.is_file() or main_binary.read_bytes()[:4] not in MAGICS:
+            audit.report['errors'].append({'path': 'Contents/MacOS/CompEditor', 'reason': 'required main Mach-O missing or invalid'})
+        if (source/'Contents/Frameworks/Sparkle.framework').exists():
+            audit.report['errors'].append({'path': 'Contents/Frameworks/Sparkle.framework', 'reason': 'updater remains'})
+    is_directory = source.is_dir()
+    # Scan exactly the root/member names that the packager serializes, not host paths.
+    audit.scan(os.fsencode(source.name), 'input', 'root-name')
+    if source.is_symlink():
+        try:
+            audit.scan(os.fsencode(os.readlink(source)), 'input', 'symlink-target')
+        except OSError:
+            audit.report['errors'].append({'path': 'input', 'reason': 'unreadable symlink root'})
+        audit.report['errors'].append({'path': 'input', 'reason': 'symlink artifact root refused'})
+        files = []
+    else:
+        files = sorted(source.rglob('*')) if is_directory else [source]
+    for file in files:
+        label = str(file.relative_to(source)) if is_directory else source.name
+        member_name = source.name + '/' + label if is_directory else label
+        audit.scan(os.fsencode(member_name), label, 'member-name')
+        if file.is_symlink():
+            try:
+                target = os.readlink(file)
+                audit.scan(os.fsencode(target), label, 'symlink-target')
+                if Path(target).is_absolute() or not file.resolve().is_relative_to(source.resolve()):
+                    audit.report['errors'].append({'path': label, 'reason': 'external symlink'})
+            except (OSError, RuntimeError, ValueError):
+                audit.report['errors'].append({'path': label, 'reason': 'unreadable or invalid symlink'})
+            continue
+        if not file.is_file():
+            continue
+        if '.git' in file.parts or any(x.endswith('.dSYM') for x in file.parts) or file.suffix in ('.p12', '.pfx', '.mobileprovision', '.provisionprofile', '.profraw') or file.name in ('.env', '.DS_Store', 'credentials'):
+            audit.report['errors'].append({'path': label, 'reason': 'forbidden release file'})
+        if file.stat().st_size > (2 * 1024**3 if file.suffix in ('.zip', '.jar') else LIMIT):
+            audit.report['errors'].append({'path': label, 'reason': 'file exceeds inspection limit'})
+            continue
+        try:
+            audit.inspect(file.read_bytes(), label)
+        except OSError:
+            audit.report['errors'].append({'path': label, 'reason': 'unreadable artifact'})
+    audit.report['passed'] = audit.passed()
+    audit.report['limits'] = 'Bounded pattern audit, Mach-O filename/profile decoding, ZIP/JAR recursion. Not a proof of absence of secrets; other compression formats are not decoded.'
+    # Also suppress candidates occurring in malicious/member filenames.
+    report = json.dumps(audit.report, indent=2)
+    for pattern in PATTERNS.values():
+        report = re.sub(pattern.decode(), '[redacted]', report)
+    args.report.write_text(report + '\n')
+    print('Artifact audit:', 'PASS' if audit.passed() else 'FAIL', '; files:', audit.report['files'], '; Mach-O:', audit.report['macho'], '; archives:', audit.report['zip'])
+    return 0 if audit.passed() else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
