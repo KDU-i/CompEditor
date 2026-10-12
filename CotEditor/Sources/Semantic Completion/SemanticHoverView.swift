@@ -12,7 +12,7 @@ final class SemanticHoverView: SemanticSuggestSurface {
         label.isSelectable = false
         label.maximumNumberOfLines = 12
         label.preferredMaxLayoutWidth = width - 20
-        label.lineBreakMode = .byTruncatingTail
+        label.lineBreakMode = .byWordWrapping
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
         NSLayoutConstraint.activate([
@@ -30,7 +30,7 @@ final class SemanticHoverView: SemanticSuggestSurface {
 
 extension EditorTextView {
     /// Glyph hit testing avoids hovering nearest text while the pointer is on whitespace.
-    func semanticHoverTarget(at pointInWindow: NSPoint) -> (symbol: NSRange, rect: NSRect)? {
+    func semanticHoverTarget(at pointInWindow: NSPoint) -> (symbol: NSRange, rect: NSRect, diagnosticText: String?)? {
         let point = convert(pointInWindow, from: nil)
         guard visibleRect.contains(point), let layoutManager, let textContainer else { return nil }
         let local = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
@@ -39,9 +39,13 @@ extension EditorTextView {
         let glyphRect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainer).offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
         guard glyphRect.contains(point) else { return nil }
         let character = layoutManager.characterIndexForGlyph(at: glyph)
-        guard let symbol = LSPHoverPresentation.symbol(in: string, at: character) else { return nil }
+        let diagnostic = semanticDiagnostics.flatMap { value -> (NSRange, String)? in
+            guard value.snapshot == string, value.fileURL == semanticDocumentContext?().url else { return nil }
+            return LSPDiagnosticHover.target(value.items, at: character, length: (string as NSString).length)
+        }
+        guard let symbol = diagnostic?.0 ?? LSPHoverPresentation.symbol(in: string, at: character) else { return nil }
         let range = layoutManager.glyphRange(forCharacterRange: symbol, actualCharacterRange: nil)
         let rect = layoutManager.boundingRect(forGlyphRange: range, in: textContainer).offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
-        return (symbol, rect)
+        return (symbol, rect, diagnostic?.1)
     }
 }

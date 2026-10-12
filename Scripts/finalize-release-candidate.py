@@ -9,10 +9,14 @@ p=argparse.ArgumentParser();p.add_argument('--app',type=Path,required=True);p.ad
 if a.app.is_symlink():raise SystemExit('Refusing symlink app')
 info=a.app/'Contents/Info.plist';d=plistlib.loads(info.read_bytes())
 linked=subprocess.check_output(['otool','-L',str(a.app/'Contents/MacOS/CompEditor')],text=True)
-if 'Sparkle.framework' in linked:raise SystemExit('Refusing to strip a linked updater; disable SPARKLE and rebuild')
+if 'Sparkle.framework' not in linked:raise SystemExit('CompEditor updater must link the pinned Sparkle framework')
 if d.get('CFBundleIdentifier')!='dev.local.SemanticEditor':raise SystemExit('Only isolated private fork can be staged')
-for k in list(d):
- if k.startswith('SU'):d.pop(k)
+# Only the fork's public configuration is accepted; never retain the upstream key/feed.
+if d.get('SUPublicEDKey') == 'BouLWwqNvz1a8USmfRPmtooMFjc27w3JPrT/VTuZQaI=':raise SystemExit('Upstream updater key refused')
+if not all(d.get(k) is expected for k,expected in [('SURequireSignedFeed',True),('SUVerifyUpdateBeforeExtraction',True),('SUEnableAutomaticChecks',False),('SUAllowsAutomaticUpdates',False),('SUSendProfileInfo',False)]):raise SystemExit('Unsafe updater policy')
+if d.get('SUSignedFeedFailureExpirationInterval') != 0:raise SystemExit('Signature failure fallback refused')
+# Unconfigured safe candidate has two empty fields; configured candidates are reviewed separately.
+if bool(d.get('SUPublicEDKey')) != bool(d.get('SUFeedURL')):raise SystemExit('Incomplete updater configuration')
 fork_notice='Unofficial Java/Python semantic fork. Not endorsed by the CotEditor Project.'
 if fork_notice not in d.get('NSHumanReadableCopyright',''):
  d['NSHumanReadableCopyright']=d.get('NSHumanReadableCopyright','')+'\n'+fork_notice
@@ -26,7 +30,20 @@ for localized in (a.app/'Contents/Resources').glob('*.lproj/InfoPlist.strings'):
   values['NSHumanReadableCopyright'] += '\nUnofficial Java/Python semantic fork. Not endorsed by the CotEditor Project.'
   localized.write_bytes(plistlib.dumps(values,sort_keys=False))
 sparkle=a.app/'Contents/Frameworks/Sparkle.framework'
-if sparkle.exists():shutil.rmtree(sparkle)
+if not sparkle.is_dir():raise SystemExit('Required Sparkle runtime missing')
+# Xcode can omit sealed headers/modules from embedded framework copies. Preserve the
+# complete approved official runtime so its original nested signature remains valid.
+raw_sparkle=a.packages/'artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework'
+if not raw_sparkle.is_dir():raise SystemExit('Pinned official Sparkle artifact missing; no download attempted')
+subprocess.run(['codesign','--verify','--deep','--strict',str(raw_sparkle)],check=True)
+raw_info=plistlib.loads((raw_sparkle/'Resources/Info.plist').read_bytes())
+if raw_info.get('CFBundleShortVersionString') != '2.10.0':raise SystemExit('Unreviewed official Sparkle artifact')
+incoming=sparkle.with_name('.Sparkle-incoming')
+if incoming.exists():raise SystemExit('Existing framework staging directory protected')
+shutil.copytree(raw_sparkle,incoming,symlinks=True)
+shutil.rmtree(sparkle);incoming.rename(sparkle)
+framework_info=plistlib.loads((sparkle/'Resources/Info.plist').read_bytes())
+if framework_info.get('CFBundleShortVersionString') != '2.10.0':raise SystemExit('Unreviewed Sparkle version')
 for file in a.app.rglob('*'):
  if file.name=='.DS_Store' or file.suffix in ('.profraw','.dSYM','.mobileprovision','.provisionprofile','.p12','.pfx'):
   raise SystemExit('Forbidden release artifact: '+str(file.relative_to(a.app)))
@@ -58,4 +75,7 @@ for checkout in sorted((a.packages/'checkouts').iterdir()):
    shutil.copy2(file,destination)
  manifest.append({'component':checkout.name,'notice_files':sorted(x.name for x in target.iterdir()) if target.exists() else []})
 (notices/'swift-dependency-notices.json').write_text(json.dumps(manifest,indent=2)+'\n')
-print('Candidate hygiene completed: unofficial notice, no Sparkle updater, license copies. Public release remains gated.')
+# Anonymous ad-hoc seal after stripping/notices; no certificate, private key or Keychain access.
+subprocess.run(['codesign','--force','--sign','-','--timestamp=none',str(a.app)],check=True)
+subprocess.run(['codesign','--verify','--deep','--strict',str(a.app)],check=True)
+print('Candidate hygiene completed: unofficial notice, pinned signed-update runtime, license copies. Public release remains gated.')

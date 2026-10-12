@@ -287,5 +287,14 @@
     ],
     "component": "exported-source/Scripts/test-release-artifact-audit.py",
     "reason": "Anonymous regression fixture and string assertion; not captured host information. Exact exported bytes only."
+  },
+  {
+    "sha256": "fd94d41828e75ff29586a3d3b1029ff203f69fb4d947120a24979e6ac75c5df0",
+    "types": [
+      "user-home-path",
+      "provider-token-candidate"
+    ],
+    "component": "Contents/Resources/CopilotServer/copilot-language-server",
+    "reason": "Immutable official public npm darwin-arm64 1.552.0 distribution, integrity-verified and packaged without runtime auth/cache data. Vendor build-path and token-shaped-pattern candidates reviewed at byte-identical fixed SHA only. Supplemental current-owner name, email, home and affiliation scan must still pass; owner-home or actual credentials are never permitted."
   }
 ]

@@ -8,6 +8,8 @@
 | Eclipse JDT LS / plugins | 1.61.0 with pinned core JAR and private diagnostic patch | EPL-2.0 and plugin-specific licenses in JARs/features; ThirdPartyNotices/JDT-Diagnostic-Patch original+modified sources, script and SHA manifests |
 | Temurin OpenJDK | 25.0.2+10, aarch64 | GPLv2 + Classpath Exception and third-party terms; SemanticServers/jdk/legal (all files retained) |
 | VS Code styling reference | 651237c307271b300329a7039913da7e5676afa5 | MIT; VSCode-MIT-LICENSE.txt |
+| GitHub Copilot native server | 1.552.0 darwin-arm64, SHA-256 fixed by packager | MIT and complete vendor notices; CopilotServer/Notices and manifest.json |
+| Sparkle updater | 2.10.0, pinned Package.resolved revision | MIT plus required upstream terms; retained framework resources and SwiftDependencies/Sparkle |
 | Swift/tree-sitter dependencies | Package.resolved revisions | Per-component LICENSE/COPYING/NOTICE copied into SwiftDependencies; manifest included |
 
 Temurin installed release metadata identifies source https://github.com/adoptium/jdk25u at commit prefix 9e3c947043a4 and build scripts https://github.com/adoptium/temurin-build at 458965074606f027bd5afce2cfd5c1055dea0438. Supplier release: https://github.com/adoptium/temurin25-binaries/releases/tag/jdk-25.0.2%2B10 . The local corresponding-source supplement now contains both pinned complete repository archives, including native code and build scripts, and all installed JDK legal files. Provide this supplement beside the binary download with the same access and an explicit source-download link. A Java-only src.zip or an upstream pointer is not the chosen source distribution mechanism. No source offer is made on another party's behalf.

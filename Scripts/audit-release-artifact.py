@@ -26,8 +26,19 @@ def main():
         main_binary = source/'Contents/MacOS/CompEditor'
         if not main_binary.is_file() or main_binary.read_bytes()[:4] not in MAGICS:
             audit.report['errors'].append({'path': 'Contents/MacOS/CompEditor', 'reason': 'required main Mach-O missing or invalid'})
-        if (source/'Contents/Frameworks/Sparkle.framework').exists():
-            audit.report['errors'].append({'path': 'Contents/Frameworks/Sparkle.framework', 'reason': 'updater remains'})
+        framework = source/'Contents/Frameworks/Sparkle.framework'
+        if framework.exists():
+            import plistlib
+            try:
+                framework_info = plistlib.loads((framework/'Resources/Info.plist').read_bytes())
+                host_info = plistlib.loads((source/'Contents/Info.plist').read_bytes())
+                if framework_info.get('CFBundleShortVersionString') != '2.10.0': raise ValueError('version')
+                if host_info.get('SUPublicEDKey') == 'BouLWwqNvz1a8USmfRPmtooMFjc27w3JPrT/VTuZQaI=': raise ValueError('upstream key')
+                for key, expected in [('SURequireSignedFeed',True),('SUVerifyUpdateBeforeExtraction',True),('SUEnableAutomaticChecks',False),('SUAllowsAutomaticUpdates',False),('SUSendProfileInfo',False)]:
+                    if host_info.get(key) is not expected: raise ValueError('policy')
+                if host_info.get('SUSignedFeedFailureExpirationInterval') != 0: raise ValueError('fallback')
+            except (OSError, ValueError, plistlib.InvalidFileException):
+                audit.report['errors'].append({'path': 'Contents/Frameworks/Sparkle.framework', 'reason': 'unreviewed updater configuration/runtime'})
     is_directory = source.is_dir()
     # Scan exactly the root/member names that the packager serializes, not host paths.
     audit.scan(os.fsencode(source.name), 'input', 'root-name')

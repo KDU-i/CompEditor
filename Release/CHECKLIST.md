@@ -2,8 +2,8 @@
 
 - [x] Owner chose repository **KDU-i/CompEditor**, standard app name CompEditor and optional in-app CotEditor labels. Current origin is upstream; never push there or through the unrelated CLI account. Repository creation/publication is not performed by preparation.
 - [x] Owner chose the original unmodified icon. Preserve CC BY-NC-ND4.0 attribution, creator/material/license links, noncommercial distribution and no-adapted-artwork conditions; keep the unofficial-fork notice. See ARTWORK_ATTRIBUTION.md.
-- [ ] Choose version/tag and review the final exact assets; do not publish unverified candidates.
-- [ ] Confirm a privacy-safe **KDU-i** author/committer identity for new public commits. Existing fork commit identities do not match the expected KDU-i noreply identity; current Git configuration also differs. Do not push the private branch history as-is or silently rewrite it. Upstream legitimate attribution stays intact.
+- [x] Owner chose v0.2.0. Final local assets remain subject to publication approval.
+- [x] Verified the latest anonymous local identity against the GitHub KDU-i account ID/login and an existing public commit. Use it per-commit for both author/committer; current global Git configuration remains unchanged. Preserved history needs review before push; no rewrite is authorized. Upstream legitimate attribution stays intact.
 - [ ] Review local privacy report: tracked fixture generalized only in clean export; original working files and Git history retained. Review author/committer identities before any history push. Export contains no .git, logs or dirty GUI fixture changes.
 - [ ] Review candidate binary scan, not just source; dSYM/debug logs/profiles/credentials excluded. Inspect candidate findings before upload. Heuristic absence of token patterns is not proof of no secrets.
 - [x] Prepare pinned Temurin/OpenJDK full source and build scripts, exact JDT/plugin sources and distributed modified files. Retain notices and the source mapping manifest.

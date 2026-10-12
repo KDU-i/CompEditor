@@ -73,6 +73,14 @@ class LayoutManager: NSLayoutManager, InvisibleDrawing, ValidationIgnorable {
     
     var showsIndentGuides = false  { didSet { self.invalidateDisplay(forCharacterRange: self.attributedString().range) } }
     var tabWidth = 0
+    struct GhostGap: Equatable { let caret: Int; let lines: Int }
+    var semanticGhostGap: GhostGap? {
+        didSet {
+            guard oldValue != semanticGhostGap else { return }
+            invalidateLayout(forCharacterRange: NSRange(location: 0, length: textStorage?.length ?? 0), actualCharacterRange: nil)
+            firstTextView?.needsDisplay = true
+        }
+    }
     var lineHeightMultiple: CGFloat = 1.0
     
     
@@ -110,7 +118,7 @@ class LayoutManager: NSLayoutManager, InvisibleDrawing, ValidationIgnorable {
         
         // -> The height of the extra line fragment should be the same as other normal fragments that are likewise customized in the delegate.
         var fragmentRect = fragmentRect
-        fragmentRect.size.height = self.lineHeight
+        fragmentRect.size.height = self.lineHeight * CGFloat(1 + ((semanticGhostGap?.caret == textStorage?.length) ? semanticGhostGap?.lines ?? 0 : 0))
         var usedRect = usedRect
         usedRect.size.height = self.lineHeight
         
@@ -253,6 +261,12 @@ extension LayoutManager: NSLayoutManagerDelegate {
         // -> NSParagraphStyle's `.lineHeightMultiple` can also control the line height,
         //    but it causes an issue when the first character of the string uses a fallback font.
         lineFragmentRect.pointee.size.height = self.lineHeight
+        if let gap = semanticGhostGap, gap.lines > 0 {
+            let characters = characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+            if gap.caret >= characters.location && (gap.caret < NSMaxRange(characters) || gap.caret == textStorage?.length && NSMaxRange(characters) == gap.caret) {
+                lineFragmentRect.pointee.size.height += self.lineHeight * CGFloat(gap.lines)
+            }
+        }
         lineFragmentUsedRect.pointee.size.height = self.lineHeight
         
         // vertically center the glyphs in the line fragment

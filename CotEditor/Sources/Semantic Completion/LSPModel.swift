@@ -65,7 +65,7 @@ struct LSPConfiguration: Codable, Sendable {
 }
 
 enum LSPError: Error, LocalizedError {
-    case invalidConfiguration, invalidFrame, stopped, timeout, server(String), unsupportedEdit
+    case invalidConfiguration, invalidFrame, stopped, timeout, server(String), unsupportedEdit, methodNotFound
     var errorDescription: String? {
         switch self {
             case .invalidConfiguration: "Use schemaVersion 1, unique Java/Python descriptors, and absolute direct java/node executable paths (no launcher scripts)."
@@ -74,6 +74,7 @@ enum LSPError: Error, LocalizedError {
             case .timeout: "The language server did not respond within 15 seconds."
             case .server(let message): message
             case .unsupportedEdit: "This completion requires an unsupported edit or command."
+            case .methodNotFound: "The server does not support this public method."
         }
     }
 }
@@ -505,5 +506,127 @@ enum LSPAssistance {
             if depth == 0 && (char == ";" || char == "{" || char == "}") { return false }
         }
         return false
+    }
+}
+
+/// Diagnostic hit testing shares the underline's half-open UTF-16 range semantics.
+enum LSPDiagnosticHover {
+    static func target(_ items: [LSPAssistance.Diagnostic], at offset: Int, length: Int) -> (NSRange, String)? {
+        let matches = items.filter { item in
+            guard item.severity <= 2 else { return false }
+            return item.range.length > 0 ? NSLocationInRange(offset, item.range) : offset == min(item.range.location, max(0, length - 1))
+        }.sorted { $0.severity < $1.severity }
+        guard let first = matches.first, length > 0 else { return nil }
+        let range = first.range.length > 0 ? first.range : NSRange(location: min(first.range.location, length - 1), length: 1)
+        let text = matches.map { item in
+            let source = item.raw["source"].string.map { " [" + $0 + "]" } ?? ""
+            let code = item.raw["code"].string ?? item.raw["code"].int.map(String.init)
+            return (item.severity == 1 ? "Error" : "Warning") + source + (code.map { " (" + $0 + ")" } ?? "") + ": " + item.message
+        }.joined(separator: "\n\n")
+        return (range, text)
+    }
+}
+
+/// Only validated plain-text inline edits and official completion commands are accepted.
+// Observable behavior references and retained MIT notices: COPILOT_VSCODE_PARITY.md.
+enum CopilotLanguage {
+    static func resolve(url: URL?, syntax: String) -> String {
+        let mode = syntax.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let names = ["python":"python", "java":"java", "javascript":"javascript", "typescript":"typescript", "javascript jsx":"javascriptreact", "typescript jsx":"typescriptreact", "jsx":"javascriptreact", "tsx":"typescriptreact", "c":"c", "c++":"cpp", "c#":"csharp", "objective-c":"objective-c", "swift":"swift", "rust":"rust", "go":"go", "ruby":"ruby", "php":"php", "html":"html", "css":"css", "scss":"scss", "json":"json", "json5":"jsonc", "yaml":"yaml", "toml":"toml", "markdown":"markdown", "shell script":"shellscript", "bash":"shellscript", "sql":"sql", "xml":"xml", "kotlin":"kotlin", "scala":"scala", "dart":"dart", "lua":"lua", "r":"r", "plain text":"plaintext", "none":"plaintext"]
+        if let language = names[mode] { return language }
+        let extensions = ["py":"python", "java":"java", "js":"javascript", "mjs":"javascript", "ts":"typescript", "jsx":"javascriptreact", "tsx":"typescriptreact", "c":"c", "h":"c", "cpp":"cpp", "cc":"cpp", "cs":"csharp", "swift":"swift", "rs":"rust", "go":"go", "rb":"ruby", "php":"php", "html":"html", "css":"css", "scss":"scss", "json":"json", "yaml":"yaml", "yml":"yaml", "toml":"toml", "md":"markdown", "sh":"shellscript", "sql":"sql", "xml":"xml", "kt":"kotlin", "scala":"scala", "dart":"dart", "lua":"lua", "r":"r"]
+        if let language = url.flatMap({ extensions[$0.pathExtension.lowercased()] }) { return language }
+        return mode.isEmpty ? "plaintext" : mode.replacingOccurrences(of: " ", with: "-")
+    }
+}
+
+enum CopilotInline {
+    struct Part: Sendable, Equatable { let offset: Int; let text: String }
+    struct Plan: Sendable {
+        let edit: LSPText.Edit
+        let parts: [Part]
+        var text: String { parts.map(\.text).joined() }
+    }
+    static func normalize(_ insert: String, in snapshot: String) -> String {
+        let lf = insert.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        if snapshot.contains("\r\n") { return lf.replacingOccurrences(of: "\n", with: "\r\n") }
+        if snapshot.contains("\r"), !snapshot.contains("\n") { return lf.replacingOccurrences(of: "\n", with: "\r") }
+        return lf
+    }
+    static func wordRange(in text: String, caret: Int) -> NSRange {
+        let line = (text as NSString).lineRange(for: NSRange(location: caret, length: 0))
+        let regex = try! NSRegularExpression(pattern: "[\\p{L}\\p{N}_$]+")
+        return regex.matches(in: text, range: line).first(where: { $0.range.location <= caret && NSMaxRange($0.range) >= caret })?.range ?? NSRange(location: caret, length: 0)
+    }
+    static func edit(_ item: LSPJSON, text: String, caret: Int) throws -> LSPText.Edit { try plan(item, text: text, caret: caret).edit }
+    static func plan(_ item: LSPJSON, text: String, caret: Int) throws -> Plan {
+        guard let raw = item["insertText"].string, !raw.isEmpty, raw.utf16.count <= 100_000 else { throw LSPError.invalidConfiguration }
+        _ = try LSPText.offset(LSPText.position(caret, in: text), in: text)
+        let range = item["range"] == .null ? wordRange(in: text, caret: caret) : try LSPText.range(item["range"], in: text)
+        guard range.location <= caret, caret <= NSMaxRange(range),
+              try LSPText.position(NSMaxRange(range), in: text)["line"] == LSPText.position(caret, in: text)["line"] else { throw LSPError.invalidConfiguration }
+        let insert = normalize(raw, in: text)
+        let source = text as NSString
+        let prefix = source.substring(with: NSRange(location: range.location, length: caret - range.location))
+        guard insert.utf16.starts(with: prefix.utf16) else { throw LSPError.invalidConfiguration }
+        let tail = source.substring(with: NSRange(location: caret, length: NSMaxRange(range) - caret))
+        let proposed = Array((insert as NSString).substring(from: prefix.utf16.count).unicodeScalars)
+        var scan = 0, offset = caret, parts: [Part] = []
+        func string(_ slice: ArraySlice<UnicodeScalar>) -> String { var result = ""; result.unicodeScalars.append(contentsOf: slice); return result }
+        // Existing suffix scalars must remain in order. Deletion/rewriting belongs to NES.
+        for scalar in tail.unicodeScalars {
+            guard let match = proposed[scan...].firstIndex(of: scalar) else { throw LSPError.unsupportedEdit }
+            if match > scan { parts.append(Part(offset: offset, text: string(proposed[scan..<match]))) }
+            scan = match + 1; offset += scalar.value > 0xffff ? 2 : 1
+        }
+        if scan < proposed.count { parts.append(Part(offset: offset, text: string(proposed[scan...]))) }
+        return Plan(edit: LSPText.Edit(range: range, text: insert, primary: true), parts: parts)
+    }
+    static func nextEdit(_ item: LSPJSON, text: String) throws -> LSPText.Edit {
+        guard let value = item["insertText"].string ?? item["text"].string, value.utf16.count <= 100_000 else { throw LSPError.unsupportedEdit }
+        let range = try LSPText.range(item["range"], in: text)
+        return LSPText.Edit(range: range, text: normalize(value, in: text), primary: true)
+    }
+    static func partialLength(_ text: String, line: Bool) -> Int {
+        let value = text as NSString
+        if line {
+            let newline = value.rangeOfCharacter(from: .newlines)
+            guard newline.location != NSNotFound else { return value.length }
+            let extra = value.character(at: newline.location) == 13 && newline.location + 1 < value.length && value.character(at: newline.location + 1) == 10 ? 2 : 1
+            return newline.location + extra
+        }
+        let range = NSRange(location: 0, length: value.length)
+        let word = try! NSRegularExpression(pattern: "[\\p{L}\\p{N}_$]+")
+        let match = word.firstMatch(in: text, range: range)?.range
+        var end = match.map { $0.location == 0 ? NSMaxRange($0) : $0.location } ?? value.length
+        let whitespace = try! NSRegularExpression(pattern: "\\s+")
+        if let space = whitespace.firstMatch(in: text, range: range)?.range, NSMaxRange(space) < end { end = NSMaxRange(space) }
+        return max(1, end)
+    }
+    /// Maps accepted normalized text back to the original provider insertText UTF-16 prefix.
+    static func acceptedLength(raw: String, normalizedPrefixLength: Int, snapshot: String) -> Int? {
+        let units = Array(raw.utf16); var index = 0, count = 0
+        let breakWidth = snapshot.contains("\r\n") ? 2 : 1
+        while index < units.count && count < normalizedPrefixLength {
+            if units[index] == 13 || units[index] == 10 {
+                index += units[index] == 13 && index + 1 < units.count && units[index + 1] == 10 ? 2 : 1
+                count += breakWidth
+            } else { index += 1; count += 1 }
+        }
+        return count == normalizedPrefixLength ? index : nil
+    }
+    static func rangeJSON(_ range: NSRange, in text: String) throws -> LSPJSON {
+        .object(["start": try LSPText.position(range.location, in: text), "end": try LSPText.position(NSMaxRange(range), in: text)])
+    }
+    static func extends(_ plan: Plan, selected: LSPText.Edit, snapshot: String) -> Bool {
+        let source = snapshot as NSString
+        guard NSMaxRange(selected.range) <= source.length else { return false }
+        let proposal = source.replacingCharacters(in: plan.edit.range, with: plan.edit.text)
+        let selectedPrefix = source.substring(to: selected.range.location) + selected.text
+        return proposal.utf16.starts(with: selectedPrefix.utf16)
+    }
+    static func command(_ value: LSPJSON, name: String) -> LSPJSON? {
+        guard value["command"].string == name, value["arguments"].array != nil else { return nil }
+        return .object(["command": .string(name), "arguments": value["arguments"]])
     }
 }
