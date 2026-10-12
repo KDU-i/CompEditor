@@ -15,8 +15,9 @@ if d.get('CFBundleIdentifier')!='dev.local.SemanticEditor':raise SystemExit('Onl
 if d.get('SUPublicEDKey') == 'BouLWwqNvz1a8USmfRPmtooMFjc27w3JPrT/VTuZQaI=':raise SystemExit('Upstream updater key refused')
 if not all(d.get(k) is expected for k,expected in [('SURequireSignedFeed',True),('SUVerifyUpdateBeforeExtraction',True),('SUEnableAutomaticChecks',False),('SUAllowsAutomaticUpdates',False),('SUSendProfileInfo',False)]):raise SystemExit('Unsafe updater policy')
 if d.get('SUSignedFeedFailureExpirationInterval') != 0:raise SystemExit('Signature failure fallback refused')
-# Unconfigured safe candidate has two empty fields; configured candidates are reviewed separately.
-if bool(d.get('SUPublicEDKey')) != bool(d.get('SUFeedURL')):raise SystemExit('Incomplete updater configuration')
+# Require the owner-approved public configuration; private signing material is never bundled.
+if d.get('SUPublicEDKey') != (root/'Release/UpdaterPublicKey.txt').read_text().strip():raise SystemExit('Unapproved fork update public key')
+if d.get('SUFeedURL') != 'https://github.com/KDU-i/CompEditor/releases/latest/download/appcast.xml':raise SystemExit('Unreviewed production feed URL')
 fork_notice='Unofficial Java/Python semantic fork. Not endorsed by the CotEditor Project.'
 if fork_notice not in d.get('NSHumanReadableCopyright',''):
  d['NSHumanReadableCopyright']=d.get('NSHumanReadableCopyright','')+'\n'+fork_notice

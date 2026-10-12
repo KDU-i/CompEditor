@@ -21,6 +21,8 @@ import Foundation
   check(!ForkUpdatePolicy.allowedArchive(URL(string:"https://example.invalid/update.zip")!),"foreign archive refused")
   check(!ForkUpdatePolicy.canInstall(hasUnsavedDocuments:true),"unsaved documents postpone installation")
   check(ForkUpdatePolicy.canInstall(hasUnsavedDocuments:false),"saved document state permits standard installer")
+  check(!ForkUpdatePolicy.allowedFeed("file:///tmp/compeditor-signed-update-qa/feed/appcast.xml"),"distribution policy refuses local file feed")
+  check((try? ForkUpdatePolicy(info:info,identifier:"dev.local.SemanticEditor.UpdaterTest")) == nil,"distribution policy refuses isolated-test bundle identity")
   print("Offline updater policy checks complete; no key generation, network or installation.")
  }
 }

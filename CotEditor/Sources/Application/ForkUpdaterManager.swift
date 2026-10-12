@@ -11,7 +11,7 @@ import Sparkle
     private var pendingInstall: (() -> Void)?
     private(set) var started = false
     var configurationDescription: String {
-        policy == nil ? "CompEditorの更新用公開鍵と配信先が未設定です。署名付き更新の準備後に利用できます。" : "手動で確認します。更新先へIPとアプリ・Sparkleのバージョン等が送信されます。システムプロファイルや文書内容は送信しません。"
+        return policy == nil ? "CompEditorの更新配信先が未設定です。署名付き更新の公開準備後に利用できます。" : "手動で確認します。更新先へIPとアプリ・Sparkleのバージョン等が送信されます。システムプロファイルや文書内容は送信しません。"
     }
     private var hasUnsavedDocuments: Bool { NSDocumentController.shared.documents.contains(where: \.isDocumentEdited) }
     func setup() {
