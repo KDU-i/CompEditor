@@ -1,0 +1,11 @@
+# Next candidate after rc.1
+
+Published v0.2.0-rc.1 remains at d39be1ac0d6b98acfa32bbb026b29970dadeab00, application build 854. Its tag and assets must remain unchanged. This source prepares build 855; an updated application and matching host source require a new candidate tag such as v0.2.0-rc.2. No new candidate or formal release is published by this preparation.
+
+Xcode 27.0 build 27A266a / Swift 6.4.0.34.1 reproduced the CI Debug link failure locally. A separate-file subclass references the private additionalFileAttributes method returning [String: Sendable], while the defining object exports [String: Any]. A minimal two-file reproduction shows the same mismatch. Marking the existing private helper final removes the unused inherited vtable entry; its body, actor isolation and Sendable background-save cache are unchanged. The minimal reproduction then links, and the full local application suite passes 182 tests in 38 suites. A decoding-error test now checks retention of the underlying localized error instead of an English-only prefix.
+
+Keep the anonymous KDU-i author/committer identity, approved dedicated public update key and mandatory signed-feed/archive policy. The private key remains in Mac Keychain. All pinned third-party runtimes, notices and corresponding-source obligations remain unchanged. Rebuild, sign and audit new candidate archives together; do not pair this source with the old rc.1 application. Confirm CI on the exact final release-branch commit before publishing a new candidate.
+
+The previous HTTPS update trial used a separate synthetic QA host with the exact production updater manager. Owner UI actions and measured installed version, archive bytes, code signature and new PID confirmed the upgrade. A full-editor isolated upgrade needs its own matching application identity and approved HTTPS test assets. Do not replace the real user application, share its document state, bypass TLS/signatures/Gatekeeper, or reuse the smaller QA archive as a full-editor upgrade.
+
+Developer ID signing/notarization, clean-download Gatekeeper, macOS 26/Intel, real NES acceptance, staged cancellation and native quit-cancel remain separate verification items. New Apple credentials or agreements require owner handling.

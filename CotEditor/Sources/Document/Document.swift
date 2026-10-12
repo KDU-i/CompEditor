@@ -1314,7 +1314,11 @@ extension NSTextView: EditorCounter.Source { }
     ///
     /// - Parameter saveOperation: The save operation.
     /// - Returns: The file attributes.
-    private func additionalFileAttributes(for saveOperation: NSDocument.SaveOperationType) -> [String: any Sendable] {
+    // Swift 6.4 stable erases Sendable to Any in the definition but retains it in
+    // inherited metadata. This private helper needs no subclass dispatch; final
+    // keeps RemoteDocument out of that mismatched vtable entry without weakening
+    // the main-thread collection or Sendable cache used by background saving.
+    private final func additionalFileAttributes(for saveOperation: NSDocument.SaveOperationType) -> [String: any Sendable] {
         
         var attributes: [String: any Sendable] = [:]
         
