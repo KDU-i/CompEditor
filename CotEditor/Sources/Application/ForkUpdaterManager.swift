@@ -43,7 +43,7 @@ import Sparkle
     }
     func validateMenuItem(_ item: NSMenuItem) -> Bool { pendingInstall != nil || controller?.updater.canCheckForUpdates != false }
     func feedURLString(for updater: SPUUpdater) -> String? { policy?.feed.absoluteString }
-    func updaterShouldPromptForPermissionToCheck(for updater: SPUUpdater) -> Bool { false }
+    func updaterShouldPromptForPermissionToCheck(forUpdates updater: SPUUpdater) -> Bool { false }
     func updater(_ updater: SPUUpdater, shouldProceedWithUpdate item: SUAppcastItem, updateCheck: SPUUpdateCheck) throws {
         guard policy != nil, let url = item.fileURL, ForkUpdatePolicy.allowedArchive(url), !item.isInformationOnlyUpdate, item.installationType == "application" else {
             throw NSError(domain: "CompEditorUpdate", code: 1, userInfo: [NSLocalizedDescriptionKey: "CompEditorの承認済み署名付き配布先ではありません。現行版を維持します。"])

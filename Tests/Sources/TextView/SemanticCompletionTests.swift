@@ -358,6 +358,7 @@ import Testing
         ForkUpdaterManager.shared.setup()
         ForkUpdaterManager.shared.setup()
         #expect(!ForkUpdaterManager.shared.started)
+        #expect(ForkUpdaterManager.shared.responds(to: NSSelectorFromString("updaterShouldPromptForPermissionToCheckForUpdates:")))
         let items = NSApp.mainMenu?.item(at: 0)?.submenu?.items ?? []
         #expect(items.filter { $0.identifier?.rawValue == "CompEditorCheckForUpdates" }.count == 1)
     }
