@@ -1,6 +1,6 @@
 # Observable VS Code / Copilot parity plan
 
-Public-source review: 2026-10-12. Implementation is local only. Exact service/proprietary-extension equivalence is not claimed. Existing source preimages are in ../Backups/BeforeVSCodeParity.
+Public-source review: 2026-10-12. The table and validation below record the earlier 0.2.0 behavior. Version 0.2.1 supersedes normal-suggest priority as described immediately below. Exact service/proprietary-extension equivalence is not claimed. Existing source preimages are in ../Backups/BeforeVSCodeParity.
 
 | Behavior | Previous CompEditor | Implemented observable behavior |
 |---|---|---|
@@ -9,7 +9,7 @@ Public-source review: 2026-10-12. Implementation is local only. Exact service/pr
 | Candidate navigation | first item only | all eligible returned items; Option+] / Option+[; explicit fetch for alternatives |
 | Range / suffix | end must equal caret | range may contain caret; insertion-only diff preserves original suffix; apply original range once |
 | Deletions/rewrites | refused | refused as thin ghost; separate Next Edit Suggestions diff preview |
-| Normal suggest | all pending/list states suppress AI | pending normal requests do not suppress; compatible selected-item extension can coexist; Tab prefers normal list |
+| Normal suggest | earlier 0.2.0 used compatible selected-item extension and normal-list Tab priority | 0.2.1 owner policy: displayed-current AI dismisses ordinary UI and owns Tab; loading/empty/failure keeps ordinary completion available |
 | Partial accept | none | Command+Right accepts next word; Accept Next Line menu; cumulative UTF-16 provider feedback |
 | Full accept / dismiss | Tab / Esc | retain, correct ownership/version and separate Undo stops |
 | Language identity | file extension and syntax disagree | one syntax-first languageId resolver for request/display; saved/unsaved consistent |
@@ -46,3 +46,9 @@ Known limits:
 - Additional language modes require separate explicit context-sharing opt-in; real service tests in this pass cover Java/Python only.
 - NES is experimental and opt-in for automatic fallback. Empty live response is not treated as unsupported, while -32601 disables only NES.
 - Unsigned Debug app was tested locally; Developer ID signing, notarization and public distribution are outside this local task.
+
+## 0.2.1 owner policy and session restoration
+
+VS Code’s default normal suggest popup priority is retained here only as historical research. CompEditor 0.2.1 deliberately gives the displayed-current AI preview ownership of the suggestion UI and Tab. The old selected-item-extension model tests do not establish this new UI policy; the independent offline GUI matrix does. Partial acceptance retains the remaining current preview and separate Undo stops. Deferred automatic requests do not replace a visible current preview.
+
+Startup restores existing official authentication with checkStatus. No new OAuth completion runs automatically. Context sharing requires explicit enable/consent; remembering that consent is optional and OFF by default. The editor stores only booleans. Normal exit uses shutdown/exit, not signOut. See [release details](Release/V0.2.1.md).
