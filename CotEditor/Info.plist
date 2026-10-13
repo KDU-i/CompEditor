@@ -184,8 +184,22 @@
 	<string>CotEditor.sdef</string>
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/KDU-i/CompEditor/releases/latest/download/appcast.xml</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>SUSignedFeedFailureExpirationInterval</key>
+	<real>0</real>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUSendProfileInfo</key>
+	<false/>
 	<key>SUPublicEDKey</key>
-	<string>BouLWwqNvz1a8USmfRPmtooMFjc27w3JPrT/VTuZQaI=</string>
+	<string>1ayDt5uXkiEydaUXQqTXPw3EXBcyWJlE23s2ldVRA+k=</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

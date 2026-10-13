@@ -90,8 +90,9 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     private var semanticTrackingArea: NSTrackingArea?
     let semanticBufferID = UUID()
     var semanticRevision = 0
-    var semanticDiagnostics: SemanticDiagnostics? { didSet { needsDisplay = true } }
-    var semanticGhost: SemanticGhostPreview? { didSet { needsDisplay = true } }
+    var semanticDiagnostics: SemanticDiagnostics? { didSet { needsDisplay = true; SemanticCompletionController.shared.cancelHover() } }
+    var semanticGhostPanel: SemanticCandidatePanel?
+    var semanticGhost: SemanticGhostPreview? { didSet { updateSemanticGhostPresentation() } }
 
     var lineEnding: LineEnding = .lf
     var defaultFontType: FontType = .standard
@@ -447,6 +448,8 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     }
 
     override func mouseDown(with event: NSEvent) {
+        let mappedOffset = semanticGhostMouseOffset(at: convert(event.locationInWindow, from: nil))
+        CopilotCompletionController.shared.dismissForInteraction(in: self)
         SemanticCompletionController.shared.cancelHover()
         
         self.mouseDownPoint = self.convert(event.locationInWindow, from: nil)
@@ -455,7 +458,14 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
         
         let selectedRange = self.selectedRange.isEmpty ? self.selectedRange : nil
         
-        super.mouseDown(with: event)
+        var selectionEvent = event
+        if let mappedOffset, let window {
+            var actual = NSRange(location: mappedOffset, length: 0)
+            let screen = firstRect(forCharacterRange: actual, actualRange: &actual)
+            let location = window.convertPoint(fromScreen: NSPoint(x: screen.minX, y: screen.midY))
+            selectionEvent = NSEvent.mouseEvent(with: event.type, location: location, modifierFlags: event.modifierFlags, timestamp: event.timestamp, windowNumber: event.windowNumber, context: nil, eventNumber: event.eventNumber, clickCount: event.clickCount, pressure: event.pressure) ?? event
+        }
+        super.mouseDown(with: selectionEvent)
         
         // -> After `super.mouseDown(with:)` is actually the timing of `mouseUp(with:)`,
         //    which doesn't work in NSTextView subclasses. (2019-01, macOS 10.14)
@@ -483,6 +493,14 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
         }
         
         self.isPerformingRectangularSelection = false
+        // NSTextView consumes mouseUp inside super.mouseDown; resume hover when
+        // the pointer rests on text after a single click with an empty selection.
+        if event.clickCount == 1, !isDragged {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let window = self.window else { return }
+                SemanticCompletionController.shared.hoverMoved(in: self, pointInWindow: window.convertPoint(fromScreen: NSEvent.mouseLocation))
+            }
+        }
     }
     
     
@@ -502,10 +520,12 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     
     override func keyDown(with event: NSEvent) {
         let semantic = SemanticCompletionController.shared
+        if CopilotCompletionController.shared.handleKey(event, in: self) { return }
         if semantic.handleAutomaticKey(event, in: self) { return }
         let previous = self.string
         super.keyDown(with: event)
         semantic.typed(event, in: self, previousText: previous)
+        CopilotCompletionController.shared.typed(in: self, previous: previous)
     }
 
     override func didChangeText() {
@@ -1034,8 +1054,8 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     override func draw(_ dirtyRect: NSRect) {
         
         super.draw(dirtyRect)
-        self.drawSemanticGhost(in: dirtyRect)
         self.drawSemanticDiagnostics(in: dirtyRect)
+        self.drawSemanticGhost(in: dirtyRect)
         
         // draw page guide
         if self.showsPageGuide {
@@ -1814,7 +1834,7 @@ extension EditorTextView {
     override func completions(forPartialWordRange charRange: NSRange, indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String]? {
         
         guard
-            !charRange.isEmpty,
+            !self.hasVisibleCopilotGhost, !charRange.isEmpty,
             !self.completionWordTypes.isEmpty
         else { return nil }
         
@@ -1923,7 +1943,7 @@ extension EditorTextView {
     private func performCompletion() {
         
         guard
-            !self.hasMarkedText(),
+            !self.hasVisibleCopilotGhost, !self.hasMarkedText(),
             self.selectedRange.isEmpty,
             self.rangeForUserCompletion.length >= self.minimumAutomaticCompletionLength,
             self.string.character(before: self.selectedRange)
@@ -1932,6 +1952,24 @@ extension EditorTextView {
                 .map(CharacterSet.alphanumerics.contains) != true  // cursor is (probably) at the middle of a word
         else { return }
         
-        self.complete(self)
+        // Automatic word completion may coexist with an AI request still loading.
+        // Only the explicit normal-completion command cancels that request.
+        super.complete(self)
+    }
+
+    func suppressWordCompletionForCopilot() {
+        completionDebouncer.cancel()
+        // AppKit's standard completion controller has no public dismissal method.
+        // A bounded responder handoff dismisses an already open native popup;
+        // never steal focus from another editor or an IME composition.
+        if isShowingCompletion, !hasMarkedText(), let window, window.firstResponder === self {
+            if window.makeFirstResponder(nil) { _ = window.makeFirstResponder(self) }
+        }
+    }
+
+    override func complete(_ sender: Any?) {
+        guard !hasMarkedText() else { return }
+        CopilotCompletionController.shared.dismissForInteraction(in: self)
+        super.complete(sender)
     }
 }

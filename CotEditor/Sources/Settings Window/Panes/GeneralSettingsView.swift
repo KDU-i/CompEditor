@@ -59,6 +59,14 @@ struct GeneralSettingsView: View {
         
         Grid(alignment: .leadingFirstTextBaseline, verticalSpacing: 18) {
             GridRow {
+                Text("CompEditorの更新:")
+                    .gridColumnAlignment(.trailing)
+                VStack(alignment: .leading) {
+                    Button("アップデートを確認…") { ForkUpdaterManager.shared.checkForUpdates(nil) }
+                    Text(ForkUpdaterManager.shared.configurationDescription).font(.caption)
+                }
+            }
+            GridRow {
                 Text("Application display name:", tableName: "ForkIdentity")
                     .gridColumnAlignment(.trailing)
                 VStack(alignment: .leading) {

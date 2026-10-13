@@ -3,9 +3,26 @@
 import Foundation
 import Darwin
 
+/// A bounded byte queue accepts bursts of small messages without an arbitrary chunk-count limit.
+private final class LSPPipeBudget: @unchecked Sendable {
+    private let lock = NSLock()
+    private var bytes = 0
+    private var failure: String?
+    func reserve(_ count: Int) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard failure == nil else { return false }
+        guard count <= 8 * 1024 * 1024 else { failure = "stdout chunk too large"; return false }
+        guard bytes <= 16 * 1024 * 1024 - count else { failure = "stdout buffer overflow"; return false }
+        bytes += count; return true
+    }
+    func release(_ count: Int) { lock.lock(); bytes -= count; lock.unlock() }
+    var endReason: String { lock.lock(); defer { lock.unlock() }; return failure ?? "stdout ended" }
+}
+
 /// Synchronous termination hook: AppKit must not exit before async actor cleanup runs.
 final class LSPProcesses: @unchecked Sendable {
     static let shared = LSPProcesses()
+    static let copilot = LSPProcesses()
     private let lock = NSLock()
     private var processes: [Process] = []
     private var generation = 0
@@ -31,7 +48,9 @@ final class LSPProcesses: @unchecked Sendable {
 /// One owned stdio process per enabled language and explicitly selected workspace.
 /// All pipe writes run on a serial worker queue; no server work runs on the UI thread.
 actor LSPClient {
-    private let ownershipTicket = LSPProcesses.shared.ticket()
+    private let registry: LSPProcesses
+    private let ownershipTicket: Int
+    init(processes: LSPProcesses = .shared) { registry = processes; ownershipTicket = processes.ticket() }
     private let process = Process()
     private let input = Pipe(), output = Pipe(), errors = Pipe()
     private let writer = DispatchQueue(label: "dev.semantic-editor.lsp-writes")
@@ -39,11 +58,16 @@ actor LSPClient {
     private var nextID = 0
     private var pending: [Int: CheckedContinuation<LSPJSON, any Error>] = [:]
     private var stopped = false
+    private var shuttingDown = false
+    private(set) var stopReason = "running"
     private var opened: [String: Int] = [:]
+    private var openedLanguages: [String: String] = [:]
     private var ready = false
     private var canResolve = false
     private(set) var lastDiagnosticNotification: LSPJSON = .null
     private(set) var capabilities: LSPJSON = .null
+    private var messageHandler: (@Sendable (String, LSPJSON) async -> LSPJSON)?
+    func setMessageHandler(_ handler: @escaping @Sendable (String, LSPJSON) async -> LSPJSON) { messageHandler = handler }
     private var diagnosticsHandler: (@Sendable (LSPDiagnosticBatch) -> Void)?
     private var diagnosticsByURI: [String: LSPDiagnosticBatch] = [:]
     private var canNavigate = false
@@ -56,10 +80,10 @@ actor LSPClient {
     private var settings: LSPJSON = .null
     private var streamContinuation: AsyncStream<Data>.Continuation?
 
-    func start(_ server: LSPConfiguration.Server, workspace: URL) async throws {
+    func start(_ server: LSPConfiguration.Server, workspace: URL, copilot: Bool = false) async throws {
         try Task.checkCancellation()
         guard !stopped else { throw LSPError.stopped }
-        self.workspace = workspace
+        self.workspace = copilot ? nil : workspace
         process.executableURL = URL(fileURLWithPath: server.executable)
         let workspaceKey = workspace.absoluteString.utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
         let storage = URL.cachesDirectory.appendingPathComponent("SemanticEditor/LSP/\(server.language.rawValue)/\(String(workspaceKey, radix: 16))")
@@ -71,31 +95,28 @@ actor LSPClient {
         // Do not pass the host's environment (which can contain credentials) to servers.
         process.environment = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": NSHomeDirectory(), "LANG": "en_US.UTF-8"]
         process.standardInput = input; process.standardOutput = output; process.standardError = errors
-        process.terminationHandler = { [weak self] _ in Task { await self?.stop() } }
-        do { try LSPProcesses.shared.launch(process, ticket: ownershipTicket) } catch { stop(); throw error }
-        let stream = AsyncStream<Data>(bufferingPolicy: .bufferingOldest(8)) { continuation in
+        process.terminationHandler = { [weak self] process in Task { await self?.stop(reason: "process exit \(process.terminationStatus)") } }
+        do { try registry.launch(process, ticket: ownershipTicket) } catch { stop(); throw error }
+        let budget = LSPPipeBudget()
+        // Memory is bounded by the 16 MiB byte budget, including the chunk being parsed.
+        let stream = AsyncStream<Data>(bufferingPolicy: .unbounded) { continuation in
             streamContinuation = continuation
-            output.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            output.fileHandleForReading.readabilityHandler = { handle in
                 let bytes = handle.availableData
                 if !bytes.isEmpty {
-                    guard bytes.count <= 8 * 1024 * 1024 else {
-                        continuation.finish(); Task { await self?.stop() }; return
-                    }
-                    if case .dropped = continuation.yield(bytes) {
-                        // Fail closed on overload; never parse a stream with missing chunks.
-                        continuation.finish(); Task { await self?.stop() }
-                    }
+                    guard budget.reserve(bytes.count) else { continuation.finish(); return }
+                    if case .terminated = continuation.yield(bytes) { budget.release(bytes.count) }
                 }
                 else { continuation.finish() }
             }
         }
         // One async stream consumer preserves chunk order without blocking cooperative threads.
         Task { [weak self] in
-            for await bytes in stream { await self?.receive(bytes) }
-            await self?.stop()
+            for await bytes in stream { await self?.receive(bytes); budget.release(bytes.count) }
+            await self?.stop(reason: budget.endReason)
         }
         errors.fileHandleForReading.readabilityHandler = { handle in _ = handle.availableData }
-        let settings: LSPJSON = .object([
+        let semanticSettings: LSPJSON = .object([
             "python": .object(["analysis": .object(["autoSearchPaths": .bool(false), "diagnosticMode": .string("openFilesOnly"), "indexing": .bool(false), "autoImportCompletions": .bool(true)])]),
             "java": .object([
                 "signatureHelp": .object(["enabled": .bool(true)]),
@@ -106,10 +127,11 @@ actor LSPClient {
                 "referencesCodeLens": .object(["enabled": .bool(false)])
             ])
         ])
+        let settings = copilot ? LSPJSON.object(["telemetry": .object(["telemetryLevel": .string("off")])]) : semanticSettings
         self.settings = settings
         let result = try await request("initialize", .object([
-            "processId": .number(Int(getpid())), "rootUri": .string(workspace.absoluteString),
-            "workspaceFolders": .array([.object(["uri": .string(workspace.absoluteString), "name": .string(workspace.lastPathComponent)])]),
+            "processId": .number(Int(getpid())), "rootUri": copilot ? .null : .string(workspace.absoluteString),
+            "workspaceFolders": copilot ? .array([]) : .array([.object(["uri": .string(workspace.absoluteString), "name": .string(workspace.lastPathComponent)])]),
             "capabilities": .object([
                 "general": .object(["positionEncodings": .array([.string("utf-16")])]),
                 "workspace": .object(["configuration": .bool(true), "applyEdit": .bool(false), "workspaceFolders": .bool(true)]),
@@ -123,7 +145,7 @@ actor LSPClient {
                     "completionItem": .object(["snippetSupport": .bool(false), "resolveSupport": .object(["properties": .array([.string("additionalTextEdits")])])])
                 ])])
             ]),
-            "initializationOptions": .object(["settings": settings, "bundles": .array([])])
+            "initializationOptions": copilot ? .object(["editorInfo": .object(["name": .string("CompEditor"), "version": .string("1")]), "editorPluginInfo": .object(["name": .string("CompEditor Copilot"), "version": .string("1")])]) : .object(["settings": settings, "bundles": .array([])])
         ]))
         let capabilities = result["capabilities"]
         self.capabilities = capabilities
@@ -142,8 +164,39 @@ actor LSPClient {
         ready = true
     }
 
+    func isRunning() -> Bool { ready && !stopped && process.isRunning }
+
     func setDiagnosticsHandler(_ handler: @escaping @Sendable (LSPDiagnosticBatch) -> Void) { diagnosticsHandler = handler }
     func synchronizeDocument(uri: URL, language: LSPLanguage, text: String) throws { try synchronize(uri: uri, language: language, text: text) }
+    func synchronizeDocument(uri: URL, languageId: String, text: String) throws { try synchronize(uri: uri, languageId: languageId, text: text) }
+    func inlineCompletion(uri: URL, language: LSPLanguage, text: String, caret: Int, triggerKind: Int = 2) async throws -> LSPJSON {
+        try await inlineCompletion(uri: uri, languageId: language.rawValue, text: text, caret: caret, triggerKind: triggerKind)
+    }
+    func inlineCompletion(uri: URL, languageId: String, text: String, caret: Int, triggerKind: Int = 2, selectedCompletion: LSPJSON? = nil, tabSize: Int = 4, insertSpaces: Bool = true) async throws -> LSPJSON {
+        var context: [String: LSPJSON] = ["triggerKind": .number(triggerKind)]
+        if let selectedCompletion { context["selectedCompletionInfo"] = selectedCompletion }
+        return try await copilotRequest("textDocument/inlineCompletion", uri: uri, languageId: languageId, text: text, caret: caret, context: .object(context), tabSize: tabSize, insertSpaces: insertSpaces)
+    }
+    func nextEdit(uri: URL, languageId: String, text: String, caret: Int, tabSize: Int = 4, insertSpaces: Bool = true) async throws -> LSPJSON {
+        try await copilotRequest("textDocument/copilotInlineEdit", uri: uri, languageId: languageId, text: text, caret: caret, context: nil, tabSize: tabSize, insertSpaces: insertSpaces)
+    }
+    private func copilotRequest(_ method: String, uri: URL, languageId: String, text: String, caret: Int, context: LSPJSON?, tabSize: Int, insertSpaces: Bool) async throws -> LSPJSON {
+        for key in Array(opened.keys) where key != uri.absoluteString { if let old = URL(string: key) { close(old) } }
+        try synchronize(uri: uri, languageId: languageId, text: text)
+        try notify("textDocument/didFocus", .object(["textDocument": .object(["uri": .string(uri.absoluteString)])]))
+        let version = opened[uri.absoluteString]!
+        var params: [String: LSPJSON] = [
+            "textDocument": .object(["uri": .string(uri.absoluteString), "version": .number(version)]),
+            "position": try LSPText.position(caret, in: text),
+            "formattingOptions": .object(["tabSize": .number(max(1, tabSize)), "insertSpaces": .bool(insertSpaces)])]
+        if let context { params["context"] = context }
+        let result = try await request(method, .object(params))
+        try Task.checkCancellation()
+        guard opened[uri.absoluteString] == version, snapshots[uri.absoluteString] == text,
+              openedLanguages[uri.absoluteString] == languageId else { throw CancellationError() }
+        return result
+    }
+    func openCopilotDocument() -> URL? { opened.keys.first.flatMap { URL(string: $0) } }
     func version(of uri: URL) -> Int? { opened[uri.absoluteString] }
     func diagnostics(for uri: URL) -> LSPDiagnosticBatch? { diagnosticsByURI[uri.absoluteString] }
     func definition(uri: URL, language: LSPLanguage, text: String, offset: Int) async throws -> LSPJSON {
@@ -182,10 +235,12 @@ actor LSPClient {
     var supportsSignatures: Bool { canShowSignatures }
     private(set) var triggerCharacters: Set<String> = []
 
-    private func synchronize(uri: URL, language: LSPLanguage, text: String) throws {
+    private func synchronize(uri: URL, language: LSPLanguage, text: String) throws { try synchronize(uri: uri, languageId: language.rawValue, text: text) }
+    private func synchronize(uri: URL, languageId: String, text: String) throws {
         try Task.checkCancellation()
         guard ready, !stopped else { throw LSPError.stopped }
         let key = uri.absoluteString
+        if let previous = openedLanguages[key], previous != languageId { close(uri) }
         if let version = opened[key], snapshots[key] != text {
             let next = version + 1
             var change: [String: LSPJSON] = ["text": .string(text)]
@@ -201,9 +256,9 @@ actor LSPClient {
             opened[key] = next
         } else if opened[key] == nil {
             try notify("textDocument/didOpen", .object(["textDocument": .object([
-                "uri": .string(key), "languageId": .string(language.rawValue), "version": .number(1), "text": .string(text)
+                "uri": .string(key), "languageId": .string(languageId), "version": .number(1), "text": .string(text)
             ])]))
-            opened[key] = 1
+            opened[key] = 1; openedLanguages[key] = languageId
         }
         if snapshots[key] != text { inspectionPending.insert(key); diagnosticsByURI.removeValue(forKey: key) }
         snapshots[key] = text
@@ -272,6 +327,7 @@ actor LSPClient {
 
     func close(_ uri: URL) {
         let key = uri.absoluteString
+        openedLanguages.removeValue(forKey: key)
         diagnosticsByURI.removeValue(forKey: key)
         inspectionPending.remove(key)
         if opened.removeValue(forKey: key) != nil {
@@ -280,8 +336,9 @@ actor LSPClient {
         snapshots.removeValue(forKey: key)
     }
 
-    func stop() {
+    func stop(reason: String = "requested") {
         guard !stopped else { return }
+        stopReason = reason
         stopped = true; ready = false
         diagnosticsByURI.removeAll(); diagnosticsHandler = nil; lastDiagnosticNotification = .null
         streamContinuation?.finish(); streamContinuation = nil
@@ -301,12 +358,33 @@ actor LSPClient {
                 if ownedProcess.isRunning { kill(ownedProcess.processIdentifier, SIGKILL) }
             }
         }
-        opened.removeAll(); snapshots.removeAll()
+        opened.removeAll(); openedLanguages.removeAll(); snapshots.removeAll()
     }
 
-    func request(_ method: String, _ params: LSPJSON) async throws -> LSPJSON {
+    /// Normal shutdown is distinct from signOut. Stop document work immediately,
+    /// allow the official server to finish its own state writes, then bound exit.
+    func shutdownAndStop(timeout: Int = 1) async {
+        guard !stopped, !shuttingDown else { return }
+        shuttingDown = true; ready = false
+        let requests = pending
+        pending.removeAll()
+        for (id, continuation) in requests {
+            try? notify("$/cancelRequest", .object(["id": .number(id)]))
+            continuation.resume(throwing: LSPError.stopped)
+        }
+        _ = try? await request("shutdown", .object([:]), timeout: timeout)
+        try? notify("exit", .object([:]))
+        // send() uses a serial pipe queue; drain exit before closing stdin.
+        await withCheckedContinuation { continuation in writer.async { continuation.resume() } }
+        for _ in 0..<10 where process.isRunning && !stopped {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        stop(reason: "normal shutdown")
+    }
+
+    func request(_ method: String, _ params: LSPJSON, timeout: Int = 15) async throws -> LSPJSON {
         try Task.checkCancellation()
-        guard !stopped else { throw LSPError.stopped }
+        guard !stopped, !shuttingDown || method == "shutdown" else { throw LSPError.stopped }
         nextID += 1
         let id = nextID
         return try await withTaskCancellationHandler {
@@ -315,7 +393,7 @@ actor LSPClient {
                 do { try send(.object(["jsonrpc": .string("2.0"), "id": .number(id), "method": .string(method), "params": params])) }
                 catch { pending.removeValue(forKey: id)?.resume(throwing: error) }
                 Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(15))
+                    try? await Task.sleep(for: .seconds(timeout))
                     await self?.expire(id)
                 }
             }
@@ -331,6 +409,7 @@ actor LSPClient {
         try? notify("$/cancelRequest", .object(["id": .number(id)]))
     }
     func notify(_ method: String, _ params: LSPJSON) throws {
+        guard !shuttingDown || method == "exit" || method == "$/cancelRequest" else { throw LSPError.stopped }
         try send(.object(["jsonrpc": .string("2.0"), "method": .string(method), "params": params]))
     }
     private func send(_ message: LSPJSON) throws {
@@ -357,6 +436,11 @@ actor LSPClient {
                         }
                         continue
                     }
+                    if let handler = messageHandler, method == "didChangeStatus" || method == "window/showMessageRequest" {
+                        let id = message["id"], params = message["params"]
+                        Task { let result = await handler(method, params); if id != .null { try? self.send(.object(["jsonrpc": .string("2.0"), "id": id, "result": result])) } }
+                        continue
+                    }
                     guard message["id"] != .null else { continue }
                     let result: LSPJSON
                     if method == "workspace/configuration" {
@@ -375,10 +459,11 @@ actor LSPClient {
                     }
                     try send(.object(["jsonrpc": .string("2.0"), "id": message["id"], "result": result]))
                 } else if let id = message["id"].int, let continuation = pending.removeValue(forKey: id) {
-                    if message["error"] != .null { continuation.resume(throwing: LSPError.server(message["error"]["message"].string ?? "Language server error")) }
+                    if message["error"]["code"].int == -32601 { continuation.resume(throwing: LSPError.methodNotFound) }
+                    else if message["error"] != .null { continuation.resume(throwing: LSPError.server(message["error"]["message"].string ?? "Language server error")) }
                     else { continuation.resume(returning: message["result"]) }
                 }
             }
-        } catch { stop() }
+        } catch { stop(reason: "protocol decoding or framing failed") }
     }
 }

@@ -162,6 +162,7 @@ extension Logger {
         _ = DocumentController.shared
         
         self.prepareMainMenu()
+        ForkUpdaterManager.shared.setup()
         
         #if SPARKLE
         UpdaterManager.shared.setup()

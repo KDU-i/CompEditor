@@ -1,3 +1,4 @@
+// Modified for the unofficial CompEditor fork; see FORK_CHANGES.md.
 //
 //  SettingFileManagingTests.swift
 //
@@ -199,7 +200,7 @@ import SyntaxFormat
         
         let recoverySuggestion = try #require(error.recoverySuggestion)
         
-        #expect(recoverySuggestion.hasPrefix("Decoding Error:"))
+        #expect(recoverySuggestion.contains(decodingError.localizedDescription))
     }
     
     

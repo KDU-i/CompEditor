@@ -78,6 +78,22 @@ import Testing
         #expect(view.string == before && document.undoManager?.canUndo == false)
     }
 
+    @Test func multilineCopilotPreviewKeepsEntireCandidateAndScrolls() throws {
+        let text = "Arrays.stream(numbers)\n                .filter(n -> n % 2 == 0)\n                .sum();"
+        let preview = SemanticMultilinePreview(text: text, width: 600, font: .monospacedSystemFont(ofSize: 13, weight: .regular))
+        #expect(preview.previewText.string == text)
+        #expect(!preview.previewText.isEditable && !preview.previewText.isSelectable)
+        #expect(preview.fullHeight > 50 && preview.hasVerticalScroller)
+        var root = URL(fileURLWithPath: #filePath); for _ in 0..<5 { root.deleteLastPathComponent() }
+        let bitmap = preview.bitmapImageRepForCachingDisplay(in: preview.bounds)!
+        preview.cacheDisplay(in: preview.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent("copilot-multiline-preview.png"))
+        let long = SemanticMultilinePreview(text: Array(repeating: text, count: 40).joined(separator: "\n"), width: 300, font: .monospacedSystemFont(ofSize: 13, weight: .regular))
+        long.frame.size.height = 120
+        #expect(long.previewText.frame.height > long.frame.height)
+        #expect(long.previewText.string.hasSuffix(".sum();"))
+    }
+
     @Test func ghostRendererLightAndDark() throws {
         let midtone = SemanticGhostDrawing.color(background: NSColor(calibratedWhite: 0.5, alpha: 1)).usingColorSpace(.deviceRGB)!
         #expect(midtone.redComponent < 0.2)  // Avoid low-contrast gray against a midtone custom theme.
@@ -111,6 +127,9 @@ import Testing
         let label = sample.subviews.compactMap { $0 as? NSTextField }.first!
         #expect(label.stringValue == hostile && !label.isSelectable)
         #expect(label.maximumNumberOfLines == 12)
+        let short = SemanticHoverView(text: "Error [Pyright]: invalid", width: 440)
+        let long = SemanticHoverView(text: "Error [Pyright] (reportReturnType): Type Literal['invalid synthetic result'] is not assignable to return type int. " + String(repeating: "Long diagnostic detail. ", count: 8), width: 440)
+        #expect(long.fittingSize.height > short.fittingSize.height)
         var foundLink = false
         label.attributedStringValue.enumerateAttribute(.link, in: NSRange(location: 0, length: label.attributedStringValue.length)) { value, _, _ in if value != nil { foundLink = true } }
         #expect(!foundLink)
@@ -150,6 +169,152 @@ import Testing
         let blank = view.convert(NSPoint(x: view.bounds.maxX - 10, y: rect.midY), to: nil)
         #expect(view.semanticHoverTarget(at: blank) == nil)
         #expect(view.string == "😀\r\nprobe(count)\nα_name\n")
+    }
+
+    @Test func diagnosticHoverPrecedesSymbolsAndRejectsStaleSnapshot() throws {
+        let document = Document()
+        let controller = EditorTextViewController(document: document); controller.loadView()
+        let view = controller.textView
+        controller.view.frame = NSRect(x: 0, y: 0, width: 600, height: 200); view.frame = controller.view.bounds
+        view.string = "😀 !wrong\n"; view.bounds.origin = .zero
+        view.semanticDiagnostics = SemanticDiagnostics(snapshot: view.string, fileURL: nil, items: [
+            LSPAssistance.Diagnostic(range: NSRange(location: 3, length: 6), severity: 1, message: "Unknown expression", raw: .object(["source": .string("mock"), "code": .number(42)])),
+            LSPAssistance.Diagnostic(range: NSRange(location: 3, length: 1), severity: 2, message: "Unexpected punctuation", raw: .null)])
+        let layout = view.layoutManager!, container = view.textContainer!
+        layout.ensureLayout(for: container)
+        let glyph = layout.glyphRange(forCharacterRange: NSRange(location: 3, length: 1), actualCharacterRange: nil)
+        let rect = layout.boundingRect(forGlyphRange: glyph, in: container).offsetBy(dx: view.textContainerOrigin.x, dy: view.textContainerOrigin.y)
+        let point = view.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+        let target = view.semanticHoverTarget(at: point)
+        #expect(target?.diagnosticText?.contains("Unknown expression") == true)
+        #expect(target?.diagnosticText?.contains("Unexpected punctuation") == true)
+        #expect(target?.symbol == NSRange(location: 3, length: 6))
+        var root = URL(fileURLWithPath: #filePath); for _ in 0..<5 { root.deleteLastPathComponent() }
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let surface = SemanticHoverView(text: target!.diagnosticText!, width: 440)
+            surface.appearance = NSAppearance(named: appearance)
+            surface.setFrameSize(NSSize(width: 440, height: max(36, surface.fittingSize.height)))
+            surface.layoutSubtreeIfNeeded()
+            let bitmap = surface.bitmapImageRepForCachingDisplay(in: surface.bounds)!
+            surface.cacheDisplay(in: surface.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent("diagnostic-hover-\(name).png"))
+        }
+        view.semanticDiagnostics = SemanticDiagnostics(snapshot: "old", fileURL: nil, items: view.semanticDiagnostics!.items)
+        #expect(view.semanticHoverTarget(at: point)?.diagnosticText == nil)
+        view.semanticDiagnostics = nil
+        #expect(view.semanticHoverTarget(at: point)?.diagnosticText == nil)
+    }
+
+    @Test func inlineGhostGapMovesFollowingTextWithoutEditingOrUndo() throws {
+        let document = Document(); let controller = EditorTextViewController(document: document); controller.loadView()
+        let view = controller.textView
+        view.frame = NSRect(x: 0, y: 0, width: 700, height: 500)
+        view.string = "def f():\n    return \ntail()\n"
+        view.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        view.semanticDocumentContext = { (nil, "Python") }
+        let layout = view.layoutManager as! LayoutManager, container = view.textContainer!
+        layout.textFont = view.font!
+        let caret = (view.string as NSString).range(of: "return ").location + 7
+        view.selectedRange = NSRange(location: caret, length: 0)
+        let tail = (view.string as NSString).range(of: "tail")
+        func y() -> CGFloat {
+            layout.ensureLayout(for: container)
+            let glyphs = layout.glyphRange(forCharacterRange: tail, actualCharacterRange: nil)
+            return layout.boundingRect(forGlyphRange: glyphs, in: container).minY
+        }
+        let original = view.string, before = y()
+        let text = "one\n    + two\n    + three"
+        view.semanticGhost = SemanticGhostPreview(text: text, snapshot: original, caret: caret, fileURL: nil, language: .python, copilot: true, languageId: "python", parts: [.init(offset: caret, text: text)])
+        let shifted = y()
+        #expect(abs(shifted - before - layout.lineHeight * 2) < 0.5)
+        #expect(view.string == original && document.undoManager?.canUndo == false)
+        view.semanticGhost = nil
+        #expect(abs(y() - before) < 0.5 && view.string == original)
+    }
+
+    @Test func suffixGhostPaintPreservesOriginalTailAndPartialUndo() throws {
+        let document = Document(); let controller = EditorTextViewController(document: document); controller.loadView()
+        let view = controller.textView
+        view.string = "call(\"exam\")"
+        view.semanticDocumentContext = { (URL(fileURLWithPath: "/synthetic/notes.txt"), "Python") }
+        let original = view.string, caret = "call(\"exam".utf16.count
+        view.selectedRange = NSRange(location: caret, length: 0)
+        let item: LSPJSON = .object(["insertText": .string("call(\"example\")"), "range": try CopilotInline.rangeJSON(NSRange(location: 0, length: original.utf16.count), in: original)])
+        let plan = try CopilotInline.plan(item, text: original, caret: caret)
+        view.semanticGhost = SemanticGhostPreview(text: plan.text, snapshot: original, caret: caret, fileURL: URL(fileURLWithPath: "/synthetic/notes.txt"), language: .python, copilot: true, languageId: "python", parts: plan.parts)
+        #expect(view.semanticGhostAttributedContent()?.string == "ple\")")
+        #expect(view.string == original && document.undoManager?.canUndo == false)
+        view.semanticGhost = nil
+        let partial = LSPText.Edit(range: NSRange(location: caret, length: 0), text: "ple", primary: true)
+        #expect(SemanticActionApplication.apply([partial], title: "Accept Copilot Word", to: view))
+        #expect(view.string == "call(\"example\")")
+        document.undoManager?.undo()
+        #expect(view.string == original)
+    }
+
+    @Test func bundledCopilotRejectsCounterfeitAndSymlinkExecutables() throws {
+        let root = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("CopilotServer")
+        try FileManager.default.createDirectory(at: directory.appendingPathComponent("Notices"), withIntermediateDirectories: true)
+        let executable = directory.appendingPathComponent("copilot-language-server")
+        try Data("counterfeit executable".utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        for name in ["LICENSE", "zod-LICENSE", "vscode-jsonrpc-License.txt", "vscode-jsonrpc-thirdpartynotices.txt"] {
+            try Data("synthetic notice".utf8).write(to: directory.appendingPathComponent("Notices/" + name))
+        }
+        #expect(CopilotBundledServer.detect(resources: root) == nil)
+        try FileManager.default.removeItem(at: executable)
+        try FileManager.default.createSymbolicLink(at: executable, withDestinationURL: URL(fileURLWithPath: "/usr/bin/true"))
+        #expect(CopilotBundledServer.detect(resources: root) == nil)
+        #expect(CopilotBundledServer.detect(resources: nil) == nil)
+    }
+
+    @Test func copilotKeepsSuggestionsOffBeforeConsentAndIgnoresUnownedTab() {
+        let suite = "CompEditor.SessionTests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let controller = CopilotCompletionController(defaults: defaults)
+
+        let document = Document(); let editor = EditorTextViewController(document: document); editor.loadView()
+        let view = editor.textView; view.string = "synthetic"; view.selectedRange = NSRange(location: 9, length: 0)
+        let toggle = NSMenuItem(title: "", action: NSSelectorFromString("toggle"), keyEquivalent: "")
+        #expect(controller.validateMenuItem(toggle) && toggle.state == .off)
+        controller.typed(in: view, previous: "")
+        #expect(view.semanticGhost == nil)
+        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48)!
+        #expect(!controller.handleKey(event, in: view))
+    }
+
+    @Test func detachedCopilotCandidateDoesNotSuppressOrdinaryWordsOrIME() {
+        let document = Document(); let editor = EditorTextViewController(document: document); editor.loadView()
+        let view = editor.textView
+        let text = "lower\nlow"
+        view.string = text; view.selectedRange = NSRange(location: 9, length: 0)
+        view.completionWordTypes = .document
+        view.semanticDocumentContext = { (url: nil, syntax: "Python") }
+        view.semanticGhost = SemanticGhostPreview(text: "er", snapshot: text, caret: 9, fileURL: nil, language: .python, copilot: true, revision: view.semanticRevision)
+        #expect(!view.hasVisibleCopilotGhost)
+        var index = 0
+        #expect(view.completions(forPartialWordRange: NSRange(location: 6, length: 3), indexOfSelectedItem: &index)?.contains("lower") == true)
+        view.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        let before = view.string
+        view.complete(nil)
+        #expect(view.hasMarkedText() && view.string == before)
+    }
+
+    @Test func rememberedConsentAndExplicitOffHaveTruthfulMenuState() {
+        let suite = "CompEditor.SessionTests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = CopilotSessionPreferences(defaults: defaults)
+        settings.remembersContextConsent = true; settings.enabled = true
+        let toggle = NSMenuItem(title: "", action: NSSelectorFromString("toggle"), keyEquivalent: "")
+        let resumed = CopilotCompletionController(defaults: defaults)
+        #expect(resumed.validateMenuItem(toggle) && toggle.state == .on)
+        settings.enabled = false
+        let off = CopilotCompletionController(defaults: defaults)
+        #expect(off.validateMenuItem(toggle) && toggle.state == .off)
     }
 
     @Test func actionImportUsesNativeUndoAndKeepsOtherDocumentUntouched() {
@@ -223,4 +388,13 @@ import Testing
         manager.redo()
         #expect(view.string == "import sample\nobj.length")
     }
+    @Test func updaterSetupDoesNotStartNetworkAndIsIdempotent() {
+        ForkUpdaterManager.shared.setup()
+        ForkUpdaterManager.shared.setup()
+        #expect(!ForkUpdaterManager.shared.started)
+        #expect(ForkUpdaterManager.shared.responds(to: NSSelectorFromString("updaterShouldPromptForPermissionToCheckForUpdates:")))
+        let items = NSApp.mainMenu?.item(at: 0)?.submenu?.items ?? []
+        #expect(items.filter { $0.identifier?.rawValue == "CompEditorCheckForUpdates" }.count == 1)
+    }
+
 }

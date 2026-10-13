@@ -69,6 +69,7 @@ import LineEnding
     }
 
     func installMenu() {
+        CopilotCompletionController.shared.installMenu()
         let root = NSMenuItem(title: "Semantic Completion", action: nil, keyEquivalent: "")
         let menu = NSMenu(title: root.title)
         func add(_ title: String, _ action: Selector, key: String = "") {
@@ -172,11 +173,8 @@ import LineEnding
     }
 
     private func language(for view: EditorTextView) -> LSPLanguage? {
-        let context = view.semanticDocumentContext?()
-        if let url = context?.url {
-            return LSPLanguage.allCases.first { $0.fileExtension == url.pathExtension.lowercased() }
-        }
-        return LSPLanguage.allCases.first { $0.rawValue.caseInsensitiveCompare(context?.syntax ?? "") == .orderedSame }
+        guard let context = view.semanticDocumentContext?() else { return nil }
+        return LSPLanguage(rawValue: CopilotLanguage.resolve(url: context.url, syntax: context.syntax))
     }
 
     func cancelHover() {
@@ -213,6 +211,10 @@ import LineEnding
             do {
                 try await Task.sleep(for: .milliseconds(350))
                 guard self.hoverIsCurrent(stamp, in: view, language: language) else { return }
+                if let text = target.diagnosticText {
+                    self.showHover(text: text, in: view, rect: target.rect)
+                    return
+                }
                 let (client, uri) = try await self.preparedClient(fileURL: fileURL, bufferID: bufferID, language: language, allowCachedRoute: true, token: stamp.generation)
                 guard self.hoverIsCurrent(stamp, in: view, language: language) else { return }
                 let hover = try await client.hover(uri: uri, language: language, text: snapshot, offset: target.symbol.location)
@@ -311,13 +313,18 @@ import LineEnding
         return (client, uri)
     }
 
-    @objc private func complete() { invalidateAutomatic(); requestCompletion(automatic: false) }
+    @objc private func complete() {
+        if let view = (NSApp.keyWindow ?? NSApp.mainWindow)?.firstResponder as? EditorTextView {
+            CopilotCompletionController.shared.dismissForInteraction(in: view)
+        }
+        invalidateAutomatic(); requestCompletion(automatic: false)
+    }
 
     private func requestCompletion(automatic: Bool, trigger: String? = nil) {
         // Menu accessibility actions may run while the app's main document is not key.
         guard let view = (NSApp.keyWindow ?? NSApp.mainWindow)?.firstResponder as? EditorTextView,
               preferences.globallyEnabled, let language = language(for: view), enabled.contains(language),
-              view.isEditable, !view.hasMarkedText(),
+              view.isEditable, !view.hasMarkedText(), !view.hasVisibleCopilotGhost,
               view.selectedRanges.count == 1, view.insertionLocations.count <= 1,
               view.selectedRange().length == 0 else { if !automatic { NSSound.beep() }; return }
         let fileURL = view.semanticDocumentContext?().url
@@ -350,7 +357,7 @@ import LineEnding
                 guard !Task.isCancelled, self.generation == token, view.string == snapshot,
                       view.selectedRange() == selection, !view.hasMarkedText(), view.window?.firstResponder === view,
                       (NSApp.keyWindow ?? NSApp.mainWindow) === view.window,
-                      self.language(for: view) == language,
+                      self.language(for: view) == language, !view.hasVisibleCopilotGhost,
                       view.semanticDocumentContext?().url == fileURL else { return }
                 self.lastProblem.removeValue(forKey: language)
                 self.choices = usable.map { Choice(item: $0.item, ghost: $0.ghost, client: client, snapshot: snapshot, selection: selection, fallback: fallback, generation: token, fileURL: fileURL, language: language) }
@@ -415,6 +422,7 @@ import LineEnding
                 view.breakUndoCoalescing()
                 _ = view.replace(with: edits.map(\.text), ranges: edits.map(\.range), selectedRanges: [selection], actionName: "Semantic Completion")
                 view.breakUndoCoalescing()
+                CopilotCompletionController.shared.documentEdited(in: view)
             } catch is CancellationError { }
             catch { if !Task.isCancelled, self.generation == choice.generation { self.showError(error) } }
         }
@@ -481,8 +489,14 @@ import LineEnding
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { SemanticCandidateRow() }
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let table = candidateTable, choices.indices.contains(table.selectedRow) else { return }
-        if let view = targetView { updateGhost(in: view, selected: table.selectedRow) }
-        let item = choices[table.selectedRow].item
+        let row = table.selectedRow
+        let currentGeneration = generation
+        if let view = targetView { updateGhost(in: view, selected: row) }
+        // Updating the ghost can synchronously let Copilot take ownership and
+        // dismiss this list. Revalidate before reading its selection or footer.
+        guard generation == currentGeneration, candidateTable === table,
+              table.selectedRow == row, choices.indices.contains(row) else { return }
+        let item = choices[row].item
         let documentation = item["documentation"].string ?? item["documentation"]["value"].string
         let metadata = documentation ?? item["detail"].string
         detailLabel?.stringValue = String((metadata ?? "Tab accept preview   ↑ ↓ alternatives   Esc dismiss").prefix(300))
@@ -504,22 +518,43 @@ import LineEnding
         let item = NSMenuItem(); item.tag = row; insertChoice(item, expectedPreview: preview ? choices[row].ghost : nil)
     }
     private func updateGhost(in view: EditorTextView, selected: Int? = nil) {
+        if CopilotCompletionController.shared.hasSuggestions(in: view) {
+            CopilotCompletionController.shared.ordinarySuggestionChanged(in: view)
+            if view.semanticGhost?.copilot == true { ghostRow = nil; return }
+        }
         let row = selected ?? choices.indices.first(where: { choices[$0].ghost != nil })
         ghostRow = row
         guard let row, choices.indices.contains(row), let suffix = choices[row].ghost else { view.semanticGhost = nil; ghostRow = nil; return }
         let choice = choices[row]
         view.semanticGhost = SemanticGhostPreview(text: suffix, snapshot: choice.snapshot, caret: choice.selection.location, fileURL: choice.fileURL, language: choice.language)
     }
-    private func invalidateAutomatic() {
+    private func invalidateAutomatic(notifyCopilot: Bool = true) {
         cancelHover(); completionInFlight = false
         assistanceTask?.cancel(); assistanceTask = nil
         signatureTask?.cancel(); signatureTask = nil
         signaturePanel?.orderOut(nil); if let signaturePanel { signaturePanel.parent?.removeChildWindow(signaturePanel) }; signatureView = nil
         actionChoices.removeAll(); jumpChoices.removeAll()
-        targetView?.semanticGhost = nil; ghostRow = nil
+        if targetView?.semanticGhost?.copilot != true { targetView?.semanticGhost = nil }; ghostRow = nil
         generation += 1; debounce?.cancel(); debounce = nil
         completionTask?.cancel(); completionTask = nil
         automaticPanel?.orderOut(nil); choices.removeAll()
+        if let automaticPanel { automaticPanel.parent?.removeChildWindow(automaticPanel) }
+        candidateTable = nil
+        if notifyCopilot, let targetView { CopilotCompletionController.shared.ordinarySuggestionChanged(in: targetView) }
+    }
+    func dismissSuggestionsForCopilot(in view: EditorTextView) {
+        guard targetView === view else { return }
+        invalidateAutomatic(notifyCopilot: false)
+    }
+    func isSuggestionListVisible(in view: EditorTextView) -> Bool { targetView === view && automaticPanel?.isVisible == true }
+    func selectedSuggestion(in view: EditorTextView) -> LSPText.Edit? {
+        guard isSuggestionListVisible(in: view), let row = candidateTable?.selectedRow, choices.indices.contains(row) else { return nil }
+        let choice = choices[row]
+        guard choice.snapshot == view.string, choice.selection == view.selectedRange() else { return nil }
+        return (try? LSPText.edits(choice.item, text: choice.snapshot, fallback: choice.fallback, caret: choice.selection.location))?.first(where: \.primary)
+    }
+    func isPresentingSuggestions(in view: EditorTextView) -> Bool {
+        targetView === view && (automaticPanel?.isVisible == true || completionInFlight)
     }
     /// Called before native key handling; never consumes composition or normal typing.
     func handleAutomaticKey(_ event: NSEvent, in view: EditorTextView) -> Bool {
@@ -554,6 +589,7 @@ import LineEnding
         defer { if automatic && view.string != previousText && event.modifierFlags.intersection([.command, .control]).isEmpty { scheduleSignature(in: view, delay: 180) } }
         if targetView !== view { invalidateAutomatic(); targetView = view }
         guard preferences.globallyEnabled, automatic, !applyingCompletion, view.string != previousText,
+              !view.hasVisibleCopilotGhost,
               event.modifierFlags.intersection([.command, .control]).isEmpty,
               !view.hasMarkedText(), let language = language(for: view), enabled.contains(language),
               view.selectedRange().length == 0, view.selectedRanges.count == 1,
