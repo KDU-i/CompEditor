@@ -21,7 +21,8 @@ if d.get('SUFeedURL') != 'https://github.com/KDU-i/CompEditor/releases/latest/do
 fork_notice='Unofficial Java/Python semantic fork. Not endorsed by the CotEditor Project.'
 if fork_notice not in d.get('NSHumanReadableCopyright',''):
  d['NSHumanReadableCopyright']=d.get('NSHumanReadableCopyright','')+'\n'+fork_notice
-d['SemanticReleaseCandidate']=True
+# Candidate/export staging does not define the published release channel.
+d.pop('SemanticReleaseCandidate', None)
 info.write_bytes(plistlib.dumps(d,sort_keys=False))
 for localized in (a.app/'Contents/Resources').glob('*.lproj/InfoPlist.strings'):
  data=localized.read_bytes()
