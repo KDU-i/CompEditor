@@ -114,3 +114,8 @@ Existing Copilot status is restored without automatic new OAuth. Explicit rememb
 - SemanticTests/CopilotSessionTests.swift
 - SemanticTests/LiveCopilotSessionProbe.swift
 - Release/V0.2.1.md
+
+## 0.2.2
+
+- GitHub Copilotの接続状況を標準の設定画面に沿った日本語UIへ変更。接続、送信同意、言語サーバー、操作ボタンを整理した。
+- AI補完のON/OFF、同意記憶、サーバー選択後の表示を即時更新する。OAuth認証とコード送信の既存の制御は保持。

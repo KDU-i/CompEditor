@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import AppKit
 import CryptoKit
+import SwiftUI
 
 enum CopilotConnectionFailure: Error { case authenticationRequired, serverError }
 
@@ -50,25 +51,25 @@ enum CopilotBundledServer {
 @MainActor final class CopilotCompletionController: NSObject, NSMenuItemValidation {
     static let shared = CopilotCompletionController()
     private let preferences: CopilotSessionPreferences
-    private var enabled = true
-    private var consented = false
+    private var enabled = true { didSet { refreshConnectionPresentation() } }
+    private var consented = false { didSet { refreshConnectionPresentation() } }
     private var connected = false
     private var connectionApproved = false
-    private var reconnect: Task<Void, Never>?
+    private var reconnect: Task<Void, Never>? { didSet { refreshConnectionPresentation() } }
     private var authFinishing = false
     private var latestKind = "Unknown"
-    private var executable: URL?
+    private var executable: URL? { didSet { refreshConnectionPresentation() } }
     private var client: LSPClient?
     private var startup: Task<LSPClient, any Error>?
     private var work: Task<Void, Never>?
-    private var auth: Task<Void, Never>?
+    private var auth: Task<Void, Never>? { didSet { refreshConnectionPresentation() } }
     private var epoch = 0
     private var authEpoch = 0
     private var phase = CopilotConnectionPhase.signInRequired { didSet { refreshConnectionPresentation() } }
-    private var status = "Sign in to GitHub to connect" { didSet { refreshConnectionPresentation() } }
+    private var status = "GitHubにサインインすると接続できます。" { didSet { refreshConnectionPresentation() } }
     private var statusItem: NSMenuItem?
     private var connectionPanel: NSPanel?
-    private var connectionLabel: NSTextField?
+    private let connectionUI = CopilotConnectionUIModel()
     private var lastStopReason = "running"
     private var observers: [any NSObjectProtocol] = []
     private weak var view: EditorTextView?
@@ -98,17 +99,18 @@ enum CopilotBundledServer {
         enabled = preferences.enabled
         consented = preferences.remembersContextConsent
         self.executable = executable
+        refreshConnectionPresentation()
     }
 
 
     func installMenu() {
         executable = executable ?? CopilotBundledServer.detect(resources: Bundle.main.resourceURL)
-        status = executable == nil ? "Official server missing — choose it manually" : "Official server ready — sign in to GitHub"
+        status = executable == nil ? "同梱の言語サーバーが見つかりません。公式サーバーを選択してください。" : "言語サーバーは準備済みです。GitHubの認証を確認できます。"
         let root = NSMenuItem(title: "GitHub Copilot", action: nil, keyEquivalent: "")
         let menu = NSMenu(title: root.title)
         let stateItem = NSMenuItem(title: phase.title, action: nil, keyEquivalent: "")
         stateItem.isEnabled = false; menu.addItem(stateItem); menu.addItem(.separator()); statusItem = stateItem
-        for (title, selector) in [("Choose Official Language Server…", #selector(chooseServer)), ("Inline Suggestions", #selector(toggle)), ("Reconnect / Check Authentication", #selector(reconnectAuthentication)), ("Sign In to GitHub…", #selector(signIn)), ("Cancel Sign In", #selector(cancelSignIn)), ("Sign Out", #selector(signOut)), ("Status…", #selector(showStatus))] {
+        for (title, selector) in [("公式言語サーバーを選択…", #selector(chooseServer)), ("AI補完を有効にする", #selector(toggle)), ("接続を確認", #selector(reconnectAuthentication)), ("GitHubにサインイン…", #selector(signIn)), ("サインインをキャンセル", #selector(cancelSignIn)), ("GitHubからサインアウト", #selector(signOut)), ("接続状況…", #selector(showStatus))] {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
             item.target = self; menu.addItem(item)
         }
@@ -171,18 +173,37 @@ enum CopilotBundledServer {
     private func alert(_ title: String, _ text: String) { let a = NSAlert(); a.messageText = title; a.informativeText = text; a.runModal() }
     private func refreshConnectionPresentation() {
         statusItem?.title = phase.title
-        connectionLabel?.stringValue = phase.title + "\n\n" + status + "\n\n" + (executable == nil ? "Official Language Server: 未選択" : "Official Language Server: 読み込み済み") + "\n" + (consented ? (preferences.remembersContextConsent ? "コード送信: このMacで同意を記憶" : "コード送信: この起動中のみ同意済み") : "コード送信: 同意待ち（文書は同期しません）")
+        // Keep transport diagnostics out of the user-facing connection description.
+        let detail = status.components(separatedBy: "\n停止分類:").first ?? status
+        connectionUI.presentation = CopilotConnectionPresentation(phase: phase, detail: detail,
+            enabled: enabled, consented: consented, remembersConsent: preferences.remembersContextConsent,
+            serverAvailable: executable != nil, authenticating: auth != nil, reconnecting: reconnect != nil)
+        guard let panel = connectionPanel else { return }
+        Task { @MainActor [weak panel] in
+            await Task.yield()
+            guard let panel, let content = panel.contentView else { return }
+            content.layoutSubtreeIfNeeded()
+            let size = content.fittingSize
+            guard size.width > 0, size.height > 0 else { return }
+            let top = panel.frame.maxY
+            panel.setContentSize(size)
+            panel.setFrameOrigin(NSPoint(x: panel.frame.minX, y: top - panel.frame.height))
+        }
     }
+    var connectionPresentation: CopilotConnectionPresentation { connectionUI.presentation }
+
     private func presentConnection() {
         if connectionPanel == nil {
-            let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 480, height: 220), styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            panel.title = "GitHub Copilot — 接続状況"; panel.isReleasedWhenClosed = false
-            let label = NSTextField(wrappingLabelWithString: "")
-            label.setAccessibilityIdentifier("CopilotConnectionStatus")
-            label.font = .systemFont(ofSize: 14); label.translatesAutoresizingMaskIntoConstraints = false
-            panel.contentView!.addSubview(label)
-            NSLayoutConstraint.activate([label.leadingAnchor.constraint(equalTo: panel.contentView!.leadingAnchor, constant: 20), label.trailingAnchor.constraint(equalTo: panel.contentView!.trailingAnchor, constant: -20), label.topAnchor.constraint(equalTo: panel.contentView!.topAnchor, constant: 20)])
-            connectionPanel = panel; connectionLabel = label; panel.center()
+            let panel = CopilotConnectionPanel(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            panel.title = "GitHub Copilot"; panel.isReleasedWhenClosed = false
+            let content = NSHostingView(rootView: CopilotConnectionView(model: connectionUI,
+                toggle: { [weak self] in self?.toggle() }, check: { [weak self] in self?.reconnectAuthentication() },
+                signIn: { [weak self] in self?.signIn() }, signOut: { [weak self] in self?.signOut() },
+                cancel: { [weak self] in self?.cancelSignIn() }, chooseServer: { [weak self] in self?.chooseServer() },
+                close: { [weak panel] in panel?.performClose(nil) }))
+            panel.contentView = content
+            panel.setContentSize(content.fittingSize)
+            connectionPanel = panel; panel.center()
         }
         refreshConnectionPresentation(); connectionPanel?.makeKeyAndOrderFront(nil)
     }
@@ -200,12 +221,15 @@ enum CopilotBundledServer {
     }
     @objc private func chooseServer() {
         let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
-        panel.message = "Select copilot-language-server from the official GitHub macOS native release. Keep its license and third-party notices with it."
+        panel.message = "GitHub公式のmacOS用copilot-language-serverを選択してください。ライセンスと第三者の帰属表示も一緒に保持してください。"
         guard panel.runModal() == .OK, let url = panel.url,
               url.lastPathComponent == "copilot-language-server", FileManager.default.isExecutableFile(atPath: url.path) else { return }
+        useServer(url)
+    }
+    func useServer(_ url: URL) {
         let wasEnabled = enabled
         disable(resetConnection: true); executable = url; enabled = wasEnabled
-        if enabled { phase = .signInRequired; status = "サーバー選択済み。Sign In to GitHub…を選んでください。" }
+        if enabled { phase = .signInRequired; status = "サーバー選択済み。GitHubにサインイン…を選んでください。" }
     }
     @objc private func toggle() {
         if enabled, consented { preferences.enabled = false; disable(); return }
@@ -238,7 +262,7 @@ enum CopilotBundledServer {
                 switch CopilotAccountState(result) {
                     case .authenticated:
                         self.connected = true; self.connectionApproved = true; self.phase = .authenticated
-                        self.status = self.consented ? "保存済みのGitHub認証を再利用しています。" : "保存済みのGitHub認証を再利用しています。Inline SuggestionsをONにすると送信同意を確認します。"
+                        self.status = self.consented ? "保存済みのGitHub認証を再利用しています。" : "保存済みのGitHub認証を再利用しています。AI補完を有効にすると、文書送信への同意を確認します。"
                     case .notSignedIn: throw CopilotConnectionFailure.authenticationRequired
                     case .notAuthorized:
                         self.connected = false; self.phase = .failed; self.status = "Copilotの利用権限を確認できません。保存済み認証は変更していません。アカウントの利用条件を確認してください。"
@@ -252,17 +276,21 @@ enum CopilotBundledServer {
     @objc private func reconnectAuthentication() { restoreAuthentication(showPanel: true) }
     private func confirmContextSharing() -> Bool {
         if consented { return true }
-        let a = NSAlert(); a.messageText = "Connect GitHub Copilot?"
-        a.informativeText = "Automatic and manual suggestions send the focused Java/Python document and surrounding code to GitHub Copilot. Other languages require a separate opt-in. Avoid confidential code unless you are authorized to send it. Turning this off stops document synchronization and the owned server. GitHub authentication is retained separately by the official server."
+        let a = NSAlert(); a.messageText = "AI補完を有効にしますか？"
+        a.informativeText = "入力中のJava/Python文書と周辺コードをGitHub Copilotへ送信します。ほかの言語は別途有効にする必要があります。\n\n送信が認められたコードで使用してください。オフにすると文書の同期が停止します。GitHubの認証は別に保持されます。\n\n同意を記憶すると、次回起動時もAI補完が有効になります。"
         a.showsSuppressionButton = true
-        a.suppressionButton?.title = "このMacで送信同意を記憶し、次回起動でもAI補完を有効にする"
+        a.suppressionButton?.title = "このMacで送信への同意を記憶する"
         a.suppressionButton?.state = .off
-        a.addButton(withTitle: "Enable and Send Context"); a.addButton(withTitle: "Cancel")
+        a.addButton(withTitle: "有効にして送信"); a.addButton(withTitle: "キャンセル")
         guard a.runModal() == .alertFirstButtonReturn else { return false }
-        consented = true
-        preferences.remembersContextConsent = a.suppressionButton?.state == .on
-        preferences.enabled = true
+        acceptContextConsent(remember: a.suppressionButton?.state == .on)
         return true
+    }
+    func acceptContextConsent(remember: Bool) {
+        consented = true
+        preferences.remembersContextConsent = remember
+        preferences.enabled = true
+        refreshConnectionPresentation()
     }
     private func shutdownForApplicationExit() {
         enabled = false; connected = false; authFinishing = false; invalidate(); authEpoch += 1
@@ -309,7 +337,7 @@ enum CopilotBundledServer {
             let kind = params["kind"].string ?? "Unknown"
             latestKind = kind
             if kind == "Normal", (authFinishing || connected) { connected = true; connectionApproved = true; phase = .authenticated; status = "GitHub認証済み。接続完了しました。文書同期は送信同意後に有効になります。" }
-            else if kind == "Error" { connected = false; phase = .failed; status = "Copilotサーバーでエラーが発生しました。保存済み認証は変更していません。Reconnect / Check Authenticationで状態を確認してください。"; invalidate() }
+            else if kind == "Error" { connected = false; phase = .failed; status = "Copilotサーバーでエラーが発生しました。保存済み認証は変更していません。接続を確認で状態を確認してください。"; invalidate() }
             else if kind == "Warning" { phase = .failed; status = "一時的な通信エラーです。ネットワークを確認して再試行してください。"; invalidate() }
             else if kind == "Inactive" { status = "現在の文書ではCopilot候補が利用できません。"; invalidate() }
             return .null
@@ -324,7 +352,7 @@ enum CopilotBundledServer {
     }
     @objc private func signIn() {
         guard enabled, auth == nil else { return }
-        guard executable != nil else { phase = .failed; status = "同梱サーバーが見つかりません。Choose Official Language Server…で公式実行ファイルを選んでください。"; presentConnection(); return }
+        guard executable != nil else { phase = .failed; status = "同梱サーバーが見つかりません。公式言語サーバーを選択…で公式実行ファイルを選んでください。"; presentConnection(); return }
         guard confirmContextSharing() else { phase = .signInRequired; status = "コード送信への同意をキャンセルしました。"; return }
         invalidate(); connected = false; authFinishing = false; latestKind = "Unknown"
         phase = .connecting; status = "公式サーバーを起動し、GitHub認証状態を確認しています…"; presentConnection()
@@ -339,9 +367,9 @@ enum CopilotBundledServer {
                 if let code = result["userCode"].string {
                     self.phase = .signInRequired; self.status = "ブラウザでのGitHub認可が必要です。表示されたコードを本人が入力してください。"
                     guard let command = CopilotInline.command(result["command"], name: "github.copilot.finishDeviceFlow") else { throw LSPError.unsupportedEdit }
-                    let a = NSAlert(); a.messageText = "Sign In to GitHub"
-                    a.informativeText = "Enter this temporary device code on GitHub: \(code)\nContinue opens your browser. Complete authorization yourself."
-                    a.addButton(withTitle: "Continue in Browser"); a.addButton(withTitle: "Cancel")
+                    let a = NSAlert(); a.messageText = "GitHubにサインイン"
+                    a.informativeText = "ブラウザのGitHub画面で、次の一時コードを本人が入力してください。\n\n\(code)\n\n「ブラウザで続ける」を押すと、認可のためのブラウザを開きます。"
+                    a.addButton(withTitle: "ブラウザで続ける"); a.addButton(withTitle: "キャンセル")
                     guard a.runModal() == .alertFirstButtonReturn else { self.phase = .signInRequired; self.status = "GitHub認証をキャンセルしました。"; self.authFinishing = false; return }
                     self.authFinishing = true
                     self.phase = .connecting; self.status = "ブラウザで本人がGitHub認可を完了するのを待っています（最大5分）。"
@@ -362,9 +390,9 @@ enum CopilotBundledServer {
         let reason = await old?.stopReason ?? lastStopReason
         guard enabled, authEpoch == ticket, client === old else { return }
         connected = false; authFinishing = false; latestKind = "Unknown"
-        if case CopilotConnectionFailure.authenticationRequired = error { phase = .signInRequired; status = "GitHub認証が必要です。Sign In to GitHub…で再試行してください。" }
-        else if case LSPError.timeout = error { phase = .timedOut; status = "応答が時間内に届きませんでした。保存済み認証は変更していません。Reconnect / Check Authenticationで再試行できます。" }
-        else { phase = .failed; status = "公式サーバーへの接続に失敗しました。保存済み認証は変更していません。Reconnect / Check Authenticationで再試行してください。\n停止分類: " + reason }
+        if case CopilotConnectionFailure.authenticationRequired = error { phase = .signInRequired; status = "GitHub認証が必要です。GitHubにサインイン…で再試行してください。" }
+        else if case LSPError.timeout = error { phase = .timedOut; status = "応答が時間内に届きませんでした。保存済み認証は変更していません。接続を確認で再試行できます。" }
+        else { phase = .failed; status = "公式サーバーへの接続に失敗しました。保存済み認証は変更していません。接続を確認で再試行してください。\n停止分類: " + reason }
         client = nil; LSPProcesses.copilot.stopAll(); Task { await old?.stop() }
     }
     @objc private func cancelSignIn() {
@@ -510,7 +538,7 @@ enum CopilotBundledServer {
             catch {
                 guard self.epoch == token, self.enabled else { return }
                 if case LSPError.methodNotFound = error { self.nextEditsUnavailable = true; self.status = "このサーバーは公開Next Edit APIに対応していません。inline completionは利用できます。" }
-                else if case LSPError.stopped = error { self.connected = false; self.phase = .failed; self.status = "公式サーバーが停止しました。Sign In to GitHub…で再接続してください。"; self.client = nil }
+                else if case LSPError.stopped = error { self.connected = false; self.phase = .failed; self.status = "公式サーバーが停止しました。GitHubにサインイン…で再接続してください。"; self.client = nil }
                 else if case LSPError.timeout = error { self.status = "AI候補の取得がタイムアウトしました。手動要求または入力で再試行できます。" }
                 else { self.status = "AI候補の要求に失敗しました。再試行してください。" }
             }

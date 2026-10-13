@@ -59,3 +59,7 @@ Full original backup: `../Backups/CompEditor-privacy-da3f5804d`; this follow-up'
 
 
 Latest validation: `../parity-delivery-appkit.log` (17 passed), `../parity-delivery-core.log` (114 checks), `../parity-delivery-copilot.log` (19 checks), `../parity-delivery-protocol.log` (25 checks). Normal UI candidate/partial/suffix/NES/ordinary-list tests are recorded in `../parity-native-ui-verification.txt`. Official live new synthetic Java/Python fixtures each produced an eligible candidate; NES returned a supported empty response (`../parity-live-tests.log`). No real NES candidate, physical IME/multiple-caret stress, or exhaustive wrapping geometry is claimed.
+
+### 0.2.2 接続画面
+
+「接続状況…」で、認証状態、AI補完の有効状態、送信への同意、公式言語サーバーの準備状態を個別に確認できます。画面内で接続確認、サインイン／サインアウト、認証の取消、サーバー選択ができます。閉じる／Escは画面を閉じます。コードの送信同意は記憶するチェックを初期OFFとし、明示した場合だけ次回起動に引き継ぎます。
