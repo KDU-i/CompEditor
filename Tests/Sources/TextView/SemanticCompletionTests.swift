@@ -270,17 +270,51 @@ import Testing
         #expect(CopilotBundledServer.detect(resources: nil) == nil)
     }
 
-    @Test func copilotStartsOnPendingConnectionAndIgnoresUnownedTab() {
-        let controller = CopilotCompletionController.shared
+    @Test func copilotKeepsSuggestionsOffBeforeConsentAndIgnoresUnownedTab() {
+        let suite = "CompEditor.SessionTests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let controller = CopilotCompletionController(defaults: defaults)
 
         let document = Document(); let editor = EditorTextViewController(document: document); editor.loadView()
         let view = editor.textView; view.string = "synthetic"; view.selectedRange = NSRange(location: 9, length: 0)
         let toggle = NSMenuItem(title: "", action: NSSelectorFromString("toggle"), keyEquivalent: "")
-        #expect(controller.validateMenuItem(toggle) && toggle.state == .on)
+        #expect(controller.validateMenuItem(toggle) && toggle.state == .off)
         controller.typed(in: view, previous: "")
         #expect(view.semanticGhost == nil)
         let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48)!
         #expect(!controller.handleKey(event, in: view))
+    }
+
+    @Test func detachedCopilotCandidateDoesNotSuppressOrdinaryWordsOrIME() {
+        let document = Document(); let editor = EditorTextViewController(document: document); editor.loadView()
+        let view = editor.textView
+        let text = "lower\nlow"
+        view.string = text; view.selectedRange = NSRange(location: 9, length: 0)
+        view.completionWordTypes = .document
+        view.semanticDocumentContext = { (url: nil, syntax: "Python") }
+        view.semanticGhost = SemanticGhostPreview(text: "er", snapshot: text, caret: 9, fileURL: nil, language: .python, copilot: true, revision: view.semanticRevision)
+        #expect(!view.hasVisibleCopilotGhost)
+        var index = 0
+        #expect(view.completions(forPartialWordRange: NSRange(location: 6, length: 3), indexOfSelectedItem: &index)?.contains("lower") == true)
+        view.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        let before = view.string
+        view.complete(nil)
+        #expect(view.hasMarkedText() && view.string == before)
+    }
+
+    @Test func rememberedConsentAndExplicitOffHaveTruthfulMenuState() {
+        let suite = "CompEditor.SessionTests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = CopilotSessionPreferences(defaults: defaults)
+        settings.remembersContextConsent = true; settings.enabled = true
+        let toggle = NSMenuItem(title: "", action: NSSelectorFromString("toggle"), keyEquivalent: "")
+        let resumed = CopilotCompletionController(defaults: defaults)
+        #expect(resumed.validateMenuItem(toggle) && toggle.state == .on)
+        settings.enabled = false
+        let off = CopilotCompletionController(defaults: defaults)
+        #expect(off.validateMenuItem(toggle) && toggle.state == .off)
     }
 
     @Test func actionImportUsesNativeUndoAndKeepsOtherDocumentUntouched() {

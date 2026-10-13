@@ -58,6 +58,7 @@ actor LSPClient {
     private var nextID = 0
     private var pending: [Int: CheckedContinuation<LSPJSON, any Error>] = [:]
     private var stopped = false
+    private var shuttingDown = false
     private(set) var stopReason = "running"
     private var opened: [String: Int] = [:]
     private var openedLanguages: [String: String] = [:]
@@ -360,9 +361,30 @@ actor LSPClient {
         opened.removeAll(); openedLanguages.removeAll(); snapshots.removeAll()
     }
 
+    /// Normal shutdown is distinct from signOut. Stop document work immediately,
+    /// allow the official server to finish its own state writes, then bound exit.
+    func shutdownAndStop(timeout: Int = 1) async {
+        guard !stopped, !shuttingDown else { return }
+        shuttingDown = true; ready = false
+        let requests = pending
+        pending.removeAll()
+        for (id, continuation) in requests {
+            try? notify("$/cancelRequest", .object(["id": .number(id)]))
+            continuation.resume(throwing: LSPError.stopped)
+        }
+        _ = try? await request("shutdown", .object([:]), timeout: timeout)
+        try? notify("exit", .object([:]))
+        // send() uses a serial pipe queue; drain exit before closing stdin.
+        await withCheckedContinuation { continuation in writer.async { continuation.resume() } }
+        for _ in 0..<10 where process.isRunning && !stopped {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        stop(reason: "normal shutdown")
+    }
+
     func request(_ method: String, _ params: LSPJSON, timeout: Int = 15) async throws -> LSPJSON {
         try Task.checkCancellation()
-        guard !stopped else { throw LSPError.stopped }
+        guard !stopped, !shuttingDown || method == "shutdown" else { throw LSPError.stopped }
         nextID += 1
         let id = nextID
         return try await withTaskCancellationHandler {
@@ -387,6 +409,7 @@ actor LSPClient {
         try? notify("$/cancelRequest", .object(["id": .number(id)]))
     }
     func notify(_ method: String, _ params: LSPJSON) throws {
+        guard !shuttingDown || method == "exit" || method == "$/cancelRequest" else { throw LSPError.stopped }
         try send(.object(["jsonrpc": .string("2.0"), "method": .string(method), "params": params]))
     }
     private func send(_ message: LSPJSON) throws {

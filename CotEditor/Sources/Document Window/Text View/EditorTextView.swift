@@ -1834,7 +1834,7 @@ extension EditorTextView {
     override func completions(forPartialWordRange charRange: NSRange, indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String]? {
         
         guard
-            !charRange.isEmpty,
+            !self.hasVisibleCopilotGhost, !charRange.isEmpty,
             !self.completionWordTypes.isEmpty
         else { return nil }
         
@@ -1943,7 +1943,7 @@ extension EditorTextView {
     private func performCompletion() {
         
         guard
-            !self.hasMarkedText(),
+            !self.hasVisibleCopilotGhost, !self.hasMarkedText(),
             self.selectedRange.isEmpty,
             self.rangeForUserCompletion.length >= self.minimumAutomaticCompletionLength,
             self.string.character(before: self.selectedRange)
@@ -1952,6 +1952,24 @@ extension EditorTextView {
                 .map(CharacterSet.alphanumerics.contains) != true  // cursor is (probably) at the middle of a word
         else { return }
         
-        self.complete(self)
+        // Automatic word completion may coexist with an AI request still loading.
+        // Only the explicit normal-completion command cancels that request.
+        super.complete(self)
+    }
+
+    func suppressWordCompletionForCopilot() {
+        completionDebouncer.cancel()
+        // AppKit's standard completion controller has no public dismissal method.
+        // A bounded responder handoff dismisses an already open native popup;
+        // never steal focus from another editor or an IME composition.
+        if isShowingCompletion, !hasMarkedText(), let window, window.firstResponder === self {
+            if window.makeFirstResponder(nil) { _ = window.makeFirstResponder(self) }
+        }
+    }
+
+    override func complete(_ sender: Any?) {
+        guard !hasMarkedText() else { return }
+        CopilotCompletionController.shared.dismissForInteraction(in: self)
+        super.complete(sender)
     }
 }

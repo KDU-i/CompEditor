@@ -2,7 +2,7 @@
 import AppKit
 import CryptoKit
 
-enum CopilotConnectionFailure: Error { case authenticationRequired }
+enum CopilotConnectionFailure: Error { case authenticationRequired, serverError }
 
 enum CopilotConnectionPhase: Equatable {
     case off, connecting, authenticated, signInRequired, failed, timedOut
@@ -49,6 +49,7 @@ enum CopilotBundledServer {
 /// Explicit opt-in; credentials remain opaque to this client and are owned by the official server.
 @MainActor final class CopilotCompletionController: NSObject, NSMenuItemValidation {
     static let shared = CopilotCompletionController()
+    private let preferences: CopilotSessionPreferences
     private var enabled = true
     private var consented = false
     private var connected = false
@@ -76,7 +77,7 @@ enum CopilotBundledServer {
         var edit: LSPText.Edit; var plan: CopilotInline.Plan?; let nextEdit: Bool
     }
     private struct Suggestions {
-        var candidates: [Candidate]; var index = 0; var snapshot: String; var caret: Int
+        var candidates: [Candidate]; var index = 0; var snapshot: String; var caret: Int; var revision: Int
         let file: URL?; let uri: URL; let languageId: String; let client: LSPClient
         var shown: Set<Int> = []; var jumped = false
     }
@@ -90,15 +91,24 @@ enum CopilotBundledServer {
     private var fingerprint: (UUID, String, Int, String)?
     private var viewportOrigin: NSPoint?
 
+    override convenience init() { self.init(defaults: .standard) }
+    init(defaults: UserDefaults, executable: URL? = nil) {
+        preferences = CopilotSessionPreferences(defaults: defaults)
+        super.init()
+        enabled = preferences.enabled
+        consented = preferences.remembersContextConsent
+        self.executable = executable
+    }
+
 
     func installMenu() {
-        executable = CopilotBundledServer.detect(resources: Bundle.main.resourceURL)
+        executable = executable ?? CopilotBundledServer.detect(resources: Bundle.main.resourceURL)
         status = executable == nil ? "Official server missing — choose it manually" : "Official server ready — sign in to GitHub"
         let root = NSMenuItem(title: "GitHub Copilot", action: nil, keyEquivalent: "")
         let menu = NSMenu(title: root.title)
         let stateItem = NSMenuItem(title: phase.title, action: nil, keyEquivalent: "")
         stateItem.isEnabled = false; menu.addItem(stateItem); menu.addItem(.separator()); statusItem = stateItem
-        for (title, selector) in [("Choose Official Language Server…", #selector(chooseServer)), ("Inline Suggestions", #selector(toggle)), ("Sign In to GitHub…", #selector(signIn)), ("Cancel Sign In", #selector(cancelSignIn)), ("Sign Out", #selector(signOut)), ("Status…", #selector(showStatus))] {
+        for (title, selector) in [("Choose Official Language Server…", #selector(chooseServer)), ("Inline Suggestions", #selector(toggle)), ("Reconnect / Check Authentication", #selector(reconnectAuthentication)), ("Sign In to GitHub…", #selector(signIn)), ("Cancel Sign In", #selector(cancelSignIn)), ("Sign Out", #selector(signOut)), ("Status…", #selector(showStatus))] {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
             item.target = self; menu.addItem(item)
         }
@@ -150,16 +160,18 @@ enum CopilotBundledServer {
                 }
             })
         }
-        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in MainActor.assumeIsolated { self.disable() } })
+        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in MainActor.assumeIsolated { self.shutdownForApplicationExit() } })
         observers.append(NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] note in
             let window = note.object as? NSWindow
             MainActor.assumeIsolated { if let window, window === self?.view?.window { self?.invalidate() } }
         })
+        if enabled, executable != nil { restoreAuthentication() }
+        else if !enabled { phase = .off; status = "OFF。保存済みのGitHub認証は削除していません。" }
     }
     private func alert(_ title: String, _ text: String) { let a = NSAlert(); a.messageText = title; a.informativeText = text; a.runModal() }
     private func refreshConnectionPresentation() {
         statusItem?.title = phase.title
-        connectionLabel?.stringValue = phase.title + "\n\n" + status + "\n\n" + (executable == nil ? "Official Language Server: 未選択" : "Official Language Server: 読み込み済み") + "\n" + (consented ? "コード送信: この起動中のみ同意済み" : "コード送信: 同意待ち（文書は同期しません）")
+        connectionLabel?.stringValue = phase.title + "\n\n" + status + "\n\n" + (executable == nil ? "Official Language Server: 未選択" : "Official Language Server: 読み込み済み") + "\n" + (consented ? (preferences.remembersContextConsent ? "コード送信: このMacで同意を記憶" : "コード送信: この起動中のみ同意済み") : "コード送信: 同意待ち（文書は同期しません）")
     }
     private func presentConnection() {
         if connectionPanel == nil {
@@ -183,7 +195,7 @@ enum CopilotBundledServer {
                 connected = true; connectionApproved = true; phase = .authenticated; status = "GitHub認証済み。Java/Pythonで入力すると候補が出ます。既存認証は再利用されるためブラウザが開かない場合があります。"; return }
             try await Task.sleep(for: .milliseconds(100))
         }
-        if latestKind == "Error" { throw CopilotConnectionFailure.authenticationRequired }
+        if latestKind == "Error" { throw CopilotConnectionFailure.serverError }
         throw LSPError.timeout
     }
     @objc private func chooseServer() {
@@ -196,10 +208,17 @@ enum CopilotBundledServer {
         if enabled { phase = .signInRequired; status = "サーバー選択済み。Sign In to GitHub…を選んでください。" }
     }
     @objc private func toggle() {
-        if enabled { disable(); return }
+        if enabled, consented { preferences.enabled = false; disable(); return }
         enabled = true
-        guard consented, connectionApproved else { phase = .signInRequired; status = "Sign In to GitHub…で送信同意と認証を行ってください。"; presentConnection(); return }
-        authFinishing = true; phase = .connecting; status = "GitHub Copilotに再接続しています。"; presentConnection()
+        guard confirmContextSharing() else { preferences.enabled = false; disable(); return }
+        preferences.enabled = true
+        if connected { phase = .authenticated; status = "既存認証を再利用しています。AI補完を有効にしました。"; return }
+        restoreAuthentication(showPanel: true)
+    }
+    private func restoreAuthentication(showPanel: Bool = false) {
+        guard enabled, executable != nil, auth == nil, reconnect == nil else { return }
+        authFinishing = true; phase = .connecting; status = "GitHub Copilotに再接続しています。"
+        if showPanel { presentConnection() }
         let token = authEpoch
         reconnect = Task { [weak self] in
             guard let self else { return }
@@ -207,20 +226,56 @@ enum CopilotBundledServer {
             do {
                 let owner = try await self.prepared()
                 guard self.enabled, self.authEpoch == token, !Task.isCancelled else { return }
-                try await self.waitUntilReady(ticket: token, owner: owner)
+                let result: LSPJSON
+                do { result = try await owner.request("checkStatus", .object([:])) }
+                catch LSPError.methodNotFound {
+                    // Public signIn is the compatibility fallback. Never execute a
+                    // new device-flow command from an automatic reconnect.
+                    result = try await owner.request("signIn", .object([:]))
+                    if result["userCode"].string != nil { throw CopilotConnectionFailure.authenticationRequired }
+                }
+                guard self.enabled, self.authEpoch == token, self.client === owner else { return }
+                switch CopilotAccountState(result) {
+                    case .authenticated:
+                        self.connected = true; self.connectionApproved = true; self.phase = .authenticated
+                        self.status = self.consented ? "保存済みのGitHub認証を再利用しています。" : "保存済みのGitHub認証を再利用しています。Inline SuggestionsをONにすると送信同意を確認します。"
+                    case .notSignedIn: throw CopilotConnectionFailure.authenticationRequired
+                    case .notAuthorized:
+                        self.connected = false; self.phase = .failed; self.status = "Copilotの利用権限を確認できません。保存済み認証は変更していません。アカウントの利用条件を確認してください。"
+                    case .unknown: try await self.waitUntilReady(ticket: token, owner: owner)
+                }
                 self.authFinishing = false
             } catch is CancellationError { }
             catch { await self.connectionFailed(error, ticket: token) }
         }
     }
+    @objc private func reconnectAuthentication() { restoreAuthentication(showPanel: true) }
     private func confirmContextSharing() -> Bool {
         if consented { return true }
         let a = NSAlert(); a.messageText = "Connect GitHub Copilot?"
-        a.informativeText = "Automatic and manual suggestions send the focused Java/Python document, surrounding code and selected normal-completion context to GitHub Copilot. Other languages require a separate opt-in. Avoid confidential code unless you are authorized to send it. A GitHub account with Copilot access is required. Turning this off stops document synchronization and the owned server. This choice lasts for this app session."
+        a.informativeText = "Automatic and manual suggestions send the focused Java/Python document and surrounding code to GitHub Copilot. Other languages require a separate opt-in. Avoid confidential code unless you are authorized to send it. Turning this off stops document synchronization and the owned server. GitHub authentication is retained separately by the official server."
+        a.showsSuppressionButton = true
+        a.suppressionButton?.title = "このMacで送信同意を記憶し、次回起動でもAI補完を有効にする"
+        a.suppressionButton?.state = .off
         a.addButton(withTitle: "Enable and Send Context"); a.addButton(withTitle: "Cancel")
         guard a.runModal() == .alertFirstButtonReturn else { return false }
         consented = true
+        preferences.remembersContextConsent = a.suppressionButton?.state == .on
+        preferences.enabled = true
         return true
+    }
+    private func shutdownForApplicationExit() {
+        enabled = false; connected = false; authFinishing = false; invalidate(); authEpoch += 1
+        auth?.cancel(); startup?.cancel(); reconnect?.cancel()
+        auth = nil; startup = nil; reconnect = nil
+        let old = client; client = nil
+        guard let old else { LSPProcesses.copilot.stopAll(); return }
+        // AppKit's termination notification is synchronous. The LSP actor and its
+        // pipe reader run independently; give graceful shutdown a bounded window.
+        let finished = DispatchSemaphore(value: 0)
+        Task.detached { await old.shutdownAndStop(); finished.signal() }
+        _ = finished.wait(timeout: .now() + 2)
+        LSPProcesses.copilot.stopAll()
     }
     private func invalidate() { epoch += 1; work?.cancel(); work = nil; if view?.semanticGhost?.copilot == true { view?.semanticGhost = nil }; suggestions = nil; fingerprint = nil }
     private func disable(resetConnection: Bool = false) {
@@ -230,7 +285,7 @@ enum CopilotBundledServer {
         let old = client; client = nil; phase = .off; status = "コード送信とサーバーを停止しました。"; Task { await old?.stop() }
     }
     private func prepared() async throws -> LSPClient {
-        guard enabled, consented, let executable else { throw LSPError.stopped }
+        guard enabled, let executable else { throw LSPError.stopped }
         if let startup { return try await startup.value }
         if let client { return client }
         let new = LSPClient(processes: .copilot); client = new
@@ -253,8 +308,8 @@ enum CopilotBundledServer {
         if method == "didChangeStatus" {
             let kind = params["kind"].string ?? "Unknown"
             latestKind = kind
-            if kind == "Normal", (authFinishing || connected), consented { connected = true; connectionApproved = true; phase = .authenticated; status = "GitHub認証済み。接続完了しました。" }
-            else if kind == "Error" { connected = false; phase = .signInRequired; status = "GitHub認証が必要です。Sign In to GitHub…を選んでください。"; invalidate() }
+            if kind == "Normal", (authFinishing || connected) { connected = true; connectionApproved = true; phase = .authenticated; status = "GitHub認証済み。接続完了しました。文書同期は送信同意後に有効になります。" }
+            else if kind == "Error" { connected = false; phase = .failed; status = "Copilotサーバーでエラーが発生しました。保存済み認証は変更していません。Reconnect / Check Authenticationで状態を確認してください。"; invalidate() }
             else if kind == "Warning" { phase = .failed; status = "一時的な通信エラーです。ネットワークを確認して再試行してください。"; invalidate() }
             else if kind == "Inactive" { status = "現在の文書ではCopilot候補が利用できません。"; invalidate() }
             return .null
@@ -308,8 +363,8 @@ enum CopilotBundledServer {
         guard enabled, authEpoch == ticket, client === old else { return }
         connected = false; authFinishing = false; latestKind = "Unknown"
         if case CopilotConnectionFailure.authenticationRequired = error { phase = .signInRequired; status = "GitHub認証が必要です。Sign In to GitHub…で再試行してください。" }
-        else if case LSPError.timeout = error { phase = .timedOut; status = "サーバーまたは認証状態の応答が時間内に届きませんでした。Sign In to GitHub…で再試行できます。" }
-        else { phase = .failed; status = "公式サーバーへの接続に失敗しました。Sign In to GitHub…で再試行してください。\n停止分類: " + reason }
+        else if case LSPError.timeout = error { phase = .timedOut; status = "応答が時間内に届きませんでした。保存済み認証は変更していません。Reconnect / Check Authenticationで再試行できます。" }
+        else { phase = .failed; status = "公式サーバーへの接続に失敗しました。保存済み認証は変更していません。Reconnect / Check Authenticationで再試行してください。\n停止分類: " + reason }
         client = nil; LSPProcesses.copilot.stopAll(); Task { await old?.stop() }
     }
     @objc private func cancelSignIn() {
@@ -354,7 +409,7 @@ enum CopilotBundledServer {
     }
     private func current(in editor: EditorTextView) -> Bool {
         guard let state = suggestions, self.view === editor, editor.string == state.snapshot,
-              editor.selectedRange() == NSRange(location: state.caret, length: 0),
+              editor.selectedRange() == NSRange(location: state.caret, length: 0), editor.semanticRevision == state.revision,
               editor.semanticDocumentContext?().url == state.file, eligible(editor) == state.languageId else { return false }
         return true
     }
@@ -382,7 +437,8 @@ enum CopilotBundledServer {
         status = automaticNextEdits ? "inline候補がない場合、同じ文書のNext Edit Suggestionsを要求します。別の差分プレビューでTab移動→Tab採用します。" : "自動Next Edit Suggestionsを停止しました。"
     }
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        if item.action == #selector(toggle) { item.state = enabled ? .on : .off; return true }
+        if item.action == #selector(toggle) { item.state = enabled && consented ? .on : .off; return true }
+        if item.action == #selector(reconnectAuthentication) { return enabled && auth == nil && reconnect == nil }
         if item.action == #selector(signIn) || item.action == #selector(signOut) { return enabled && auth == nil && reconnect == nil }
         if item.action == #selector(cancelSignIn) { return auth != nil }
         if item.action == #selector(toggleAutomaticSuggestions) { item.state = automaticSuggestions ? .on : .off; return true }
@@ -405,7 +461,10 @@ enum CopilotBundledServer {
     func documentEdited(in editor: EditorTextView) { if automaticSuggestions, !applying { requestSuggestions(in: editor, explicit: false) } }
     private func requestSuggestions(in editor: EditorTextView, explicit: Bool, nextEdit: Bool = false, cycleOffset: Int = 0) {
         guard let languageId = eligible(editor) else { return }
-        let snapshot = editor.string, caret = editor.selectedRange().location, file = editor.semanticDocumentContext?().url
+        // Deferred typing notifications can arrive after a partial acceptance.
+        // Keep its current remaining preview until another edit or explicit request.
+        if !explicit, hasVisibleSuggestion(in: editor) { return }
+        let snapshot = editor.string, caret = editor.selectedRange().location, file = editor.semanticDocumentContext?().url, revision = editor.semanticRevision
         if !explicit, work != nil, let queued = fingerprint,
            queued.0 == editor.semanticBufferID, queued.1 == snapshot, queued.2 == caret, queued.3 == languageId { return }
         invalidate(); self.view = editor; viewportOrigin = editor.enclosingScrollView?.contentView.bounds.origin
@@ -433,7 +492,7 @@ enum CopilotBundledServer {
                     items = edits["edits"].array ?? []; isNextEdit = true
                 }
                 guard !Task.isCancelled, self.epoch == token, editor.string == snapshot,
-                      editor.selectedRange() == NSRange(location: caret, length: 0), editor.semanticDocumentContext?().url == file,
+                      editor.selectedRange() == NSRange(location: caret, length: 0), editor.semanticRevision == revision, editor.semanticDocumentContext?().url == file,
                       self.eligible(editor) == languageId else { return }
                 var candidates: [Candidate] = []
                 for item in items.prefix(20) {
@@ -445,7 +504,7 @@ enum CopilotBundledServer {
                 }
                 guard !candidates.isEmpty else { self.status = "この位置では表示できるAI候補がありません。"; return }
                 let index = (cycleOffset % candidates.count + candidates.count) % candidates.count
-                self.suggestions = Suggestions(candidates: candidates, index: index, snapshot: snapshot, caret: caret, file: file, uri: uri, languageId: languageId, client: client)
+                self.suggestions = Suggestions(candidates: candidates, index: index, snapshot: snapshot, caret: caret, revision: revision, file: file, uri: uri, languageId: languageId, client: client)
                 self.present(in: editor)
             } catch is CancellationError { }
             catch {
@@ -459,20 +518,27 @@ enum CopilotBundledServer {
     }
     func dismissForInteraction(in editor: EditorTextView) { if view === editor { invalidate() } }
     func hasSuggestions(in editor: EditorTextView) -> Bool { current(in: editor) }
+    func hasVisibleSuggestion(in editor: EditorTextView) -> Bool {
+        current(in: editor) && editor.semanticGhost?.copilot == true && editor.semanticGhostIsCurrent
+    }
     func ordinarySuggestionChanged(in editor: EditorTextView) { if current(in: editor) { present(in: editor) } }
     private func present(in editor: EditorTextView) {
         guard current(in: editor), var state = suggestions else { return }
-        var candidate = state.candidates[state.index]
-        if let normal = SemanticCompletionController.shared.selectedSuggestion(in: editor), !candidate.nextEdit {
-            guard let match = (candidate.plan.map { CopilotInline.extends($0, selected: normal, snapshot: state.snapshot) } == true ? state.index : state.candidates.firstIndex(where: { $0.plan.map { CopilotInline.extends($0, selected: normal, snapshot: state.snapshot) } == true })) else { editor.semanticGhost = nil; return }
-            state.index = match; candidate = state.candidates[match]
-        }
+        let candidate = state.candidates[state.index]
         let language = LSPLanguage(rawValue: state.languageId) ?? .python
         let old = candidate.nextEdit ? (state.snapshot as NSString).substring(with: candidate.edit.range) : nil
         applying = true
-        editor.semanticGhost = SemanticGhostPreview(text: candidate.plan?.text ?? candidate.edit.text, snapshot: state.snapshot, caret: state.caret, fileURL: state.file, language: language, copilot: true, languageId: state.languageId, parts: candidate.plan?.parts ?? [], nextEdit: candidate.nextEdit, replacementRange: candidate.edit.range, replacedText: old)
+        editor.semanticGhost = SemanticGhostPreview(text: candidate.plan?.text ?? candidate.edit.text, snapshot: state.snapshot, caret: state.caret, fileURL: state.file, language: language, copilot: true, languageId: state.languageId, parts: candidate.plan?.parts ?? [], nextEdit: candidate.nextEdit, replacementRange: candidate.edit.range, replacedText: old, revision: state.revision)
         applying = false
         guard editor.semanticGhostIsCurrent else { editor.semanticGhost = nil; return }
+        // Owner-requested single suggestion UI: dismiss timers, pending requests and
+        // selection before Tab can be routed to an ordinary candidate. Loading alone
+        // never suppresses ordinary completion.
+        applying = true
+        SemanticCompletionController.shared.dismissSuggestionsForCopilot(in: editor)
+        editor.suppressWordCompletionForCopilot()
+        applying = false
+        guard current(in: editor), editor.semanticGhost?.copilot == true, editor.semanticGhostIsCurrent else { invalidate(); return }
         editor.displayIfNeeded()
         if state.shown.insert(candidate.reference).inserted {
             let owner = state.client, item = candidate.item, method = candidate.nextEdit ? "textDocument/didShowInlineEdit" : "textDocument/didShowCompletion"
@@ -533,7 +599,7 @@ enum CopilotBundledServer {
             if let length { try? await owner.notify("textDocument/didPartiallyAcceptCompletion", .object(["item": item, "acceptedLength": .number(length)])) }
         }
         state.candidates = remaining; state.index = remaining.firstIndex(where: { $0.reference == candidate.reference }) ?? 0
-        state.snapshot = updated; state.caret = caret; suggestions = remaining.isEmpty ? nil : state
+        state.snapshot = updated; state.caret = caret; state.revision = editor.semanticRevision; suggestions = remaining.isEmpty ? nil : state
         if remaining.isEmpty { editor.semanticGhost = nil; documentEdited(in: editor) } else { present(in: editor) }
         return true
     }
@@ -543,15 +609,14 @@ enum CopilotBundledServer {
         if enabled, flags == .option, event.keyCode == 42 { requestSuggestions(in: editor, explicit: true); return true }
         if current(in: editor), flags == .option, event.keyCode == 30 { cycle(1, in: editor); return true }
         if current(in: editor), flags == .option, event.keyCode == 33 { cycle(-1, in: editor); return true }
-        if flags.isEmpty, event.keyCode == 53 { if view === editor { invalidate() }; return false }
+        if flags.isEmpty, event.keyCode == 53 {
+            let visible = hasVisibleSuggestion(in: editor)
+            if view === editor { invalidate() }
+            return visible
+        }
         if flags == .command, event.keyCode == 124 { return acceptPartial(in: editor, line: false) }
         guard flags.isEmpty, event.keyCode == 48, current(in: editor), editor.semanticGhost?.copilot == true, editor.semanticGhostIsCurrent else { return false }
-        if SemanticCompletionController.shared.isSuggestionListVisible(in: editor) { return false }
-        if let state = suggestions, let part = state.candidates[state.index].plan?.parts.first {
-            let before = (editor.string as NSString).substring(to: editor.selectedRange().location).components(separatedBy: .newlines).last ?? ""
-            let indentation = part.text.prefix { $0 == " " || $0 == "\t" }.reduce(0) { $0 + ($1 == "\t" ? editor.tabWidth : 1) }
-            if before.allSatisfy({ $0.isWhitespace }), indentation >= max(1, editor.tabWidth) { return false }
-        }
+        SemanticCompletionController.shared.dismissSuggestionsForCopilot(in: editor)
         return accept(in: editor)
     }
 }

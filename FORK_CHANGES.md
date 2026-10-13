@@ -103,3 +103,14 @@ Java/Python LSP features, isolated settings, private build compatibility and rel
 - ServerPatches/jdtls-1.61/upstream/BaseDiagnosticsHandler.java
 - ServerPatches/jdtls-1.61/upstream/BaseDocumentLifeCycleHandler.java
 - Tests/Sources/TextView/SemanticCompletionTests.swift
+
+## 0.2.1 session and completion fixes
+
+Existing Copilot status is restored without automatic new OAuth. Explicit remembered context consent and OFF survive restart. Current AI preview owns ordinary completion UI and Tab. Normal LSP shutdown does not sign out. Offline restart fixtures and CI checks added.
+
+- CotEditor/Sources/Semantic Completion/CopilotCompletionController.swift
+- CotEditor/Sources/Semantic Completion/CopilotSession.swift
+- Scripts/test-copilot-session.sh
+- SemanticTests/CopilotSessionTests.swift
+- SemanticTests/LiveCopilotSessionProbe.swift
+- Release/V0.2.1.md

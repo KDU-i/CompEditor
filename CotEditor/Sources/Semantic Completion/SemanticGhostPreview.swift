@@ -14,11 +14,12 @@ struct SemanticGhostPreview {
     var nextEdit = false
     var replacementRange: NSRange? = nil
     var replacedText: String? = nil
+    var revision: Int? = nil
 }
 
 extension EditorTextView {
     var semanticGhostIsCurrent: Bool {
-        guard let ghost = semanticGhost, string == ghost.snapshot,
+        guard let ghost = semanticGhost, string == ghost.snapshot, ghost.revision == nil || ghost.revision == semanticRevision,
               selectedRange() == NSRange(location: ghost.caret, length: 0),
               selectedRanges.count == 1, insertionLocations.count <= 1, !hasMarkedText(),
               isEditable, baseWritingDirection != .rightToLeft, layoutOrientation == .horizontal,
@@ -27,6 +28,7 @@ extension EditorTextView {
         let valid = ghost.copilot ? CopilotLanguage.resolve(url: context.url, syntax: context.syntax) == (ghost.languageId ?? ghost.language.rawValue) : CopilotLanguage.resolve(url: context.url, syntax: context.syntax) == ghost.language.rawValue
         return valid && !semanticGhostRect.isEmpty
     }
+    var hasVisibleCopilotGhost: Bool { semanticGhost?.copilot == true && semanticGhostIsCurrent }
     func updateSemanticGhostPresentation() {
         let layout = layoutManager as? LayoutManager
         if let ghost = semanticGhost, ghost.copilot, !ghost.nextEdit, ghost.snapshot == string {
