@@ -109,9 +109,12 @@ private final class OfflineURLProtocol: URLProtocol, @unchecked Sendable {
     private static func configurationPolicy() {
         self.check(self.configured.endpoint.path == "/v1/usage", "explicit public HTTPS endpoint accepted")
         self.check(self.configured.endpoint.absoluteString == self.expectedEndpoint, "prepared public receiver endpoint is accepted exactly")
+        var credentialEndpoint = URLComponents(string: "https://metrics.compeditor.dev/v1/usage")!
+        credentialEndpoint.user = "synthetic-user"
+        credentialEndpoint.password = "synthetic-password"
         let badEndpoints = ["", "$(COMPEDITOR_USAGE_ENDPOINT)", "http://metrics.compeditor.dev/v1/usage",
                             "https://metrics.compeditor.dev/v1/usage?name=private", "https://metrics.compeditor.dev/v1/usage#private",
-                            "https://user:password@metrics.compeditor.dev/v1/usage", "https://metrics.compeditor.dev:8443/v1/usage",
+                            credentialEndpoint.url!.absoluteString, "https://metrics.compeditor.dev:8443/v1/usage",
                             "https://metrics.compeditor.dev/v1/other", "https://metrics.compeditor.dev/v1/%75sage",
                             "https://example.com/v1/usage", "https://telemetry.example.org/v1/usage", "https://endpoint.invalid/v1/usage",
                             "https://localhost/v1/usage", "https://server.localhost/v1/usage"]
