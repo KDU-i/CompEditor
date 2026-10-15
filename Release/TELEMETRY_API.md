@@ -60,7 +60,7 @@ Keep the management Site owner-private. Sites authentication protects every priv
 
 ## Verification and release operations
 
-The receiver and native client use isolated fixtures, which are removed after hosted verification. Verification covers the cases below; results from real owner accounts or an executed native app must be recorded separately:
+The receiver and native client use isolated fixtures. The reserved native QA installation is excluded from all aggregates while its received row is preserved; no fixture deletion endpoint is shipped. The live native request, persisted row, owner-dashboard counts and reversible exclusion were verified separately. Anonymous browser/API denial and forged-identity denial were measured; a different real account remains unverified. Verification covers the cases below:
 
 - An unauthenticated caller can submit only valid bounded usage requests and cannot read raw rows, installation IDs, aggregates, or administration routes.
 - Only the owner can view the dashboard; a signed-out browser, another account, and an ingestion credential cannot access management data.
