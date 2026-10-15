@@ -420,7 +420,8 @@ import LineEnding
                 self.applyingCompletion = true
                 defer { self.applyingCompletion = false }
                 view.breakUndoCoalescing()
-                _ = view.replace(with: edits.map(\.text), ranges: edits.map(\.range), selectedRanges: [selection], actionName: "Semantic Completion")
+                let applied = view.replace(with: edits.map(\.text), ranges: edits.map(\.range), selectedRanges: [selection], actionName: "Semantic Completion")
+                if applied { ForkUsageMetrics.shared.record(.semanticCompletionAccepted) }
                 view.breakUndoCoalescing()
                 CopilotCompletionController.shared.documentEdited(in: view)
             } catch is CancellationError { }
@@ -698,6 +699,7 @@ private extension SemanticCompletionController {
     @objc func goToDefinition() {
         invalidateAutomatic()
         guard let view = activeEditor(), let language = language(for: view) else { return }
+        ForkUsageMetrics.shared.record(.definitionRequested)
         let snapshot = view.string, selection = view.selectedRange(), file = view.semanticDocumentContext?().url, token = generation, buffer = view.semanticBufferID
         assistanceTask = Task { [weak self, weak view] in
             guard let self, let view else { return }

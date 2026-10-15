@@ -592,6 +592,7 @@ enum CopilotBundledServer {
         let accepted = SemanticActionApplication.apply([candidate.edit], title: candidate.nextEdit ? "Accept Copilot Next Edit" : "Accept Copilot Suggestion", to: editor)
         applying = false
         if accepted {
+            ForkUsageMetrics.shared.record(.copilotCompletionAccepted)
             if let command = CopilotInline.command(candidate.item["command"], name: "github.copilot.didAcceptCompletionItem") { Task { _ = try? await state.client.request("workspace/executeCommand", command) } }
             documentEdited(in: editor)
         }
@@ -608,6 +609,7 @@ enum CopilotBundledServer {
         applying = true
         let applied = SemanticActionApplication.apply([edit], title: line ? "Accept Copilot Line" : "Accept Copilot Word", to: editor)
         applying = false; guard applied else { return false }
+        ForkUsageMetrics.shared.record(.copilotCompletionAccepted)
         let updated = editor.string, caret = editor.selectedRange().location
         let delta = updated.utf16.count - state.snapshot.utf16.count
         var remaining: [Candidate] = []
