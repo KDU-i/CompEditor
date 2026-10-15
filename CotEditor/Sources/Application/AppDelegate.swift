@@ -194,6 +194,19 @@ extension Logger {
         if lastVersion == nil || Int(thisVersion)! > lastVersion! {
             UserDefaults.standard[.lastVersion] = thisVersion
         }
+
+        ForkUpdaterManager.shared.checkForUpdatesOnStartup()
+        ForkUsageMetrics.shared.start(isActive: NSApp.isActive)
+    }
+
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        ForkUsageMetrics.shared.setApplicationActive(true)
+    }
+
+
+    func applicationDidResignActive(_ notification: Notification) {
+        ForkUsageMetrics.shared.setApplicationActive(false)
     }
     
     

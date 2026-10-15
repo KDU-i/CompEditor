@@ -15,5 +15,11 @@ ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
 // Preserve upstream macOS 26 deployment; item dialogs use a compatibility bridge.
 MACOSX_DEPLOYMENT_TARGET = 26.0
 
+// Public write-only ingest URL; acceptance is controlled separately by the receiver.
+// Never put an administrator credential or a private-Site bypass token here.
+// Expand the slashes separately so xcconfig does not parse the URL as a line comment.
+COMPEDITOR_USAGE_URL_SLASH = /
+COMPEDITOR_USAGE_ENDPOINT = https:$(COMPEDITOR_USAGE_URL_SLASH)$(COMPEDITOR_USAGE_URL_SLASH)compeditor-usage-ingestion.moton9.chatgpt.site/v1/usage
+
 // Dedicated owner-approved public key is in Info.plist; signing secret remains in Keychain.
 // HTTPS feed URL embedding approved; hosting/publication remains a separate action.

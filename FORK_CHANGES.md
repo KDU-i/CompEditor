@@ -119,3 +119,7 @@ Existing Copilot status is restored without automatic new OAuth. Explicit rememb
 
 - GitHub Copilotの接続状況を標準の設定画面に沿った日本語UIへ変更。接続、送信同意、言語サーバー、操作ボタンを整理した。
 - AI補完のON/OFF、同意記憶、サーバー選択後の表示を即時更新する。OAuth認証とコード送信の既存の制御は保持。
+
+## Unreleased startup update notices and usage statistics
+
+Adds a bounded asynchronous stable-release check and preserves the existing signed Sparkle installation path. Adds background usage counts with random installation IDs, immutable retry batches, a bounded local queue, and the public ingestion endpoint. A configured native build creates a local queue and attempts delivery if launched; the receiver accepts collection with `INGESTION_ENABLED=1`. This change has not been distributed in an app release. No administrator secret, document text, paths, input, personal identity, or hardware identifier is collected by the statistics client. See Release/UPDATES.md, Release/USAGE_STATISTICS.md, and Release/TELEMETRY_API.md for the behavior and release operations.

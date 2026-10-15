@@ -8,6 +8,8 @@ CompEditor is the standard app/Finder/Dock name. Settings → General → Use Co
 
 For build/configuration instructions and known limits see [SEMANTIC_COMPLETION.md](SEMANTIC_COMPLETION.md) and [Release/README.md](Release/README.md). For fork support use [KDU-i/CompEditor](https://github.com/KDU-i/CompEditor). Links below describe the upstream application.
 
+The next development change adds a background stable-update notice and a minimal usage-statistics client. Installation still requires the existing signed Sparkle update flow. The development build includes the public ingestion endpoint; running that build creates its local statistics identity and queue and attempts background delivery to the receiver. This change has not been distributed in an app release, and build verification does not launch the app. See the [usage disclosure draft](Release/USAGE_STATISTICS.md) and [receiver contract and release operations](Release/TELEMETRY_API.md) for the collection and retention behavior and the information to publish with a release. Active installation counts are estimates, not counts of individual people.
+
 Code retains Apache-2.0. The unchanged original artwork retains CC BY-NC-ND4.0 attribution, noncommercial and no-adapted-artwork conditions; dependencies retain their individual licenses. See [NOTICE](Release/NOTICE.md), [ARTWORK_ATTRIBUTION](Release/ARTWORK_ATTRIBUTION.md), and [THIRD_PARTY](Release/THIRD_PARTY.md). Matching dependency sources must accompany the binary release with equal access.
 
 ---

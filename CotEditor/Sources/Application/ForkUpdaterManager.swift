@@ -9,9 +9,11 @@ import Sparkle
     private var controller: SPUStandardUpdaterController?
     private var policy: ForkUpdatePolicy?
     private var pendingInstall: (() -> Void)?
+    private let startupChecker = ForkStartupUpdateChecker()
+    private var updateMenuItem: NSMenuItem?
     private(set) var started = false
     var configurationDescription: String {
-        return policy == nil ? "CompEditorの更新配信先が未設定です。署名付き更新の公開準備後に利用できます。" : "手動で確認します。更新先へIPとアプリ・Sparkleのバージョン等が送信されます。システムプロファイルや文書内容は送信しません。"
+        return policy == nil ? "CompEditorの更新配信先が未設定です。署名付き更新の公開準備後に利用できます。" : "起動時に安定版の有無を確認します（24時間に1回、最大8秒）。通知は配信情報に基づき、更新を選ぶと署名を検証します。アプリの自動ダウンロード・インストールはしません。通信先にはIPアドレスやアプリの情報等が伝わります。システムプロファイルや文書内容は送信しません。"
     }
     private var hasUnsavedDocuments: Bool { NSDocumentController.shared.documents.contains(where: \.isDocumentEdited) }
     func setup() {
@@ -20,8 +22,24 @@ import Sparkle
         let item = NSMenuItem(title: "アップデートを確認…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
         item.identifier = NSUserInterfaceItemIdentifier("CompEditorCheckForUpdates")
         item.target = self; menu.insertItem(item, at: 1)
+        updateMenuItem = item
+    }
+    /// Availability only: no modal UI, focus change, release notes, archive download or installer.
+    func checkForUpdatesOnStartup() {
+        guard let policy, !started, pendingInstall == nil,
+              let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+              let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String else { return }
+        let system = ProcessInfo.processInfo.operatingSystemVersion
+        startupChecker.check(policy: policy, currentVersion: version, currentBuild: build,
+                             systemVersion: "\(system.majorVersion).\(system.minorVersion).\(system.patchVersion)") { [weak self] update in
+            self?.updateMenuItem?.title = "アップデートを確認…（\(update.version) 配信中）"
+            self?.updateMenuItem?.badge = .updates(count: 1)
+        }
     }
     @objc func checkForUpdates(_ sender: Any?) {
+        startupChecker.cancel()
+        updateMenuItem?.title = "アップデートを確認…"
+        updateMenuItem?.badge = nil
         if let pendingInstall {
             guard ForkUpdatePolicy.canInstall(hasUnsavedDocuments: hasUnsavedDocuments) else { showUnsaved(); return }
             self.pendingInstall = nil; pendingInstall(); return

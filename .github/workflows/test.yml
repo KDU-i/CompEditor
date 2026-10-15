@@ -63,12 +63,21 @@ jobs:
         zsh Scripts/test-copilot-session.sh
         zsh Scripts/test-copilot.sh
         zsh Scripts/test-copilot-parity.sh
+    - name: Offline startup update and usage statistics checks
+      run: |
+        zsh Scripts/test-updater-policy.sh
+        zsh Scripts/test-startup-updates.sh
+        zsh Scripts/test-usage-metrics.sh
     - name: Release Build Smoke Test
       run: |
         set -euo pipefail
         app_binary="/tmp/CotEditorInstall/Applications/CompEditor.app/Contents/MacOS/CompEditor"
         rm -rf /tmp/CotEditorInstall
         xcodebuild install -scheme CotEditor -configuration Release DSTROOT=/tmp/CotEditorInstall CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= CODE_SIGN_ENTITLEMENTS_SUFFIX=-AdHoc -skipPackagePluginValidation
+        # Smoke tests must not create production installation statistics.
+        app_bundle="${app_binary%/Contents/MacOS/CompEditor}"
+        plutil -replace CompEditorUsageEndpoint -string "" "${app_bundle}/Contents/Info.plist"
+        codesign --force --sign - --timestamp=none "${app_bundle}"
         "${app_binary}" >/dev/null 2>&1 &
         app_pid=$!
         sleep 5
