@@ -2,7 +2,7 @@
 # Offline JSON-RPC peer. Synthetic strings only; no network or OAuth.
 import sys, json, threading, time
 import argparse, pathlib, os, hashlib
-parser=argparse.ArgumentParser();parser.add_argument('--session-state');parser.add_argument('--preauthenticated',action='store_true');parser.add_argument('--offline',action='store_true');options=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--session-state');parser.add_argument('--preauthenticated',action='store_true');parser.add_argument('--offline',action='store_true');parser.add_argument('--no-nes',action='store_true');options=parser.parse_args()
 session_path=pathlib.Path(options.session_state) if options.session_state else None
 session=json.loads(session_path.read_text()) if session_path and session_path.exists() else {'authenticated':options.preauthenticated,'methods':{}}
 authenticated=session['authenticated']
@@ -10,6 +10,13 @@ def persist_synthetic_session():
     if session_path:
         session.update(authenticated=authenticated)
         session_path.write_text(json.dumps(session))
+def utf16_offset(value, position):
+    lines = value.splitlines(keepends=True)
+    if position['line'] == len(lines): return len(value)
+    prefix = sum(len(line) for line in lines[:position['line']])
+    tail = lines[position['line']].encode('utf-16-le')[:position['character'] * 2].decode('utf-16-le')
+    return prefix + len(tail)
+last_change = None
 lock = threading.Lock()
 text = ''; version = 0; opened = {}; shown = 0; accepted = 0; cancelled = []; trigger=0; language=''; partials=[]; shown_next=0; formatting={}
 def send(value):
@@ -56,7 +63,10 @@ try:
             text=p['textDocument']['text']; version=p['textDocument']['version']; opened[p['textDocument']['uri']]=version; language=p['textDocument']['languageId']
         elif method=='textDocument/didChange':
             assert 'range' in p['contentChanges'][0]
-            text=p['contentChanges'][0]['text']; version=p['textDocument']['version']; opened[p['textDocument']['uri']]=version
+            last_change=p['contentChanges'][0]
+            start=utf16_offset(text,last_change['range']['start']); end=utf16_offset(text,last_change['range']['end'])
+            text=text[:start]+last_change['text']+text[end:]
+            version=p['textDocument']['version']; opened[p['textDocument']['uri']]=version
         elif method=='textDocument/didClose': opened.pop(p['textDocument']['uri'],None)
         elif method=='textDocument/inlineCompletion':
             trigger=p['context']['triggerKind']; assert trigger in [1,2]
@@ -77,8 +87,9 @@ try:
             else: reply(msg,result)
         elif method=='textDocument/copilotInlineEdit':
             assert p['textDocument']['version']==version
-            if text=='NO_NES': send({'jsonrpc':'2.0','id':msg['id'],'error':{'code':-32601,'message':'Synthetic missing public method'}})
-            else: reply(msg,{'edits':[{'insertText':'next','range':{'start':{'line':0,'character':0},'end':{'line':0,'character':1}},'command':{'command':'github.copilot.didAcceptCompletionItem','arguments':['mock-nes']}}]})
+            if options.no_nes:persist_synthetic_session()
+            if options.no_nes or text=='NO_NES': send({'jsonrpc':'2.0','id':msg['id'],'error':{'code':-32601,'message':'Synthetic missing public method'}})
+            else: reply(msg,{'edits':[{'insertText':'next','textDocument':dict(p['textDocument']),'range':{'start':{'line':0,'character':0},'end':{'line':0,'character':1}},'command':{'command':'github.copilot.didAcceptCompletionItem','arguments':['mock-nes']}}]})
         elif method=='textDocument/didShowCompletion': shown+=1
         elif method=='textDocument/didShowInlineEdit': shown_next+=1
         elif method=='textDocument/didPartiallyAcceptCompletion': partials.append(p['acceptedLength'])
@@ -86,6 +97,7 @@ try:
         elif method=='test/burst':
             for _ in range(1000): send({'jsonrpc':'2.0','method':'test/ignored','params':{'synthetic':'x'*64}})
             reply(msg,{'messages':1000})
+        elif method=='test/sync': reply(msg,{'text':text,'change':last_change,'version':version})
         elif method=='test/parity': reply(msg,{'trigger':trigger,'languageId':language,'partials':partials,'shownNext':shown_next,'formatting':formatting})
         elif method=='test/state': reply(msg,{'opened':len(opened),'shown':shown,'accepted':accepted,'cancelled':len(cancelled)})
         elif method=='shutdown':persist_synthetic_session();reply(msg,None)

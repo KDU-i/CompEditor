@@ -21,7 +21,7 @@ extension EditorTextView {
     var semanticGhostIsCurrent: Bool {
         guard let ghost = semanticGhost, string == ghost.snapshot, ghost.revision == nil || ghost.revision == semanticRevision,
               selectedRange() == NSRange(location: ghost.caret, length: 0),
-              selectedRanges.count == 1, insertionLocations.count <= 1, !hasMarkedText(),
+              selectedRanges.count == 1, insertionLocations.allSatisfy({ $0 == selectedRange().location }), !hasMarkedText(),
               isEditable, baseWritingDirection != .rightToLeft, layoutOrientation == .horizontal,
               window?.firstResponder === self, (NSApp.keyWindow ?? NSApp.mainWindow) === window, NSApp.isActive,
               let context = semanticDocumentContext?(), context.url == ghost.fileURL else { return false }

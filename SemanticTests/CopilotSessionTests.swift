@@ -66,8 +66,12 @@ import Foundation
         check(restartedSettings.remembersContextConsent && restartedSettings.enabled, "explicit remembered context consent survives restart")
         settings.enabled = false
         check(!restartedSettings.enabled && restartedSettings.remembersContextConsent, "explicit OFF survives restart without erasing consent/authentication")
+        check(restartedSettings.automaticSuggestions && !restartedSettings.automaticNextEdits, "automatic settings have independent defaults")
+        settings.automaticSuggestions = false; settings.automaticNextEdits = true
+        let automaticRestart = CopilotSessionPreferences(defaults: UserDefaults(suiteName: suite)!)
+        check(!automaticRestart.automaticSuggestions && automaticRestart.automaticNextEdits, "automatic inline and NES flags survive restart independently")
         let stored = defaults.persistentDomain(forName: suite)!
-        check(stored.count == 2 && stored.values.allSatisfy { $0 is Bool || $0 is NSNumber }, "editor persists only two non-secret boolean preferences")
+        check(stored.count == 4 && stored.values.allSatisfy { $0 is Bool || $0 is NSNumber }, "editor persists only four non-secret boolean preferences")
         print("All synthetic restart/consent tests passed. No credential storage accessed.")
     }
 }

@@ -77,6 +77,8 @@ actor LSPClient {
     private var syncKind = 1
     private var openClose = true
     private var workspace: URL?
+    private var nextEditHistory: Set<String> = []
+    private var copilotMode = false
     private var settings: LSPJSON = .null
     private var streamContinuation: AsyncStream<Data>.Continuation?
 
@@ -84,6 +86,7 @@ actor LSPClient {
         try Task.checkCancellation()
         guard !stopped else { throw LSPError.stopped }
         self.workspace = copilot ? nil : workspace
+        self.copilotMode = copilot
         process.executableURL = URL(fileURLWithPath: server.executable)
         let workspaceKey = workspace.absoluteString.utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
         let storage = URL.cachesDirectory.appendingPathComponent("SemanticEditor/LSP/\(server.language.rawValue)/\(String(workspaceKey, radix: 16))")
@@ -177,8 +180,24 @@ actor LSPClient {
         if let selectedCompletion { context["selectedCompletionInfo"] = selectedCompletion }
         return try await copilotRequest("textDocument/inlineCompletion", uri: uri, languageId: languageId, text: text, caret: caret, context: .object(context), tabSize: tabSize, insertSpaces: insertSpaces)
     }
+    /// The official provider starts observing history at its first NES request.
+    /// Seed it with an actually observed pre-edit snapshot, never a fabricated edit.
+    func prepareNextEditHistory(uri: URL, languageId: String, previous: String, caret: Int) async throws -> LSPJSON? {
+        guard !nextEditHistory.contains(uri.absoluteString) else { return nil }
+        nextEditHistory.insert(uri.absoluteString)
+        // If the provider was not observing yet, replay the real observed edit
+        // from its pre-edit baseline. Closing discards the unobserved latest copy.
+        if let current = snapshots[uri.absoluteString], current != previous { close(uri) }
+        let baseline = previous
+        let offset = min(caret, baseline.utf16.count)
+        do { return try await nextEdit(uri: uri, languageId: languageId, text: baseline,
+                                     caret: (try? LSPText.position(offset, in: baseline)) == nil ? 0 : offset) }
+        catch { nextEditHistory.remove(uri.absoluteString); throw error }
+    }
     func nextEdit(uri: URL, languageId: String, text: String, caret: Int, tabSize: Int = 4, insertSpaces: Bool = true) async throws -> LSPJSON {
-        try await copilotRequest("textDocument/copilotInlineEdit", uri: uri, languageId: languageId, text: text, caret: caret, context: nil, tabSize: tabSize, insertSpaces: insertSpaces)
+        let result = try await copilotRequest("textDocument/copilotInlineEdit", uri: uri, languageId: languageId, text: text, caret: caret, context: nil, tabSize: tabSize, insertSpaces: insertSpaces)
+        nextEditHistory.insert(uri.absoluteString)
+        return result
     }
     private func copilotRequest(_ method: String, uri: URL, languageId: String, text: String, caret: Int, context: LSPJSON?, tabSize: Int, insertSpaces: Bool) async throws -> LSPJSON {
         for key in Array(opened.keys) where key != uri.absoluteString { if let old = URL(string: key) { close(old) } }
@@ -244,7 +263,9 @@ actor LSPClient {
         if let version = opened[key], snapshots[key] != text {
             let next = version + 1
             var change: [String: LSPJSON] = ["text": .string(text)]
-            if syncKind == 2 {
+            if copilotMode, syncKind == 2 {
+                change = try LSPText.incrementalChange(from: snapshots[key] ?? "", to: text).object!
+            } else if syncKind == 2 {
                 // The previous snapshot is retained to compute a full-range incremental edit.
                 let previous = snapshots[key] ?? ""
                 change["range"] = .object(["start": .object(["line": .number(0), "character": .number(0)]), "end": try LSPText.position((previous as NSString).length, in: previous)])
@@ -327,6 +348,7 @@ actor LSPClient {
 
     func close(_ uri: URL) {
         let key = uri.absoluteString
+        nextEditHistory.remove(key)
         openedLanguages.removeValue(forKey: key)
         diagnosticsByURI.removeValue(forKey: key)
         inspectionPending.remove(key)
