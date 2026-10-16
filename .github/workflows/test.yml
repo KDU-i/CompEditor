@@ -63,6 +63,10 @@ jobs:
         zsh Scripts/test-copilot-session.sh
         zsh Scripts/test-copilot.sh
         zsh Scripts/test-copilot-parity.sh
+        zsh Scripts/test-copilot-incremental.sh
+        zsh Scripts/test-copilot-nes-policy.sh
+        zsh Scripts/test-copilot-diagnostics.sh
+        python3 Scripts/test-copilot-diagnostics-privacy.py
     - name: Offline startup update and usage statistics checks
       run: |
         zsh Scripts/test-updater-policy.sh

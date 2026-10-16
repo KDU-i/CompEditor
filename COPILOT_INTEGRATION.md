@@ -63,3 +63,15 @@ Latest validation: `../parity-delivery-appkit.log` (17 passed), `../parity-deliv
 ### 0.2.2 接続画面
 
 「接続状況…」で、認証状態、AI補完の有効状態、送信への同意、公式言語サーバーの準備状態を個別に確認できます。画面内で接続確認、サインイン／サインアウト、認証の取消、サーバー選択ができます。閉じる／Escは画面を閉じます。コードの送信同意は記憶するチェックを初期OFFとし、明示した場合だけ次回起動に引き継ぎます。
+
+## 0.3.0 NES work in progress
+
+NES requires actual recent edits, not only the current file snapshot. Copilot updates now use a minimal incremental UTF-16 range instead of replacing the entire document. The first NES opportunity initializes the official provider's lazy history observer from an actually observed pre-edit snapshot, then replays that real edit. At most one pre-edit snapshot (up to one million UTF-16 units) is retained in memory; it is never logged or persisted. No neighboring files or additional provider are used.
+
+Automatic inline and NES preferences are independent persisted booleans, separate from context-sharing consent. Typing prioritizes a displayable inline candidate and may fall back to NES after parsing/filtering. With inline automation off, NES can request directly. Deliberate caret movement and post-accept opportunities can ask NES; text/selection/focus/viewport invalidation and revision checks remain in effect. Results for another document, stale versions and no-op edits are refused.
+
+`Diagnostics…` shows the latest 200 fixed-metadata events in process memory. It accepts no document/candidate text, URI, account data, auth data or arbitrary server errors; no file or network sink is added. Open it after a request completes, since making another panel key retains the existing cancellation behavior.
+
+Explicit live protocol tests use only bundled synthetic Python/Java rename examples and existing opaque official authentication. Both returned real, current-document next edits on this builder. Real Python service UI display/navigation/acceptance/one-step Undo and automatic fallback were verified in the separate QA app; native AppKit acceptance and auxiliary-caret/IME refusal tests passed. The optimized Release code repeated Python/Java UI navigation, adoption, Undo/Redo, Esc and multi-caret refusal; artifact and signing checks passed. Independent review/publication remain gated; see `Release/NES030_ACCEPTANCE.md`. `Scripts/test-copilot-live-nes.sh` requires explicit opt-in and is intentionally excluded from unattended CI.
+
+After NES -32601, automatic input/caret requests and manual NES are suppressed for that session. The active automatic-NES preference can still be turned OFF. “接続を確認” must succeed, or a new server connection must start, before another capability probe is allowed; merely changing automation does not reset unsupported status. The owner’s stored context-sharing consent is unaffected.

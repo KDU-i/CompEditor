@@ -81,6 +81,27 @@ enum LSPError: Error, LocalizedError {
 
 /// LSP positions count UTF-16 code units, as does NSTextView. CRLF is one line break.
 enum LSPText {
+    /// Preserve the actual edit window for Copilot's recent-edit history.
+    /// Boundaries never split a UTF-16 surrogate pair or CRLF sequence.
+    static func incrementalChange(from previous: String, to current: String) throws -> LSPJSON {
+        let old = Array(previous.utf16), new = Array(current.utf16)
+        var start = 0
+        while start < min(old.count, new.count), old[start] == new[start] { start += 1 }
+        func boundary(_ units: [UInt16], _ index: Int) -> Bool {
+            guard index > 0, index < units.count else { return true }
+            return !(units[index - 1] == 13 && units[index] == 10) &&
+                !((0xD800...0xDBFF).contains(units[index - 1]) && (0xDC00...0xDFFF).contains(units[index]))
+        }
+        while !boundary(old, start) || !boundary(new, start) { start -= 1 }
+        var oldEnd = old.count, newEnd = new.count
+        while oldEnd > start, newEnd > start, old[oldEnd - 1] == new[newEnd - 1] { oldEnd -= 1; newEnd -= 1 }
+        while !boundary(old, oldEnd) || !boundary(new, newEnd) { oldEnd += 1; newEnd += 1 }
+        let replacement = (current as NSString).substring(with: NSRange(location: start, length: newEnd - start))
+        return .object(["text": .string(replacement), "range": .object([
+            "start": try position(start, in: previous), "end": try position(oldEnd, in: previous)
+        ])])
+    }
+
     static func lineRanges(_ text: String) -> [NSRange] {
         let source = text as NSString
         var result: [NSRange] = []
@@ -582,10 +603,18 @@ enum CopilotInline {
         if scan < proposed.count { parts.append(Part(offset: offset, text: string(proposed[scan...]))) }
         return Plan(edit: LSPText.Edit(range: range, text: insert, primary: true), parts: parts)
     }
+    enum NextEditTarget { case current, foreignDocument, staleVersion }
+    static func nextEditTarget(_ item: LSPJSON, uri: URL, version: Int) -> NextEditTarget {
+        guard item["textDocument"]["uri"].string == uri.absoluteString else { return .foreignDocument }
+        guard item["textDocument"]["version"].int == version else { return .staleVersion }
+        return .current
+    }
     static func nextEdit(_ item: LSPJSON, text: String) throws -> LSPText.Edit {
         guard let value = item["insertText"].string ?? item["text"].string, value.utf16.count <= 100_000 else { throw LSPError.unsupportedEdit }
         let range = try LSPText.range(item["range"], in: text)
-        return LSPText.Edit(range: range, text: normalize(value, in: text), primary: true)
+        let normalized = normalize(value, in: text)
+        guard (text as NSString).substring(with: range) != normalized else { throw LSPError.unsupportedEdit }
+        return LSPText.Edit(range: range, text: normalized, primary: true)
     }
     static func partialLength(_ text: String, line: Bool) -> Int {
         let value = text as NSString

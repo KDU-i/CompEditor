@@ -7,6 +7,14 @@ struct CopilotSessionPreferences {
     let defaults: UserDefaults
     private static let enabledKey = "CompEditor.Copilot.connectionEnabled"
     private static let consentKey = "CompEditor.Copilot.rememberContextConsent.v1"
+    var automaticSuggestions: Bool {
+        get { defaults.object(forKey: "CompEditor.Copilot.automaticSuggestions.v1") as? Bool ?? true }
+        nonmutating set { defaults.set(newValue, forKey: "CompEditor.Copilot.automaticSuggestions.v1") }
+    }
+    var automaticNextEdits: Bool {
+        get { defaults.bool(forKey: "CompEditor.Copilot.automaticNextEdits.v1") }
+        nonmutating set { defaults.set(newValue, forKey: "CompEditor.Copilot.automaticNextEdits.v1") }
+    }
     var enabled: Bool {
         get { defaults.object(forKey: Self.enabledKey) as? Bool ?? true }
         nonmutating set { defaults.set(newValue, forKey: Self.enabledKey) }
@@ -26,5 +34,23 @@ enum CopilotAccountState: Equatable {
             case "NotAuthorized": self = .notAuthorized
             default: self = .unknown
         }
+    }
+}
+
+/// One provider owns the preview at a time. NES stays usable with inline auto off.
+enum CopilotAutomaticRequest { case inline, nextEdit }
+enum CopilotAutomaticTrigger { case typing, caretMove, postAccept }
+struct CopilotAutomaticPolicy {
+    let inline: Bool
+    let nextEdits: Bool
+    func request(after trigger: CopilotAutomaticTrigger) -> CopilotAutomaticRequest? {
+        switch trigger {
+            case .typing: inline ? .inline : (nextEdits ? .nextEdit : nil)
+            case .caretMove: nextEdits ? .nextEdit : nil
+            case .postAccept: nextEdits ? .nextEdit : (inline ? .inline : nil)
+        }
+    }
+    func needsNextEditFallback(displayableInlineCount: Int, serverAvailable: Bool) -> Bool {
+        nextEdits && serverAvailable && displayableInlineCount == 0
     }
 }

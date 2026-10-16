@@ -4,6 +4,17 @@ import SwiftUI
 import Testing
 @testable import CotEditor
 
+/// Controllers use the app-wide Copilot process registry. Keep process-owning
+/// fixtures exclusive with fixtures that deliberately reset that same registry.
+@MainActor enum CopilotProcessTestLease {
+    private static var occupied = false
+    static func acquire() async throws {
+        while occupied { try await Task.sleep(for: .milliseconds(10)) }
+        occupied = true
+    }
+    static func release() { occupied = false }
+}
+
 @MainActor struct CopilotConnectionUITests {
     private func state(_ phase: CopilotConnectionPhase, enabled: Bool = true, consented: Bool = false,
                        remembered: Bool = false, server: Bool = true, auth: Bool = false,
@@ -46,7 +57,9 @@ import Testing
         }
     }
 
-    @Test func consentWithoutServerAndServerSelectionWhileOffRefreshImmediately() {
+    @Test func consentWithoutServerAndServerSelectionWhileOffRefreshImmediately() async throws {
+        try await CopilotProcessTestLease.acquire()
+        defer { CopilotProcessTestLease.release() }
         let defaults = UserDefaults(suiteName: UUID().uuidString)!
         let controller = CopilotCompletionController(defaults: defaults)
         controller.acceptContextConsent(remember: true)

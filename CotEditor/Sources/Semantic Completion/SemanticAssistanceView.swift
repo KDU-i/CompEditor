@@ -51,7 +51,7 @@ final class SemanticSignatureView: SemanticSuggestSurface {
 /// One native replacement/Undo operation for an explicitly selected validated action.
 enum SemanticActionApplication {
     @MainActor static func apply(_ edits: [LSPText.Edit], title: String, to view: EditorTextView) -> Bool {
-        guard view.isEditable, !view.hasMarkedText(), view.selectedRanges.count == 1, view.insertionLocations.count <= 1, !edits.isEmpty else { return false }
+        guard view.isEditable, !view.hasMarkedText(), view.selectedRanges.count == 1, view.insertionLocations.allSatisfy({ $0 == view.selectedRange().location }), !edits.isEmpty else { return false }
         let original = view.selectedRange().location
         let normalized = edits.map { LSPText.Edit(range: $0.range, text: $0.text.replacingLineEndings(with: view.lineEnding), primary: $0.primary) }
         let caret = LSPAssistance.caret(after: normalized, original: original, textLength: (view.string as NSString).length)

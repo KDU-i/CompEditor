@@ -91,6 +91,39 @@ enum CopilotBundledServer {
     private var reference = 0
     private var fingerprint: (UUID, String, Int, String)?
     private var viewportOrigin: NSPoint?
+    private var diagnostics = CopilotDiagnostics()
+    private var selectionRequest: Task<Void, Never>?
+    private var lastTextEditTime = -Double.infinity
+    // One actual pre-edit snapshot, never persisted or logged. No workspace history is read.
+    private var recentBefore: (buffer: UUID, revision: Int, text: String)?
+    private var automaticPolicy: CopilotAutomaticPolicy { .init(inline: automaticSuggestions, nextEdits: automaticNextEdits && !nextEditsUnavailable) }
+    private var diagnosticRequest: CopilotDiagnostics.Ticket?
+    private var diagnosticsPanel: NSPanel?
+    private func diagnose(_ ticket: CopilotDiagnostics.Ticket, _ stage: CopilotDiagnostics.Stage,
+                          reason: CopilotDiagnostics.Reason = .none, fieldPresent: Bool? = nil,
+                          arrayPresent: Bool? = nil, count: Int? = nil) {
+        diagnostics.record(ticket, stage, reason: reason, fieldPresent: fieldPresent,
+                           arrayPresent: arrayPresent, count: count,
+                           automaticInline: automaticSuggestions, automaticNextEdit: automaticNextEdits)
+    }
+    @objc private func showDiagnostics() {
+        let ticket = diagnostics.ticket(.settings)
+        diagnose(ticket, .settings)
+        let panel = diagnosticsPanel ?? NSPanel(contentRect: NSRect(x: 0, y: 0, width: 940, height: 460),
+                                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        panel.title = "Copilot Diagnostics — 一時メモリ / 最新200件"
+        panel.isReleasedWhenClosed = false
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 940, height: 460))
+        scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
+        let text = NSTextView(frame: scroll.bounds)
+        text.isEditable = false; text.isSelectable = true
+        text.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        text.autoresizingMask = [.width]; text.isVerticallyResizable = true
+        text.string = "本文・候補・パス・認証情報は記録しません。再表示で更新。要求完了後に開いてください（フォーカス変更は既存動作により要求を取り消します）。\n" + diagnostics.text
+        scroll.documentView = text; panel.contentView = scroll
+        if diagnosticsPanel == nil { panel.center() }
+        diagnosticsPanel = panel; panel.makeKeyAndOrderFront(nil)
+    }
 
     override convenience init() { self.init(defaults: .standard) }
     init(defaults: UserDefaults, executable: URL? = nil) {
@@ -98,6 +131,8 @@ enum CopilotBundledServer {
         super.init()
         enabled = preferences.enabled
         consented = preferences.remembersContextConsent
+        automaticSuggestions = preferences.automaticSuggestions
+        automaticNextEdits = preferences.automaticNextEdits
         self.executable = executable
         refreshConnectionPresentation()
     }
@@ -131,6 +166,7 @@ enum CopilotBundledServer {
         action("Enable Other Languages…", #selector(toggleOtherLanguages))
         action("Automatic Next Edit Suggestions (Experimental)", #selector(toggleNextEdits))
         action("Trigger Next Edit Suggestion", #selector(triggerNextEdit))
+        action("Diagnostics…", #selector(showDiagnostics))
         root.submenu = menu; NSApp.mainMenu?.addItem(root)
         for name in [NSText.didChangeNotification, NSTextView.didChangeSelectionNotification, NSWindow.didResignKeyNotification, NSApplication.didResignActiveNotification, NSView.boundsDidChangeNotification, NSWindow.didMoveNotification, NSWindow.didResizeNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
@@ -140,13 +176,17 @@ enum CopilotBundledServer {
                     guard !self.applying else { return }
                     if note.name == NSText.didChangeNotification {
                         guard let editor else { return }
-                        if editor === self.view { self.invalidate() }
-                        if self.automaticSuggestions {
+                        self.lastTextEditTime = ProcessInfo.processInfo.systemUptime
+                        if editor === self.view { self.invalidate(reason: .textChanged) }
+                        if self.automaticSuggestions || self.automaticNextEdits {
                             Task { @MainActor [weak self, weak editor] in
                                 await Task.yield()
                                 guard let self, let editor else { return }
-                                self.requestSuggestions(in: editor, explicit: false)
+                                self.requestSuggestions(in: editor, explicit: false, nextEdit: !self.automaticSuggestions)
                             }
+                        } else {
+                            let ticket = self.diagnostics.ticket(.automaticInline)
+                            self.diagnose(ticket, .skipped, reason: .automaticDisabled)
                         }
                         return
                     }
@@ -158,7 +198,25 @@ enum CopilotBundledServer {
                     } else if note.object is NSWindow {
                         guard (note.object as? NSWindow) === self.view?.window else { return }
                     }
-                    self.invalidate()
+                    let reason: CopilotDiagnostics.Reason
+                    switch note.name {
+                        case NSTextView.didChangeSelectionNotification: reason = .selectionChanged
+                        case NSView.boundsDidChangeNotification: reason = .viewportChanged
+                        case NSApplication.didResignActiveNotification: reason = .appInactive
+                        default: reason = .windowChanged
+                    }
+                    self.invalidate(reason: reason)
+                    if reason == .selectionChanged, self.automaticPolicy.request(after: .caretMove) == .nextEdit,
+                       ProcessInfo.processInfo.systemUptime - self.lastTextEditTime > 0.25, let editor {
+                        let revision = editor.semanticRevision, caret = editor.selectedRange()
+                        self.selectionRequest = Task { @MainActor [weak self, weak editor] in
+                            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                            guard let self, let editor, !Task.isCancelled,
+                                  editor.semanticRevision == revision, editor.selectedRange() == caret else { return }
+                            self.selectionRequest = nil
+                            self.requestSuggestions(in: editor, explicit: false, nextEdit: true)
+                        }
+                    }
                 }
             })
         }
@@ -239,7 +297,7 @@ enum CopilotBundledServer {
         if connected { phase = .authenticated; status = "既存認証を再利用しています。AI補完を有効にしました。"; return }
         restoreAuthentication(showPanel: true)
     }
-    private func restoreAuthentication(showPanel: Bool = false) {
+    private func restoreAuthentication(showPanel: Bool = false, retryNextEdits: Bool = false) {
         guard enabled, executable != nil, auth == nil, reconnect == nil else { return }
         authFinishing = true; phase = .connecting; status = "GitHub Copilotに再接続しています。"
         if showPanel { presentConnection() }
@@ -268,12 +326,15 @@ enum CopilotBundledServer {
                         self.connected = false; self.phase = .failed; self.status = "Copilotの利用権限を確認できません。保存済み認証は変更していません。アカウントの利用条件を確認してください。"
                     case .unknown: try await self.waitUntilReady(ticket: token, owner: owner)
                 }
+                if retryNextEdits, self.connected { self.nextEditsUnavailable = false }
                 self.authFinishing = false
             } catch is CancellationError { }
             catch { await self.connectionFailed(error, ticket: token) }
         }
     }
-    @objc private func reconnectAuthentication() { restoreAuthentication(showPanel: true) }
+    // A successful owner-requested connection check permits a fresh NES capability probe.
+    // Merely toggling automatic NES does not clear an unsupported result.
+    @objc private func reconnectAuthentication() { restoreAuthentication(showPanel: true, retryNextEdits: true) }
     private func confirmContextSharing() -> Bool {
         if consented { return true }
         let a = NSAlert(); a.messageText = "AI補完を有効にしますか？"
@@ -305,10 +366,14 @@ enum CopilotBundledServer {
         _ = finished.wait(timeout: .now() + 2)
         LSPProcesses.copilot.stopAll()
     }
-    private func invalidate() { epoch += 1; work?.cancel(); work = nil; if view?.semanticGhost?.copilot == true { view?.semanticGhost = nil }; suggestions = nil; fingerprint = nil }
+    private func invalidate(reason: CopilotDiagnostics.Reason = .interaction) {
+        selectionRequest?.cancel(); selectionRequest = nil
+        if let ticket = diagnosticRequest { diagnose(ticket, .cancelled, reason: reason); diagnosticRequest = nil }
+        epoch += 1; work?.cancel(); work = nil; if view?.semanticGhost?.copilot == true { view?.semanticGhost = nil }; suggestions = nil; fingerprint = nil }
     private func disable(resetConnection: Bool = false) {
+        recentBefore = nil
         enabled = false; connected = false; authFinishing = false; latestKind = "Unknown"; invalidate(); authEpoch += 1; auth?.cancel(); auth = nil; startup?.cancel(); startup = nil; reconnect?.cancel(); reconnect = nil
-        if resetConnection { consented = false; connectionApproved = false; otherLanguages = false; automaticNextEdits = false; nextEditsUnavailable = false }
+        if resetConnection { consented = false; connectionApproved = false; otherLanguages = false; nextEditsUnavailable = false }
         LSPProcesses.copilot.stopAll()
         let old = client; client = nil; phase = .off; status = "コード送信とサーバーを停止しました。"; Task { await old?.stop() }
     }
@@ -328,7 +393,7 @@ enum CopilotBundledServer {
             return new
         }
         self.startup = startup
-        do { let result = try await startup.value; try Task.checkCancellation(); guard enabled, client === new else { throw CancellationError() }; self.startup = nil; return result }
+        do { let result = try await startup.value; try Task.checkCancellation(); guard enabled, client === new else { throw CancellationError() }; self.startup = nil; self.nextEditsUnavailable = false; return result }
         catch { lastStopReason = await new.stopReason; await new.stop(); if client === new { client = nil; self.startup = nil }; throw error }
     }
     private func message(_ method: String, params: LSPJSON, owner: LSPClient, ticket: Int) -> LSPJSON {
@@ -429,11 +494,26 @@ enum CopilotBundledServer {
     }
     private func eligible(_ editor: EditorTextView) -> String? {
         guard enabled, consented, connected, editor.isEditable, !editor.hasMarkedText(),
-              editor.selectedRange().length == 0, editor.selectedRanges.count == 1, editor.insertionLocations.count <= 1,
+              editor.selectedRange().length == 0, editor.selectedRanges.count == 1, editor.insertionLocations.allSatisfy({ $0 == editor.selectedRange().location }),
               editor.window?.firstResponder === editor, (NSApp.keyWindow ?? NSApp.mainWindow) === editor.window,
               NSApp.isActive, let context = editor.semanticDocumentContext?() else { return nil }
         let language = CopilotLanguage.resolve(url: context.url, syntax: context.syntax)
         return otherLanguages || language == "java" || language == "python" ? language : nil
+    }
+    // Explanation only; the original eligibility predicate remains the authority.
+    private func diagnosticEligibilityReason(_ editor: EditorTextView) -> CopilotDiagnostics.Reason {
+        if !enabled { return .disabled }
+        if !consented { return .consentMissing }
+        if !connected { return .disconnected }
+        if !editor.isEditable { return .readOnly }
+        if editor.hasMarkedText() { return .markedText }
+        if editor.selectedRange().length != 0 { return .selectedText }
+        if editor.selectedRanges.count != 1 || editor.insertionLocations.contains(where: { $0 != editor.selectedRange().location }) { return .multipleCarets }
+        if editor.window?.firstResponder !== editor { return .notFirstResponder }
+        if (NSApp.keyWindow ?? NSApp.mainWindow) !== editor.window { return .inactiveWindow }
+        if !NSApp.isActive { return .appInactive }
+        if editor.semanticDocumentContext?() == nil { return .missingContext }
+        return .unsupportedLanguage
     }
     private func current(in editor: EditorTextView) -> Bool {
         guard let state = suggestions, self.view === editor, editor.string == state.snapshot,
@@ -441,7 +521,9 @@ enum CopilotBundledServer {
               editor.semanticDocumentContext?().url == state.file, eligible(editor) == state.languageId else { return false }
         return true
     }
-    @objc private func toggleAutomaticSuggestions() { automaticSuggestions.toggle(); invalidate() }
+    @objc private func toggleAutomaticSuggestions() {
+        automaticSuggestions.toggle(); preferences.automaticSuggestions = automaticSuggestions; invalidate()
+    }
     @objc private func triggerInline() { if let editor = activeEditor() { requestSuggestions(in: editor, explicit: true) } }
     @objc private func triggerNextEdit() { if let editor = activeEditor() { requestSuggestions(in: editor, explicit: true, nextEdit: true) } }
     @objc private func nextSuggestion() { if let editor = activeEditor() { cycle(1, in: editor) } }
@@ -461,8 +543,8 @@ enum CopilotBundledServer {
         let old = client; Task { if let uri = await old?.openCopilotDocument() { await old?.close(uri) } }
     }
     @objc private func toggleNextEdits() {
-        automaticNextEdits.toggle(); invalidate()
-        status = automaticNextEdits ? "inline候補がない場合、同じ文書のNext Edit Suggestionsを要求します。別の差分プレビューでTab移動→Tab採用します。" : "自動Next Edit Suggestionsを停止しました。"
+        automaticNextEdits.toggle(); preferences.automaticNextEdits = automaticNextEdits; invalidate()
+        status = automaticNextEdits ? "入力・カーソル移動後の次編集を提案します。通常補完を優先し、差分はTabで移動・採用します。" : "自動Next Edit Suggestionsを停止しました。"
     }
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(toggle) { item.state = enabled && consented ? .on : .off; return true }
@@ -471,7 +553,7 @@ enum CopilotBundledServer {
         if item.action == #selector(cancelSignIn) { return auth != nil }
         if item.action == #selector(toggleAutomaticSuggestions) { item.state = automaticSuggestions ? .on : .off; return true }
         if item.action == #selector(toggleOtherLanguages) { item.state = otherLanguages ? .on : .off; return true }
-        if item.action == #selector(toggleNextEdits) { item.state = automaticNextEdits ? .on : .off; return !nextEditsUnavailable }
+        if item.action == #selector(toggleNextEdits) { item.state = automaticNextEdits ? .on : .off; return automaticNextEdits || !nextEditsUnavailable }
         if item.action == #selector(triggerInline) || item.action == #selector(triggerNextEdit) {
             return activeEditor().flatMap(eligible) != nil && (item.action != #selector(triggerNextEdit) || !nextEditsUnavailable)
         }
@@ -483,19 +565,34 @@ enum CopilotBundledServer {
         return true
     }
     func typed(in editor: EditorTextView, previous: String) {
-        guard editor.string != previous, automaticSuggestions, !applying else { return }
-        requestSuggestions(in: editor, explicit: false)
+        guard editor.string != previous, !applying else { return }
+        lastTextEditTime = ProcessInfo.processInfo.systemUptime
+        if eligible(editor) != nil, previous.utf16.count <= 1_000_000 {
+            recentBefore = (editor.semanticBufferID, editor.semanticRevision, previous)
+        }
+        guard let request = automaticPolicy.request(after: .typing) else { return }
+        requestSuggestions(in: editor, explicit: false, nextEdit: request == .nextEdit, previous: previous)
     }
-    func documentEdited(in editor: EditorTextView) { if automaticSuggestions, !applying { requestSuggestions(in: editor, explicit: false) } }
-    private func requestSuggestions(in editor: EditorTextView, explicit: Bool, nextEdit: Bool = false, cycleOffset: Int = 0) {
-        guard let languageId = eligible(editor) else { return }
+    func documentEdited(in editor: EditorTextView) {
+        if let request = automaticPolicy.request(after: .postAccept), !applying {
+            requestSuggestions(in: editor, explicit: false, nextEdit: request == .nextEdit)
+        }
+    }
+    private func requestSuggestions(in editor: EditorTextView, explicit: Bool, nextEdit: Bool = false, cycleOffset: Int = 0, previous: String? = nil) {
+        let ticket = diagnostics.ticket(nextEdit ? (explicit ? .manualNextEdit : .automaticNextEdit) : (explicit ? .manualInline : .automaticInline))
+        diagnose(ticket, .attempt)
+        // Covers queued typing notifications, caret triggers and programmatic manual actions.
+        guard !nextEdit || !nextEditsUnavailable else { diagnose(ticket, .skipped, reason: .methodNotFound); return }
+        guard let languageId = eligible(editor) else { diagnose(ticket, .skipped, reason: diagnosticEligibilityReason(editor)); return }
         // Deferred typing notifications can arrive after a partial acceptance.
         // Keep its current remaining preview until another edit or explicit request.
-        if !explicit, hasVisibleSuggestion(in: editor) { return }
+        if !explicit, hasVisibleSuggestion(in: editor) { diagnose(ticket, .skipped, reason: .visibleSuggestion); return }
         let snapshot = editor.string, caret = editor.selectedRange().location, file = editor.semanticDocumentContext?().url, revision = editor.semanticRevision
+        let observedPrevious = previous ?? (recentBefore?.buffer == editor.semanticBufferID && recentBefore?.revision == revision ? recentBefore?.text : nil)
         if !explicit, work != nil, let queued = fingerprint,
-           queued.0 == editor.semanticBufferID, queued.1 == snapshot, queued.2 == caret, queued.3 == languageId { return }
-        invalidate(); self.view = editor; viewportOrigin = editor.enclosingScrollView?.contentView.bounds.origin
+           queued.0 == editor.semanticBufferID, queued.1 == snapshot, queued.2 == caret, queued.3 == languageId { diagnose(ticket, .skipped, reason: .duplicateRequest); return }
+        invalidate(reason: .replacedRequest); diagnosticRequest = ticket
+        self.view = editor; viewportOrigin = editor.enclosingScrollView?.contentView.bounds.origin
         fingerprint = (editor.semanticBufferID, snapshot, caret, languageId)
         let token = epoch
         let tabSize = editor.tabWidth, insertSpaces = editor.isAutomaticTabExpansionEnabled
@@ -505,39 +602,119 @@ enum CopilotBundledServer {
         status = explicit ? "AI候補を手動で取得しています…" : "AI候補を取得しています…"
         work = Task { [weak self, weak editor] in
             guard let self, let editor else { return }
-            defer { if self.epoch == token { self.work = nil; self.fingerprint = nil } }
+            defer {
+                if self.epoch == token { self.diagnosticRequest = nil; self.work = nil; self.fingerprint = nil }
+            }
+            var rpcTicket = ticket
             do {
                 if !explicit { try await Task.sleep(for: .milliseconds(50)) }
                 let client = try await self.prepared()
-                try Task.checkCancellation(); guard self.epoch == token, self.eligible(editor) == languageId else { return }
+                try Task.checkCancellation(); guard self.epoch == token, self.eligible(editor) == languageId else { self.diagnose(ticket, .excluded, reason: .staleResponse); return }
+                guard !nextEdit || !self.nextEditsUnavailable else { self.diagnose(ticket, .skipped, reason: .methodNotFound); return }
+                if !self.nextEditsUnavailable && (self.automaticNextEdits || nextEdit) {
+                    let history = self.diagnostics.ticket(.history)
+                    do {
+                        if let baseline = try await client.prepareNextEditHistory(uri: uri, languageId: languageId, previous: observedPrevious ?? snapshot, caret: caret) {
+                            self.diagnose(history, .response, fieldPresent: baseline.object?["edits"] != nil,
+                                          arrayPresent: baseline["edits"].array != nil, count: baseline["edits"].array?.count ?? 0)
+                        }
+                    } catch is CancellationError { throw CancellationError() }
+                    catch {
+                        let reason: CopilotDiagnostics.Reason
+                        switch error {
+                            case LSPError.methodNotFound: self.nextEditsUnavailable = true; reason = .methodNotFound
+                            case LSPError.timeout: reason = .timeout
+                            case LSPError.stopped: reason = .stopped
+                            default: reason = .otherError
+                        }
+                        self.diagnose(history, .failed, reason: reason)
+                        if nextEdit { throw error }
+                    }
+                    try Task.checkCancellation()
+                    guard self.epoch == token, self.eligible(editor) == languageId else { return }
+                }
+                self.diagnose(ticket, .started)
                 var isNextEdit = nextEdit
                 let result: LSPJSON
                 if nextEdit { result = try await client.nextEdit(uri: uri, languageId: languageId, text: snapshot, caret: caret, tabSize: tabSize, insertSpaces: insertSpaces) }
                 else { result = try await client.inlineCompletion(uri: uri, languageId: languageId, text: snapshot, caret: caret, triggerKind: explicit ? 1 : 2, selectedCompletion: selectedContext, tabSize: tabSize, insertSpaces: insertSpaces) }
-                var items = result[nextEdit ? "edits" : "items"].array ?? []
-                if !nextEdit, items.isEmpty, self.automaticNextEdits, !self.nextEditsUnavailable {
-                    let edits = try await client.nextEdit(uri: uri, languageId: languageId, text: snapshot, caret: caret, tabSize: tabSize, insertSpaces: insertSpaces)
-                    items = edits["edits"].array ?? []; isNextEdit = true
-                }
+                let field = nextEdit ? "edits" : "items"
+                var items = result[field].array ?? []
+                self.diagnose(ticket, .response, fieldPresent: result.object?[field] != nil,
+                              arrayPresent: result[field].array != nil, count: items.count)
                 guard !Task.isCancelled, self.epoch == token, editor.string == snapshot,
                       editor.selectedRange() == NSRange(location: caret, length: 0), editor.semanticRevision == revision, editor.semanticDocumentContext?().url == file,
-                      self.eligible(editor) == languageId else { return }
-                var candidates: [Candidate] = []
-                for item in items.prefix(20) {
-                    let plan = isNextEdit ? nil : try? CopilotInline.plan(item, text: snapshot, caret: caret)
-                    guard let edit = isNextEdit ? try? CopilotInline.nextEdit(item, text: snapshot) : plan?.edit else { continue }
-                    if !isNextEdit, plan?.parts.isEmpty != false { continue }
-                    if candidates.contains(where: { $0.edit.range == edit.range && $0.edit.text == edit.text }) { continue }
-                    self.reference += 1; candidates.append(Candidate(reference: self.reference, item: item, local: item, edit: edit, plan: plan, nextEdit: isNextEdit))
+                      self.eligible(editor) == languageId else { self.diagnose(ticket, .excluded, reason: .staleResponse); return }
+                guard let requestedVersion = await client.version(of: uri) else {
+                    self.diagnose(ticket, .excluded, reason: .staleVersion); return
                 }
-                guard !candidates.isEmpty else { self.status = "この位置では表示できるAI候補がありません。"; return }
+                @MainActor func parse(_ values: [LSPJSON], next: Bool) -> [Candidate] {
+                    if values.count > 20 { self.diagnose(rpcTicket, .excluded, reason: .candidateLimit, count: values.count - 20) }
+                    var parsed: [Candidate] = []
+                    for item in values.prefix(20) {
+                        if next {
+                            switch CopilotInline.nextEditTarget(item, uri: uri, version: requestedVersion) {
+                                case .current: break
+                                case .foreignDocument: self.diagnose(rpcTicket, .excluded, reason: .foreignDocument); continue
+                                case .staleVersion: self.diagnose(rpcTicket, .excluded, reason: .staleVersion); continue
+                            }
+                        }
+                        let plan = next ? nil : try? CopilotInline.plan(item, text: snapshot, caret: caret)
+                        guard let edit = next ? try? CopilotInline.nextEdit(item, text: snapshot) : plan?.edit else { self.diagnose(rpcTicket, .excluded, reason: .invalidEdit); continue }
+                        if !next, plan?.parts.isEmpty != false { self.diagnose(rpcTicket, .excluded, reason: .noInlineParts); continue }
+                        if parsed.contains(where: { $0.edit.range == edit.range && $0.edit.text == edit.text }) { self.diagnose(rpcTicket, .excluded, reason: .duplicateCandidate); continue }
+                        self.reference += 1; parsed.append(Candidate(reference: self.reference, item: item, local: item, edit: edit, plan: plan, nextEdit: next))
+                    }
+                    return parsed
+                }
+                guard result[field].array != nil else {
+                    self.diagnose(ticket, .excluded, reason: .malformedResponse)
+                    self.status = "AI候補の応答形式を処理できませんでした。"; return
+                }
+                var candidates = parse(items, next: isNextEdit)
+                if !nextEdit, self.automaticPolicy.needsNextEditFallback(displayableInlineCount: candidates.count, serverAvailable: !self.nextEditsUnavailable) {
+                    let fallback = self.diagnostics.ticket(.fallbackNextEdit)
+                    rpcTicket = fallback; self.diagnosticRequest = fallback
+                    self.diagnose(fallback, .started)
+                    let edits = try await client.nextEdit(uri: uri, languageId: languageId, text: snapshot, caret: caret, tabSize: tabSize, insertSpaces: insertSpaces)
+                    items = edits["edits"].array ?? []; isNextEdit = true
+                    self.diagnose(fallback, .response, fieldPresent: edits.object?["edits"] != nil,
+                                  arrayPresent: edits["edits"].array != nil, count: items.count)
+                    guard !Task.isCancelled, self.epoch == token, editor.string == snapshot,
+                          editor.selectedRange() == NSRange(location: caret, length: 0), editor.semanticRevision == revision,
+                          editor.semanticDocumentContext?().url == file, self.eligible(editor) == languageId else {
+                        self.diagnose(fallback, .excluded, reason: .staleResponse); return
+                    }
+                    guard edits["edits"].array != nil else {
+                        self.diagnose(fallback, .excluded, reason: .malformedResponse)
+                        self.status = "NESの応答形式を処理できませんでした。"; return
+                    }
+                    candidates = parse(items, next: true)
+                }
+                guard !candidates.isEmpty else {
+                    self.diagnose(rpcTicket, .excluded, reason: .noCandidates)
+                    if !nextEdit, !isNextEdit { self.diagnose(rpcTicket, .skipped, reason: items.isEmpty ? .nextEditDisabled : .inlineNonempty) }
+                    self.status = isNextEdit && items.isEmpty ? "NES: サーバーから次編集の候補は返りませんでした。編集を続けて再試行できます。" : "この位置では表示できるAI候補がありません。"; return }
                 let index = (cycleOffset % candidates.count + candidates.count) % candidates.count
                 self.suggestions = Suggestions(candidates: candidates, index: index, snapshot: snapshot, caret: caret, revision: revision, file: file, uri: uri, languageId: languageId, client: client)
                 self.present(in: editor)
-            } catch is CancellationError { }
+            } catch is CancellationError {
+                if self.diagnosticRequest == rpcTicket { self.diagnose(rpcTicket, .cancelled, reason: .interaction) }
+            }
             catch {
+                let reason: CopilotDiagnostics.Reason
+                switch error {
+                    case LSPError.methodNotFound: reason = .methodNotFound
+                    case LSPError.stopped: reason = .stopped
+                    case LSPError.timeout: reason = .timeout
+                    default: reason = .otherError
+                }
+                self.diagnose(rpcTicket, .failed, reason: reason)
                 guard self.epoch == token, self.enabled else { return }
-                if case LSPError.methodNotFound = error { self.nextEditsUnavailable = true; self.status = "このサーバーは公開Next Edit APIに対応していません。inline completionは利用できます。" }
+                if case LSPError.methodNotFound = error {
+                    if nextEdit || rpcTicket.kind == .fallbackNextEdit || rpcTicket.kind == .history { self.nextEditsUnavailable = true }
+                    self.status = "このサーバーは公開Next Edit APIに対応していません。inline completionは利用できます。「接続を確認」が成功するとNESを再試行できます。"
+                }
                 else if case LSPError.stopped = error { self.connected = false; self.phase = .failed; self.status = "公式サーバーが停止しました。GitHubにサインイン…で再接続してください。"; self.client = nil }
                 else if case LSPError.timeout = error { self.status = "AI候補の取得がタイムアウトしました。手動要求または入力で再試行できます。" }
                 else { self.status = "AI候補の要求に失敗しました。再試行してください。" }
@@ -558,7 +735,10 @@ enum CopilotBundledServer {
         applying = true
         editor.semanticGhost = SemanticGhostPreview(text: candidate.plan?.text ?? candidate.edit.text, snapshot: state.snapshot, caret: state.caret, fileURL: state.file, language: language, copilot: true, languageId: state.languageId, parts: candidate.plan?.parts ?? [], nextEdit: candidate.nextEdit, replacementRange: candidate.edit.range, replacedText: old, revision: state.revision)
         applying = false
-        guard editor.semanticGhostIsCurrent else { editor.semanticGhost = nil; return }
+        guard editor.semanticGhostIsCurrent else {
+            if let ticket = diagnosticRequest { diagnose(ticket, .excluded, reason: .ghostNotCurrent) }
+            editor.semanticGhost = nil; return
+        }
         // Owner-requested single suggestion UI: dismiss timers, pending requests and
         // selection before Tab can be routed to an ordinary candidate. Loading alone
         // never suppresses ordinary completion.
@@ -566,7 +746,11 @@ enum CopilotBundledServer {
         SemanticCompletionController.shared.dismissSuggestionsForCopilot(in: editor)
         editor.suppressWordCompletionForCopilot()
         applying = false
-        guard current(in: editor), editor.semanticGhost?.copilot == true, editor.semanticGhostIsCurrent else { invalidate(); return }
+        guard current(in: editor), editor.semanticGhost?.copilot == true, editor.semanticGhostIsCurrent else {
+            if let ticket = diagnosticRequest { diagnose(ticket, .excluded, reason: .stalePresentation) }
+            invalidate(); return
+        }
+        if let ticket = diagnosticRequest { diagnose(ticket, .displayed, count: state.candidates.count) }
         editor.displayIfNeeded()
         if state.shown.insert(candidate.reference).inserted {
             let owner = state.client, item = candidate.item, method = candidate.nextEdit ? "textDocument/didShowInlineEdit" : "textDocument/didShowCompletion"
