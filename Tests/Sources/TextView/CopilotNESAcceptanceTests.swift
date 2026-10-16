@@ -5,6 +5,8 @@ import Testing
 
 @MainActor @Suite(.serialized) struct CopilotNESAcceptanceTests {
     @Test func unsupportedServerStopsAutomaticRPCAndAllowsTurningNESOff() async throws {
+        try await CopilotProcessTestLease.acquire()
+        defer { CopilotProcessTestLease.release() }
         let directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let state = directory.appendingPathComponent("synthetic-session.json")
@@ -33,6 +35,7 @@ import Testing
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
         window.tabbingMode = .disallowed
         window.contentViewController = editorController
+        window.setContentSize(NSSize(width: 600, height: 300))
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(view)
         NSApp.activate(ignoringOtherApps: true)
