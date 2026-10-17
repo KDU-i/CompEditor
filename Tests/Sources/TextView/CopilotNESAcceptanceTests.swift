@@ -164,6 +164,15 @@ import Testing
             for _ in 0..<1000 { focus(); if condition() { return }; try await Task.sleep(for: .milliseconds(20)) }
             Issue.record("NES031 checkpoint: \(label); active=\(NSApp.isActive); key=\(NSApp.keyWindow === window); phase=\(copilot.connectionPresentation.phase); status=\(copilot.connectionPresentation.detail)"); throw CancellationError()
         }
+        func capture(_ target: NSView, name: String) throws {
+            let output = URL.temporaryDirectory.appendingPathComponent("compeditor-nes031-evidence")
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            target.displayIfNeeded()
+            if let bitmap = target.bitmapImageRepForCachingDisplay(in: target.bounds) {
+                target.cacheDisplay(in: target.bounds, to: bitmap)
+                if let png = bitmap.representation(using: .png, properties: [:]) { try png.write(to: output.appendingPathComponent(name + ".png")) }
+            }
+        }
         func key(_ code: UInt16) throws -> NSEvent {
             try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: code == 48 ? "\t" : "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code))
         }
@@ -180,6 +189,7 @@ import Testing
             for newline in ["\n", "\r\n"] {
                 for (replacement, insertion) in [("Goodbye😀", false), ("", false), ("one\n\ttwo", false), (" + added😀", true)] {
                     let source = ["# 😀", "first()", "second()", "third()", "value = Hello", "tail()"].joined(separator: newline)
+                    view.lineEnding = newline == "\r\n" ? .crlf : .lf
                     view.string = source; view.semanticDocumentContext = { (nil, language) }
                     view.selectedRange = NSRange(location: 2, length: 0)
                     let wordRange = (source as NSString).range(of: "Hello")
@@ -190,20 +200,25 @@ import Testing
                     _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
                     try await waitFor("display \(language) \(replacement)") { view.semanticGhost?.nextEdit == true && copilot.hasVisibleSuggestion(in: view) }
                     #expect(view.string == source)
+                    let imageName = "\(language)-\(newline.utf16.count)-\(insertion)-\(replacement.utf16.count)"
+                    try capture(view, name: imageName + "-editor")
+                    if let preview = view.semanticGhostPanel?.contentView { try capture(preview, name: imageName + "-preview-wide") }
                     let undoBefore = view.undoManager?.canUndo
                     window.setContentSize(NSSize(width: 360, height: 300))
                     NotificationCenter.default.post(name: NSWindow.didResizeNotification, object: window)
                     view.enclosingScrollView?.contentView.scroll(to: NSPoint(x: 0, y: 16))
                     NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: view.enclosingScrollView!.contentView)
                     #expect(copilot.hasSuggestions(in: view))
+                    if let preview = view.semanticGhostPanel?.contentView { try capture(preview, name: imageName + "-preview-narrow") }
                     #expect(view.undoManager?.canUndo == undoBefore)
                     #expect(copilot.handleKey(try key(48), in: view))
                     #expect(view.string == source)
                     #expect(view.selectedRange().location == range.location)
                     #expect(copilot.handleKey(try key(48), in: view))
                     let normalized = CopilotInline.normalize(replacement, in: source)
+                    let minimal = CopilotNextEditPolicy.minimized(.init(range: range, text: normalized, primary: true), in: source)
                     #expect(view.string == (source as NSString).replacingCharacters(in: range, with: normalized))
-                    #expect(view.selectedRange() == NSRange(location: range.location + normalized.utf16.count, length: 0))
+                    #expect(view.selectedRange() == NSRange(location: minimal.range.location + minimal.text.utf16.count, length: 0))
                     view.undoManager?.undo()
                     #expect(view.string == source)
                     try await Task.sleep(for: .milliseconds(100))
@@ -223,6 +238,7 @@ import Testing
             let payload: LSPJSON = .object(["source": .string(source), "edit": item, "delay": .number(delay)])
             try JSONEncoder().encode(payload).write(to: fixture)
         }
+        view.lineEnding = .lf
         view.string = source; view.semanticDocumentContext = { (nil, "Python") }
         view.selectedRange = NSRange(location: range.location, length: 0)
         try setFixture(source: source, text: "Goodbye")
