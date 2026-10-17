@@ -817,6 +817,8 @@ enum CopilotBundledServer {
                     if values.count > 20 { self.diagnose(rpcTicket, .excluded, reason: .candidateLimit, count: values.count - 20) }
                     var parsed: [Candidate] = []
                     for item in values.prefix(20) {
+                        // A cancelled response must not start more metadata checks.
+                        guard !Task.isCancelled, self.epoch == token else { break }
                         var target: ForeignTarget?
                         var candidateSnapshot = snapshot
                         if next {

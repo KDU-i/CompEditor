@@ -673,6 +673,7 @@ enum CopilotInline {
 /// normal source can be opened, then requested as the foreground document.
 enum CopilotProjectTargetPolicy {
     struct Snapshot: Sendable { let uri: URL; let text: String }
+    private static let sourceExtensions = Set(["py", "java", "ts", "tsx", "js", "jsx", "swift", "c", "h", "cpp", "hpp", "cc", "cs", "go", "rs", "rb", "php", "kt", "kts", "scala", "m", "mm", "lua", "pl", "r", "dart", "vue", "svelte", "ex", "exs", "erl", "clj", "cljs", "fs", "fsx"])
     static func target(_ uri: URL, root: URL, otherLanguages: Bool = false) throws -> URL {
         guard uri.isFileURL, uri.host == nil || uri.host == "localhost", uri.query == nil, uri.fragment == nil,
               root.isFileURL, uri.standardizedFileURL.path == uri.path else { throw LSPError.unsupportedEdit }
@@ -687,9 +688,8 @@ enum CopilotProjectTargetPolicy {
         guard !parts.isEmpty, !parts.contains(where: { $0.hasPrefix(".") || excluded.contains($0) }),
               !parts.contains(where: { $0.range(of: #"(?i)(^|[_\-.])(secrets?|credentials?|passwords?|tokens?|private[_-]?keys?)([_\-.]|$)"#, options: .regularExpression) != nil }) else { throw LSPError.unsupportedEdit }
         let url = parts.reduce(canonical) { $0.appendingPathComponent($1) }
-        let extensions = Set(["py", "java", "ts", "tsx", "js", "jsx", "swift", "c", "h", "cpp", "hpp", "cc", "cs", "go", "rs", "rb", "php", "kt", "kts", "scala", "m", "mm", "lua", "pl", "r", "dart", "vue", "svelte", "ex", "exs", "erl", "clj", "cljs", "fs", "fsx"])
         let language = CopilotLanguage.resolve(url: url, syntax: "")
-        guard extensions.contains(url.pathExtension.lowercased()), otherLanguages || language == "python" || language == "java" else { throw LSPError.unsupportedEdit }
+        guard sourceExtensions.contains(url.pathExtension.lowercased()), otherLanguages || language == "python" || language == "java" else { throw LSPError.unsupportedEdit }
         // Check only exact ancestor metadata, never list directory contents.
         for depth in 1...parts.count {
             let item = parts.prefix(depth).reduce(canonical) { $0.appendingPathComponent($1) }
@@ -739,6 +739,7 @@ enum CopilotProjectTargetPolicy {
     /// private shadow repository; Git never opens the user's repository/code.
     private struct GitExclusions {
         let root: URL
+        var repositoryRoot: URL
         let home: URL
         let shadow: URL
         let userConfigDirectory: URL
@@ -757,7 +758,7 @@ enum CopilotProjectTargetPolicy {
         private let deadline = ContinuousClock.now.advanced(by: .seconds(5))
 
         init(root: URL, home: URL) throws {
-            self.root = root; self.home = home
+            self.root = root; self.repositoryRoot = root; self.home = home
             let environment = ProcessInfo.processInfo.environment
             if let configuredHome = environment["HOME"] {
                 guard URL(fileURLWithPath: configuredHome).standardizedFileURL == home.standardizedFileURL else { throw LSPError.unsupportedEdit }
@@ -798,7 +799,8 @@ enum CopilotProjectTargetPolicy {
             guard let base = container ?? (exactFiles.contains(url) ? url.deletingLastPathComponent() : nil) else { throw LSPError.unsupportedEdit }
             let parts = String(url.path.dropFirst(base.path.count + 1)).split(separator: "/").map(String.init)
             guard !parts.isEmpty,
-                  !["py", "java", "js", "ts", "swift", "c", "cpp", "h", "rs", "go", "rb", "pem", "key", "p12", "pfx", "sqlite", "db"].contains(url.pathExtension.lowercased()) else { throw LSPError.unsupportedEdit }
+                  !CopilotProjectTargetPolicy.sourceExtensions.contains(url.pathExtension.lowercased()),
+                  !["pem", "key", "p12", "pfx", "p8", "der", "crt", "cer", "sqlite", "db", "keychain", "keychain-db", "kdbx", "json", "yaml", "yml", "xml", "toml"].contains(url.pathExtension.lowercased()) else { throw LSPError.unsupportedEdit }
             if base == admin || base == common {
                 guard !parts.contains(where: { ["objects", "refs", "logs", "hooks", "modules", "worktrees"].contains($0) }),
                       !["index", "packed-refs", "FETCH_HEAD", "ORIG_HEAD", "COMMIT_EDITMSG", "MERGE_MSG"].contains(parts.last!) else { throw LSPError.unsupportedEdit }
@@ -833,11 +835,20 @@ enum CopilotProjectTargetPolicy {
             return values.isDirectory == true && values.isSymbolicLink != true
         }
         mutating func discover() throws {
-            let marker = root.appendingPathComponent(".git")
-            var markerStatus = stat()
-            if lstat(marker.path, &markerStatus) != 0 {
-                guard errno == ENOENT else { throw LSPError.unsupportedEdit }; return
+            // Opening a subfolder must still honor its enclosing repository.
+            // Probe fixed ancestor markers only; never enumerate parent contents.
+            var marker: URL
+            while true {
+                guard ContinuousClock.now < deadline else { throw LSPError.unsupportedEdit }
+                marker = repositoryRoot.appendingPathComponent(".git")
+                var markerStatus = stat()
+                if lstat(marker.path, &markerStatus) == 0 { break }
+                guard errno == ENOENT else { throw LSPError.unsupportedEdit }
+                let parent = repositoryRoot.deletingLastPathComponent()
+                if repositoryRoot.path == "/" || parent.path.isEmpty || parent.path == repositoryRoot.path { repositoryRoot = root; return }
+                repositoryRoot = parent
             }
+            exactFiles.append(marker.standardizedFileURL)
             let values = try marker.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey])
             guard values.isSymbolicLink != true else { throw LSPError.unsupportedEdit }
             var selected = marker
@@ -845,7 +856,7 @@ enum CopilotProjectTargetPolicy {
                 guard values.isRegularFile == true, let bytes = try metadata(marker, required: true),
                       let text = String(data: bytes, encoding: .utf8), text.hasPrefix("gitdir: ") else { throw LSPError.unsupportedEdit }
                 let pointer = text.dropFirst(8).trimmingCharacters(in: .newlines)
-                selected = try path(pointer, relativeTo: root)
+                selected = try path(pointer, relativeTo: repositoryRoot)
             }
             // Auto-discovery uses getcwd/realpath, as Git -C does. A lexical
             // /var alias must not spuriously activate a different include.
@@ -874,6 +885,14 @@ enum CopilotProjectTargetPolicy {
                       FileManager.default.fileExists(atPath: selected.appendingPathComponent("HEAD").path),
                       !FileManager.default.fileExists(atPath: selected.appendingPathComponent("commondir").path) else { throw LSPError.unsupportedEdit }
                 allowedRoots.append(selected); common = selected
+            }
+            // Explicit config/rule references may live in the enclosing working
+            // tree or conventional main worktree. These are metadata scopes
+            // only: target() still returns source solely within the opened root.
+            let related = [repositoryRoot] + (common?.lastPathComponent == ".git" ? [common!.deletingLastPathComponent()] : [])
+            let broad = ["/", home.path, URL.temporaryDirectory.standardizedFileURL.path] + ["Desktop", "Documents", "Downloads", "Library"].map { home.appendingPathComponent($0).path }
+            for directory in related where directory.pathComponents.count > 2 && !broad.contains(directory.path) {
+                if !allowedRoots.contains(directory) { allowedRoots.append(directory) }
             }
             guard let bytes = try metadata(selected.appendingPathComponent("HEAD"), required: true), let head = String(data: bytes, encoding: .utf8) else { throw LSPError.unsupportedEdit }
             if head.hasPrefix("ref: refs/heads/") { branch = String(head.dropFirst(16)).trimmingCharacters(in: .newlines) }
@@ -944,7 +963,7 @@ enum CopilotProjectTargetPolicy {
                     case "extensions.worktreeconfig": worktreeConfig = try boolean(value)
                     case "core.excludesfile":
                         guard let value else { throw LSPError.unsupportedEdit }
-                        excludesFile = value.isEmpty ? nil : try path(value, relativeTo: root)
+                        excludesFile = value.isEmpty ? nil : try path(value, relativeTo: repositoryRoot)
                     case "include.path":
                         guard let value else { throw LSPError.unsupportedEdit }
                         try configuration(path(value, relativeTo: url.deletingLastPathComponent()))
@@ -958,7 +977,7 @@ enum CopilotProjectTargetPolicy {
         mutating func permits(_ parts: [String]) throws -> Bool {
             try discover()
             let environment = ProcessInfo.processInfo.environment
-            for (name, expected) in [("GIT_DIR", admin), ("GIT_COMMON_DIR", common), ("GIT_WORK_TREE", Optional(root))] {
+            for (name, expected) in [("GIT_DIR", admin), ("GIT_COMMON_DIR", common), ("GIT_WORK_TREE", Optional(repositoryRoot))] {
                 if let value = environment[name] {
                     guard let expected, try path(value, relativeTo: root).resolvingSymlinksInPath() == expected else { throw LSPError.unsupportedEdit }
                 }
@@ -981,16 +1000,25 @@ enum CopilotProjectTargetPolicy {
             try? FileManager.default.removeItem(at: shadow.appendingPathComponent(".gitignore"))
             if let excludesFile, excludesFile.path != "/dev/null", let bytes = try metadata(excludesFile) { try bytes.write(to: shadow.appendingPathComponent("global-exclude")) }
             if let common, let bytes = try metadata(common.appendingPathComponent("info/exclude")) { try bytes.write(to: shadow.appendingPathComponent(".git/info/exclude")) }
+            let prefix: [String]
+            if repositoryRoot.path == root.path { prefix = [] }
+            else {
+                guard root.path.hasPrefix(repositoryRoot.path + "/") else { throw LSPError.unsupportedEdit }
+                prefix = String(root.path.dropFirst(repositoryRoot.path.count + 1)).split(separator: "/").map(String.init)
+            }
+            let repositoryParts = prefix + parts
             // Git exclusions cannot be undone by a different .ignore layer.
             for kind in [".gitignore", ".ignore", ".copilotignore"] {
-                for depth in 0..<parts.count {
-                    let prefix = Array(parts.prefix(depth)), directory = prefix.reduce(shadow) { $0.appendingPathComponent($1) }
+                for depth in 0..<repositoryParts.count {
+                    let prefix = Array(repositoryParts.prefix(depth)), directory = prefix.reduce(shadow) { $0.appendingPathComponent($1) }
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                     let destination = directory.appendingPathComponent(".gitignore")
-                    if let bytes = try metadata((prefix + [kind]).reduce(root) { $0.appendingPathComponent($1) }) { try bytes.write(to: destination) }
+                    let original = (prefix + [kind]).reduce(repositoryRoot) { $0.appendingPathComponent($1) }.standardizedFileURL
+                    if depth < repositoryParts.count - parts.count { exactFiles.append(original) }
+                    if let bytes = try metadata(original) { try bytes.write(to: destination) }
                     else { try? FileManager.default.removeItem(at: destination) }
                 }
-                let result = try git(["check-ignore", "--no-index", "--quiet", "--", parts.joined(separator: "/")])
+                let result = try git(["check-ignore", "--no-index", "--quiet", "--", repositoryParts.joined(separator: "/")])
                 guard result.0 == 0 || result.0 == 1 else { throw LSPError.unsupportedEdit }
                 if result.0 == 0 { return false }
                 // The subsequent independent layers do not inherit Git rules.
