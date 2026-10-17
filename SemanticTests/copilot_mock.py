@@ -9,6 +9,7 @@ authenticated=session['authenticated']
 def persist_synthetic_session():
     if session_path:
         session.update(authenticated=authenticated)
+        if 'opened' in globals(): session['versions']=dict(opened)
         session_path.write_text(json.dumps(session))
 def utf16_offset(value, position):
     lines = value.splitlines(keepends=True)
@@ -106,8 +107,9 @@ try:
                 persist_synthetic_session()
                 fixture=json.loads(pathlib.Path(options.nes_fixture).read_text())
                 edits=[]
-                if text == fixture['source']:
-                    edits=[dict(fixture['edit'],textDocument=fixture.get('target',dict(p['textDocument'])))]
+                for candidate in fixture.get('cases', [fixture]):
+                    if text == candidate['source']:
+                        edits=[dict(candidate['edit'],textDocument=candidate.get('target',dict(p['textDocument'])))]; break
                 result={'edits':edits}
                 if fixture.get('delay'): threading.Timer(fixture['delay'],reply,args=(msg,result)).start()
                 else:reply(msg,result)

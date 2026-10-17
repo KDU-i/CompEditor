@@ -36,6 +36,44 @@ import Foundation
   let fresh = UUID(); many.edited(fresh, at: 11); many.requested(at: 11)
   check(!many.shouldRequest(recent[0], line: 2, at: 11), "expired history is pruned by the real ten-second trigger window")
   check(many.shouldRequest(fresh, line: 1, at: 11), "time-based cleanup preserves fresh history")
+  let root = URL.temporaryDirectory.appendingPathComponent("nes-project-" + UUID().uuidString).resolvingSymlinksInPath()
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  func write(_ path: String, _ text: String = "print('ordinary')\n") throws -> URL {
+   let uri = root.appendingPathComponent(path)
+   try FileManager.default.createDirectory(at: uri.deletingLastPathComponent(), withIntermediateDirectories: true)
+   try text.write(to: uri, atomically: true, encoding: .utf8); return uri
+  }
+  func refused(_ uri: URL, _ label: String) {
+   do { _ = try CopilotProjectTargetPolicy.snapshot(uri, root: root); preconditionFailure(label) }
+   catch { print("PASS: " + label) }
+  }
+  let ordinary = try write("src/normal.py")
+  try check(CopilotProjectTargetPolicy.snapshot(ordinary, root: root).text == "print('ordinary')\n", "explicit project exact source snapshot")
+  refused(try write(".hidden.py"), "hidden source refused")
+  refused(try write("passwords.py"), "secret filename refused")
+  refused(try write("src/config.py", "api_key = \"abcdefghijk\""), "literal credential refused before navigation")
+  refused(try write("node_modules/normal.py"), "dependency source refused")
+  refused(try write("normal.txt"), "non-source refused")
+  let outside = URL.temporaryDirectory.appendingPathComponent("outside-" + UUID().uuidString + ".py")
+  try "outside".write(to: outside, atomically: true, encoding: .utf8); defer { try? FileManager.default.removeItem(at: outside) }
+  refused(outside, "outside selected project refused")
+  let link = root.appendingPathComponent("link.py")
+  try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+  refused(link, "symlink source refused")
+  _ = try write(".gitignore", "private/\nignored.py\n*.java\n!Keep.java\n")
+  refused(try write("private/normal.py"), "ignored parent refused")
+  refused(try write("src/ignored.py"), "nested basename exclusion respected")
+  refused(try write("Drop.java"), "wildcard exclusion respected")
+  try check((CopilotProjectTargetPolicy.target(write("Keep.java"), root: root)).lastPathComponent == "Keep.java", "ordered exclusion negation respected")
+  _ = try write("src/.copilotignore", "normal.py\n")
+  refused(ordinary, "ancestor copilot exclusion respected")
+  try FileManager.default.removeItem(at: root.appendingPathComponent("src/.copilotignore"))
+  _ = try write(".git/config", "[core]\n excludesFile = /unapproved/global\n")
+  refused(ordinary, "external exclusion configuration fails closed")
+  try FileManager.default.removeItem(at: root.appendingPathComponent(".git"))
+  _ = try write(".git", "gitdir: /unapproved/worktree-admin\n")
+  refused(ordinary, "external worktree administration fails closed")
   let uri = URL(fileURLWithPath: "/synthetic/current.py")
   let current: LSPJSON = .object(["textDocument": .object(["uri": .string(uri.absoluteString), "version": .number(3)])])
   let stale: LSPJSON = .object(["textDocument": .object(["uri": .string(uri.absoluteString), "version": .number(2)])])

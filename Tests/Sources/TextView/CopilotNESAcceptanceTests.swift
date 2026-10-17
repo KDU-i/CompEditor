@@ -870,6 +870,61 @@ import Testing
         }
         focus()
         do {
+            let splitDocument = Document()
+            let splitURI = directory.appendingPathComponent("unrequested-split.py")
+            try "Hello split".write(to: splitURI, atomically: true, encoding: .utf8)
+            splitDocument.fileURL = splitURI
+            splitDocument.makeWindowControllers()
+            let splitWindow = try #require(splitDocument.windowControllers.first?.window)
+            var requested: EditorTextView? = try #require(splitDocument.textViews.first as? EditorTextView)
+            requested!.copilotController = copilot
+            requested!.string = "Hello split"
+            requested!.semanticDocumentContext = { (splitURI, "Python") }
+            requested!.selectedRange = NSRange(location: 1, length: 0)
+            splitWindow.tabbingMode = .disallowed
+            defer { splitWindow.orderOut(nil); splitDocument.close() }
+            try settleEditorWindow(splitWindow, editor: requested!)
+            func waitSplit(_ checkpoint: String, _ condition: () -> Bool) async throws {
+                for _ in 0..<200 { if condition() { return }; try await Task.sleep(for: .milliseconds(20)) }
+                Issue.record("Unrequested split checkpoint: \(checkpoint); status=\(copilot.connectionPresentation.detail); requestedLive=\(requested != nil); rpc=\(rpcCount())"); throw CancellationError()
+            }
+            try setFixture(source: requested!.string, text: "Bye")
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            try await waitSplit("requested candidate") { requested.map { copilot.hasVisibleSuggestion(in: $0) } == true }
+            requested!.insertText("!", replacementRange: NSRange(location: requested!.string.utf16.count, length: 0))
+            try setFixture(source: requested!.string, text: "Bye")
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            try await waitSplit("requested candidate") { requested.map { copilot.hasVisibleSuggestion(in: $0) } == true }
+            let buffer = requested!.semanticBufferID, revision = requested!.semanticRevision
+            let splits = try #require(splitDocument.viewController)
+            splits.openSplitTextView(requested)
+            let untouched = try #require(splitDocument.textViews.compactMap { $0 as? EditorTextView }.first(where: { $0 !== requested }))
+            untouched.copilotController = copilot
+            untouched.semanticDocumentContext = { (splitURI, "Python") }
+            #expect(untouched.semanticBufferID == buffer && untouched.semanticRevision == revision)
+            let beforeSplitRPC = rpcCount()
+            weak var retired = requested
+            autoreleasepool { splits.closeSplitTextView(requested); requested = nil }
+            try settleEditorWindow(splitWindow, editor: untouched)
+            try await waitSplit("requested detached") { retired?.window == nil }
+            #expect(rpcCount() == beforeSplitRPC)
+            try settleEditorWindow(window, editor: view)
+            try setFixture(source: view.string, text: "Bye")
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            try await waitFor("other document prunes after unrequested split") { copilot.hasVisibleSuggestion(in: view) }
+            let json = try JSONSerialization.jsonObject(with: Data(contentsOf: sessionState)) as? [String: Any]
+            let versions = json?["versions"] as? [String: Int]
+            #expect(versions?[splitURI.absoluteString] == 2)
+            try settleEditorWindow(splitWindow, editor: untouched)
+            try setFixture(source: untouched.string, text: "Bye")
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            try await waitSplit("first sibling request") { copilot.hasVisibleSuggestion(in: untouched) }
+            let after = try JSONSerialization.jsonObject(with: Data(contentsOf: sessionState)) as? [String: Any]
+            #expect((after?["versions"] as? [String: Int])?[splitURI.absoluteString] == 2)
+            print("NES_UNREQUESTED_SPLIT_PASS originalViewDetached=true siblingNeverRequestedBeforePrune=true sharedBufferIdentity=true versionContinuity=true")
+        }
+        focus()
+        do {
             let targetDocument = Document()
             targetDocument.makeWindowControllers()
             let targetWindow = try #require(targetDocument.windowControllers.first?.window)
@@ -950,6 +1005,105 @@ import Testing
             #expect(view.semanticGhost == nil && view.string == source)
             #expect(try String(contentsOf: unknown, encoding: .utf8) == targetSource)
             print("NES_CROSS_FILE_PASS knownOpenTarget=true firstTabNavigationOnly=true secondTabAccept=true sourceUnchanged=true targetUndo=true staleTargetRejected=true existingUnknownTargetRejected=true siblingClosePreservesBaseline=true")
+        }
+        focus()
+        do {
+            let projectRoot = directory.appendingPathComponent("ordinary-project").resolvingSymlinksInPath()
+            try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+            let sourceURI = projectRoot.appendingPathComponent("source.py"), targetURI = projectRoot.appendingPathComponent("unopened.py")
+            let diskSourceText = "Hello source", sourceText = "Hello source!", targetText = "Hello unopened"
+            try diskSourceText.write(to: sourceURI, atomically: true, encoding: .utf8)
+            try targetText.write(to: targetURI, atomically: true, encoding: .utf8)
+            let project = DirectoryDocument()
+            project.fileURL = projectRoot
+            try project.read(from: projectRoot, ofType: "public.folder")
+            project.makeWindowControllers()
+            let projectWindow = try #require(project.windowControllers.first?.window)
+            projectWindow.tabbingMode = .disallowed
+            defer { projectWindow.orderOut(nil); project.close() }
+            #expect(await project.openDocument(at: sourceURI, asPlainText: true))
+            let sourceDocument = try #require(project.currentDocument as? Document)
+            let sourceView = try #require(sourceDocument.textViews.first as? EditorTextView)
+            sourceView.copilotController = copilot
+            #if DEBUG
+            sourceView.nativeCompletionTrace = { print("NES_PROJECT_TRACE " + $0) }
+            #endif
+            sourceView.semanticDocumentContext = { (sourceURI, "Python") }
+            sourceView.insertText("!", replacementRange: NSRange(location: diskSourceText.utf16.count, length: 0))
+            sourceDocument.updateChangeCount(.changeDone)  // Explicit dirty fixture outside an NSApplication event group.
+            #expect(sourceDocument.isDocumentEdited)
+            sourceView.selectedRange = NSRange(location: 1, length: 0)
+            try settleEditorWindow(projectWindow, editor: sourceView)
+            let badEdit: LSPJSON = .object(["text": .string("UNVERIFIED"), "range": try CopilotInline.rangeJSON(NSRange(location: 0, length: 5), in: targetText)])
+            let freshEdit: LSPJSON = .object(["text": .string("VERIFIED"), "range": try CopilotInline.rangeJSON(NSRange(location: 0, length: 5), in: targetText)])
+            let payload: LSPJSON = .object(["cases": .array([
+                .object(["source": .string(sourceText), "edit": badEdit, "target": .object(["uri": .string(targetURI.absoluteString), "version": .number(999)])]),
+                .object(["source": .string(targetText), "edit": freshEdit])])])
+            try JSONEncoder().encode(payload).write(to: fixture)
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            for _ in 0..<200 {
+                if copilot.hasVisibleSuggestion(in: sourceView) { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(sourceView.semanticGhost?.text.contains("再確認") == true)
+            #expect(project.currentDocument === sourceDocument)
+            let tab = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: projectWindow.windowNumber, context: nil, characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48))
+            if let panel = sourceView.semanticGhostPanel?.contentView { try capture(panel, name: "project-navigation") }
+            projectWindow.sendEvent(tab)
+            var targetView: EditorTextView?
+            for _ in 0..<250 {
+                if let document = project.currentDocument as? Document, document.fileURL == targetURI,
+                   let view = document.textViews.first as? EditorTextView, copilot.hasVisibleSuggestion(in: view) { targetView = view; break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            if targetView == nil { Issue.record("Project navigation checkpoint: status=\(copilot.connectionPresentation.detail); current=\(project.currentDocument?.fileURL?.path ?? "nil"); target=\(targetURI.path); language=\((project.currentDocument as? Document)?.textViews.first.flatMap { ($0 as? EditorTextView)?.semanticDocumentContext?().syntax } ?? "nil")") }
+            let destination = try #require(targetView)
+            #expect(destination.string == targetText && sourceDocument.textStorage.string == sourceText)
+            #expect(destination.semanticGhost?.text == "VERIFIED")
+            #expect(sourceDocument.isDocumentEdited && !sourceDocument.semanticIsClosed)
+            #expect(try String(contentsOf: sourceURI, encoding: .utf8) == diskSourceText)
+            #expect(try String(contentsOf: targetURI, encoding: .utf8) == targetText)
+            destination.selectedRange = NSRange(location: 1, length: 0)
+            projectWindow.sendEvent(tab)
+            #expect(destination.string == "VERIFIED unopened" && sourceDocument.textStorage.string == sourceText)
+            destination.undoManager?.undo()
+            #expect(destination.string == targetText)
+            let dirtyURI = projectRoot.appendingPathComponent("unsynchronized.py")
+            let dirtyDisk = "Hello disk", dirtyMemory = "Hello disk!"
+            try dirtyDisk.write(to: dirtyURI, atomically: true, encoding: .utf8)
+            #expect(await project.openDocument(at: dirtyURI, asPlainText: true))
+            let dirtyDocument = try #require(project.currentDocument as? Document)
+            let dirtyView = try #require(dirtyDocument.textViews.first as? EditorTextView)
+            dirtyView.copilotController = copilot
+            dirtyView.insertText("!", replacementRange: NSRange(location: dirtyDisk.utf16.count, length: 0))
+            dirtyDocument.updateChangeCount(.changeDone)
+            #expect(dirtyDocument.isDocumentEdited && dirtyDocument.textStorage.string == dirtyMemory)
+            // No suggestion request has ever synchronized this dirty target.
+            #expect(await project.openDocument(at: sourceURI, asPlainText: true))
+            let returning = try #require(sourceDocument.textViews.first as? EditorTextView)
+            returning.copilotController = copilot
+            returning.selectedRange = NSRange(location: 1, length: 0)
+            try settleEditorWindow(projectWindow, editor: returning)
+            let dirtyPayload: LSPJSON = .object(["cases": .array([
+                .object(["source": .string(sourceText), "edit": badEdit, "target": .object(["uri": .string(dirtyURI.absoluteString), "version": .number(999)])]),
+                .object(["source": .string(dirtyMemory), "edit": freshEdit])])])
+            try JSONEncoder().encode(dirtyPayload).write(to: fixture)
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            for _ in 0..<200 { if copilot.hasVisibleSuggestion(in: returning) { break }; try await Task.sleep(for: .milliseconds(20)) }
+            #expect(returning.semanticGhost?.text.contains("再確認") == true)
+            projectWindow.sendEvent(tab)
+            for _ in 0..<250 {
+                if project.currentDocument === dirtyDocument, let active = dirtyDocument.textViews.first as? EditorTextView,
+                   copilot.hasVisibleSuggestion(in: active) { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            let dirtyForeground = try #require(dirtyDocument.textViews.first as? EditorTextView)
+            #expect(project.currentDocument === dirtyDocument && copilot.hasVisibleSuggestion(in: dirtyForeground))
+            #expect(dirtyForeground.semanticGhost?.text == "VERIFIED" && dirtyForeground.string == dirtyMemory)
+            #expect(dirtyDocument.isDocumentEdited && sourceDocument.textStorage.string == sourceText)
+            #expect(try String(contentsOf: dirtyURI, encoding: .utf8) == dirtyDisk)
+            print("NES_PROJECT_PASS explicitOpenRoot=true unopenedNavigation=true unownedVersion999NeverApplied=true foregroundFreshRequest=true sourceUnsavedPreserved=true secondTabAdoptsFreshOnly=true targetUndo=true unsynchronizedDirtyTargetPreserved=true")
         }
         focus()
         // Use a fresh synthetic document and a private event-group manager.

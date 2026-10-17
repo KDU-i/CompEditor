@@ -1,6 +1,7 @@
 // Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
 // SPDX-License-Identifier: Apache-2.0
 import Foundation
+import Darwin
 
 /// A Sendable JSON value keeps protocol data out of AppKit and across actor boundaries.
 enum LSPJSON: Codable, Sendable, Equatable {
@@ -667,6 +668,160 @@ enum CopilotInline {
 }
 
 /// Host-side NES policy. Original implementation; VS Code is a behavioral reference only.
+/// On-demand navigation authority from an explicitly opened project. This never
+/// enumerates the project or gives its root to the provider. Only the named
+/// normal source can be opened, then requested as the foreground document.
+enum CopilotProjectTargetPolicy {
+    struct Snapshot: Sendable { let uri: URL; let text: String }
+    private enum Glob {
+        case literal(UnicodeScalar), any, star(Bool), directories
+        case characterClass(Set<UnicodeScalar>, Bool)
+    }
+    private struct Rule { let depth: Int; let basename: Bool; let directory: Bool; let allow: Bool; let pattern: [Glob] }
+    static func target(_ uri: URL, root: URL, otherLanguages: Bool = false) throws -> URL {
+        guard uri.isFileURL, uri.host == nil || uri.host == "localhost", uri.query == nil, uri.fragment == nil,
+              root.isFileURL, uri.standardizedFileURL.path == uri.path else { throw LSPError.unsupportedEdit }
+        let original = root.standardizedFileURL, canonical = original.resolvingSymlinksInPath()
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+        let broad = ["/", home.path] + ["Desktop", "Documents", "Downloads", "Library"].map { home.appendingPathComponent($0).path }
+        guard !broad.contains(canonical.path), !canonical.pathComponents.contains(where: { $0.hasPrefix(".") }) else { throw LSPError.unsupportedEdit }
+        let prefix = uri.path.hasPrefix(original.path + "/") ? original : canonical
+        guard uri.path.hasPrefix(prefix.path + "/") else { throw LSPError.unsupportedEdit }
+        let parts = String(uri.path.dropFirst(prefix.path.count + 1)).split(separator: "/").map(String.init)
+        let excluded = Set(["node_modules", "vendor", "venv", "__pycache__", "build", "dist", "target", "out", "coverage", "Pods", "Carthage", "DerivedData"])
+        guard !parts.isEmpty, !parts.contains(where: { $0.hasPrefix(".") || excluded.contains($0) }),
+              !parts.contains(where: { $0.range(of: #"(?i)(^|[_\-.])(secrets?|credentials?|passwords?|tokens?|private[_-]?keys?)([_\-.]|$)"#, options: .regularExpression) != nil }) else { throw LSPError.unsupportedEdit }
+        let url = parts.reduce(canonical) { $0.appendingPathComponent($1) }
+        let extensions = Set(["py", "java", "ts", "tsx", "js", "jsx", "swift", "c", "h", "cpp", "hpp", "cc", "cs", "go", "rs", "rb", "php", "kt", "kts", "scala", "m", "mm", "lua", "pl", "r", "dart", "vue", "svelte", "ex", "exs", "erl", "clj", "cljs", "fs", "fsx"])
+        let language = CopilotLanguage.resolve(url: url, syntax: "")
+        guard extensions.contains(url.pathExtension.lowercased()), otherLanguages || language == "python" || language == "java" else { throw LSPError.unsupportedEdit }
+        // Check only exact ancestor metadata, never list directory contents.
+        for depth in 1...parts.count {
+            let item = parts.prefix(depth).reduce(canonical) { $0.appendingPathComponent($1) }
+            let values = try item.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey, .isRegularFileKey])
+            guard values.isSymbolicLink != true, depth == parts.count ? values.isRegularFile == true : values.isDirectory == true else { throw LSPError.unsupportedEdit }
+        }
+        // A worktree may store additional exclusions outside the selected root.
+        // Do not follow that administrative pointer without authority to it.
+        let git = canonical.appendingPathComponent(".git")
+        if FileManager.default.fileExists(atPath: git.path) {
+            let metadata = try git.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard metadata.isDirectory == true, metadata.isSymbolicLink != true else { throw LSPError.unsupportedEdit }
+            if let config = try read([".git", "config"], root: canonical, limit: 65_536) {
+                guard let text = String(data: config, encoding: .utf8),
+                      text.range(of: #"(?im)^\s*\[include|^\s*excludesfile\s*="#, options: .regularExpression) == nil else { throw LSPError.unsupportedEdit }
+            }
+        }
+        var rules: [Rule] = []
+        if let data = try read([".git", "info", "exclude"], root: canonical, limit: 65_536) { rules += try parse(data, depth: 0) }
+        for depth in 0..<parts.count {
+            for name in [".gitignore", ".ignore", ".copilotignore"] {
+                if let data = try read(Array(parts.prefix(depth)) + [name], root: canonical, limit: 65_536) { rules += try parse(data, depth: depth) }
+            }
+            let current = Array(parts.prefix(depth + 1)), directory = depth + 1 < parts.count
+            var ignored = false
+            for rule in rules where !rule.directory || directory {
+                let relative = current.dropFirst(rule.depth)
+                guard !relative.isEmpty else { continue }
+                let text = rule.basename ? String(relative.last!) : relative.joined(separator: "/")
+                if matches(rule.pattern, text: text) { ignored = !rule.allow }
+            }
+            guard !ignored else { throw LSPError.unsupportedEdit }
+        }
+        return url
+    }
+    static func snapshot(_ uri: URL, root: URL, otherLanguages: Bool = false) throws -> Snapshot {
+        let url = try target(uri, root: root, otherLanguages: otherLanguages)
+        let canonical = root.standardizedFileURL.resolvingSymlinksInPath()
+        let parts = String(url.path.dropFirst(canonical.path.count + 1)).split(separator: "/").map(String.init)
+        guard let data = try read(parts, root: canonical, limit: 4_000_000), let text = String(data: data, encoding: .utf8),
+              !text.contains("\0"), !containsSecret(text) else { throw LSPError.unsupportedEdit }
+        return Snapshot(uri: url, text: text)
+    }
+    static func containsSecret(_ text: String) -> Bool {
+        text.range(of: #"(?m)BEGIN [A-Z ]*PRIVATE KEY|AKIA[A-Z0-9]{16}|(?i:(?:api[_-]?key|secret|password|access[_-]?token)\s*[:=]\s*["'][^"'\s]{8,}["'])"#, options: .regularExpression) != nil
+    }
+    /// Descriptor-relative reads reject symlinked ancestors, nonregular files,
+    /// oversized metadata/source, and changes during the read.
+    private static func read(_ parts: [String], root: URL, limit: Int) throws -> Data? {
+        var fd = Darwin.open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { throw LSPError.unsupportedEdit }
+        defer { Darwin.close(fd) }
+        for part in parts.dropLast() {
+            let next = openat(fd, part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            if next < 0, errno == ENOENT { return nil }
+            guard next >= 0 else { throw LSPError.unsupportedEdit }
+            Darwin.close(fd); fd = next
+        }
+        let file = openat(fd, parts.last!, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        if file < 0, errno == ENOENT { return nil }
+        guard file >= 0 else { throw LSPError.unsupportedEdit }
+        let handle = FileHandle(fileDescriptor: file, closeOnDealloc: true)
+        var before = stat(), after = stat()
+        guard fstat(file, &before) == 0, before.st_mode & S_IFMT == S_IFREG, before.st_size <= limit else { throw LSPError.unsupportedEdit }
+        let data = try handle.read(upToCount: limit + 1) ?? Data()
+        guard data.count == before.st_size, data.count <= limit, fstat(file, &after) == 0, before.st_ino == after.st_ino, before.st_size == after.st_size,
+              before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec, before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec else { throw LSPError.unsupportedEdit }
+        return data
+    }
+    private static func parse(_ data: Data, depth: Int) throws -> [Rule] {
+        guard let text = String(data: data, encoding: .utf8) else { throw LSPError.unsupportedEdit }
+        return try text.components(separatedBy: .newlines).compactMap { raw in
+            var line = raw.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty, !line.hasPrefix("#") else { return nil }
+            let allow = line.hasPrefix("!"); if allow { line.removeFirst() }
+            let anchored = line.hasPrefix("/"); if anchored { line.removeFirst() }
+            let directory = line.hasSuffix("/"); if directory { line.removeLast() }
+            guard !line.isEmpty, line.utf16.count <= 4096 else { throw LSPError.unsupportedEdit }
+            let values = Array(line.precomposedStringWithCanonicalMapping.unicodeScalars)
+            var tokens: [Glob] = [], i = 0
+            while i < values.count {
+                let c = values[i]
+                if c == "\\" {
+                    i += 1; guard i < values.count else { throw LSPError.unsupportedEdit }; tokens.append(.literal(values[i]))
+                } else if c == "*" {
+                    let double = i + 1 < values.count && values[i + 1] == "*"
+                    if double { i += 1 }
+                    if double, i + 1 < values.count, values[i + 1] == "/" { tokens.append(.directories); i += 1 }
+                    else { tokens.append(.star(double)) }
+                } else if c == "?" { tokens.append(.any) }
+                else if c == "[" {
+                    i += 1; var negate = false, members = Set<UnicodeScalar>()
+                    if i < values.count, values[i] == "!" || values[i] == "^" { negate = true; i += 1 }
+                    while i < values.count, values[i] != "]" {
+                        if i + 2 < values.count, values[i + 1] == "-", values[i + 2] != "]" {
+                            guard values[i].value <= values[i + 2].value, values[i + 2].value - values[i].value <= 256 else { throw LSPError.unsupportedEdit }
+                            for value in values[i].value...values[i + 2].value { if let scalar = UnicodeScalar(value) { members.insert(scalar) } }; i += 3
+                        } else { members.insert(values[i]); i += 1 }
+                    }
+                    guard i < values.count, !members.isEmpty else { throw LSPError.unsupportedEdit }; tokens.append(.characterClass(members, negate))
+                } else { tokens.append(.literal(c)) }
+                i += 1
+            }
+            return Rule(depth: depth, basename: !anchored && !line.contains("/"), directory: directory, allow: allow, pattern: tokens)
+        }
+    }
+    private static func matches(_ tokens: [Glob], text: String) -> Bool {
+        let characters = Array(text.precomposedStringWithCanonicalMapping.unicodeScalars)
+        var previous = [Bool](repeating: false, count: characters.count + 1); previous[0] = true
+        for token in tokens {
+            var next = [Bool](repeating: false, count: previous.count), seen = false
+            for j in 0...characters.count {
+                switch token {
+                    case .star(let slash): next[j] = previous[j] || (j > 0 && next[j - 1] && (slash || characters[j - 1] != "/"))
+                    case .directories:
+                        seen = seen || previous[j]; next[j] = previous[j] || (j > 0 && characters[j - 1] == "/" && seen)
+                    case .literal(let c): next[j] = j > 0 && previous[j - 1] && characters[j - 1] == c
+                    case .any: next[j] = j > 0 && previous[j - 1] && characters[j - 1] != "/"
+                    case .characterClass(let set, let negate): next[j] = j > 0 && previous[j - 1] && characters[j - 1] != "/" && (set.contains(characters[j - 1]) != negate)
+                }
+            }
+            previous = next
+        }
+        return previous.last == true
+    }
+}
+
 enum CopilotNextEditPolicy {
     /// Derive independent changes from the public API's single outer range.
     /// Tokens compare exact UTF-16 (Swift Character equality normalizes accents).

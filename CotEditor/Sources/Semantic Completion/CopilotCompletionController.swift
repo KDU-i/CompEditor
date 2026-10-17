@@ -75,7 +75,13 @@ enum CopilotBundledServer {
     private weak var view: EditorTextView?
     private final class RequestedEditor {
         weak var editor: EditorTextView?
-        init(_ editor: EditorTextView) { self.editor = editor }
+        weak var storage: NSTextStorage?
+        weak var document: Document?
+        let bufferID: UUID
+        init(_ editor: EditorTextView) {
+            self.editor = editor; self.storage = editor.textStorage; self.bufferID = editor.semanticBufferID
+            self.document = (editor.window?.windowController as? DocumentWindowController)?.fileDocument as? Document
+        }
     }
     private struct ForeignTarget {
         weak var editor: EditorTextView?
@@ -87,9 +93,23 @@ enum CopilotBundledServer {
     private var requestedEditors: [String: [RequestedEditor]] = [:]
     private func pruneRequestedEditors(closing window: NSWindow? = nil) {
         for key in Array(requestedEditors.keys) {
-            let live = requestedEditors[key, default: []].filter {
-                guard let editor = $0.editor else { return false }
-                return window == nil || editor.window !== window
+            let previous = requestedEditors[key, default: []]
+            var live: [RequestedEditor] = []
+            for owner in previous where owner.document?.semanticIsClosed != true {
+                let siblings = owner.storage?.layoutManagers.flatMap(\.textContainers).compactMap { $0.textView as? EditorTextView } ?? []
+                for editor in siblings where editor.window != nil && (window == nil || editor.window !== window) {
+                    let context = editor.semanticDocumentContext?()
+                    let language = CopilotLanguage.resolve(url: context?.url, syntax: context?.syntax ?? "")
+                    let uri = context?.url ?? URL.temporaryDirectory.appendingPathComponent("compeditor-\(editor.semanticBufferID).\(language)")
+                    if uri.absoluteString == key, !live.contains(where: { $0.editor === editor }) { live.append(RequestedEditor(editor)) }
+                }
+                if live.isEmpty, let document = owner.document, !document.semanticIsClosed,
+                   document.fileURL?.absoluteString == key || (document.fileURL == nil && URL(string: key)?.lastPathComponent.hasPrefix("compeditor-\(owner.bufferID).") == true) {
+                    // A folder document can keep an owned document open without
+                    // an attached editor. Do not confuse its model lifetime with
+                    // a particular requested split view's lifetime.
+                    live.append(owner)
+                }
             }
             if live.isEmpty {
                 requestedEditors.removeValue(forKey: key)
@@ -100,9 +120,17 @@ enum CopilotBundledServer {
     private final class NextEditResponse {
         var value: Result<LSPJSON, any Error>?
     }
+    private struct ProjectTarget {
+        weak var project: DirectoryDocument?
+        let root: URL
+        let uri: URL
+    }
+    private var projectNavigation: Task<Void, Never>?
+    private var projectNavigationID = UUID()
     private struct Candidate {
         let reference: Int; let item: LSPJSON; var local: LSPJSON
         var edit: LSPText.Edit; var plan: CopilotInline.Plan?; let nextEdit: Bool
+        var projectTarget: ProjectTarget? = nil
         var target: ForeignTarget? = nil
         var hunks: [LSPText.Edit]? = nil
     }
@@ -249,6 +277,16 @@ enum CopilotBundledServer {
                         case NSApplication.didResignActiveNotification: reason = .appInactive
                         default: reason = .windowChanged
                     }
+                    if let editor = self.view, self.work != nil, let queued = self.fingerprint,
+                       queued.0 == editor.semanticBufferID, LSPText.sameText(queued.1, editor.string),
+                       queued.2 == editor.selectedRange().location, self.eligible(editor) == queued.3,
+                       reason == .viewportChanged || note.name == NSWindow.didResizeNotification || note.name == NSWindow.didMoveNotification || (reason == .selectionChanged && note.object as? EditorTextView === editor) {
+                        // Pure layout and duplicate selection notifications do not
+                        // change a pending request's text/caret/version baseline.
+                        // Its immutable response checks still decide eligibility.
+                        self.viewportOrigin = editor.enclosingScrollView?.contentView.bounds.origin
+                        return
+                    }
                     if reason == .viewportChanged || note.name == NSWindow.didResizeNotification || note.name == NSWindow.didMoveNotification {
                         if let editor = self.view, self.current(in: editor), self.suggestions?.candidates[self.suggestions!.index].nextEdit == true {
                             self.viewportOrigin = editor.enclosingScrollView?.contentView.bounds.origin
@@ -281,6 +319,9 @@ enum CopilotBundledServer {
             })
         }
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in MainActor.assumeIsolated { self.shutdownForApplicationExit() } })
+        observers.append(NotificationCenter.default.addObserver(forName: Document.semanticDidClose, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pruneRequestedEditors() }
+        })
         observers.append(NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] note in
             let window = note.object as? NSWindow
             MainActor.assumeIsolated {
@@ -436,6 +477,9 @@ enum CopilotBundledServer {
             editor.nativeCompletionTrace?("suggestion invalidated reason=\(reason) active=\(NSApp.isActive) key=\(NSApp.keyWindow === editor.window) responder=\(editor.window?.firstResponder === editor) selected=\(editor.selectedRange()) revision=\(editor.semanticRevision) hasState=\(suggestions != nil)")
         }
         #endif
+        if reason == .replacedRequest || reason == .textChanged || !enabled || !consented {
+            projectNavigation?.cancel(); projectNavigation = nil; projectNavigationID = UUID()
+        }
         if reason != .replacedRequest { continuingAcceptance = false }
         selectionRequest?.cancel(); selectionRequest = nil
         if let ticket = diagnosticRequest { diagnose(ticket, .cancelled, reason: reason); diagnosticRequest = nil }
@@ -640,6 +684,7 @@ enum CopilotBundledServer {
     func typed(in editor: EditorTextView, previous: String) {
         guard !editor.string.utf16.elementsEqual(previous.utf16), !applying else { return }
         selectionTriggers.edited(editor.semanticBufferID, at: ProcessInfo.processInfo.systemUptime)
+        projectNavigation?.cancel(); projectNavigation = nil; projectNavigationID = UUID()
         undoSuppressedEditor = nil; dismissedEditor = nil; continuingAcceptance = false
         if rebaseNextEdit(in: editor) { return }
         if eligible(editor) != nil, previous.utf16.count <= 1_000_000 {
@@ -768,7 +813,7 @@ enum CopilotBundledServer {
                     self.diagnose(ticket, .excluded, reason: .staleVersion); return
                 }
                 let synchronizedDocuments = await client.copilotDocuments()
-                @MainActor func parse(_ values: [LSPJSON], next: Bool) -> [Candidate] {
+                @MainActor func parse(_ values: [LSPJSON], next: Bool) async -> [Candidate] {
                     if values.count > 20 { self.diagnose(rpcTicket, .excluded, reason: .candidateLimit, count: values.count - 20) }
                     var parsed: [Candidate] = []
                     for item in values.prefix(20) {
@@ -778,6 +823,22 @@ enum CopilotBundledServer {
                             switch CopilotInline.nextEditTarget(item, uri: uri, version: requestedVersion) {
                                 case .current: break
                                 case .foreignDocument:
+                                    // An unowned range has no trustworthy original text/version.
+                                    // Offer navigation inside the explicitly opened project only;
+                                    // the target is re-requested after becoming the active document.
+                                    if let key = item["textDocument"]["uri"].string, synchronizedDocuments[key] == nil,
+                                       let targetURI = URL(string: key),
+                                       let project = (editor.window?.windowController as? DocumentWindowController)?.semanticProjectDocument,
+                                       let root = project.fileURL {
+                                        let otherLanguages = self.otherLanguages
+                                        let allowed = await Task.detached { try? CopilotProjectTargetPolicy.target(targetURI, root: root, otherLanguages: otherLanguages) }.value
+                                        guard let allowed, !Task.isCancelled, self.epoch == token else { continue }
+                                        self.reference += 1
+                                        parsed.append(Candidate(reference: self.reference, item: item, local: item,
+                                            edit: .init(range: NSRange(location: caret, length: 0), text: "", primary: true), plan: nil, nextEdit: true,
+                                            projectTarget: ProjectTarget(project: project, root: root, uri: allowed)))
+                                        continue
+                                    }
                                     guard let key = item["textDocument"]["uri"].string,
                                           let document = synchronizedDocuments[key], let targetURI = URL(string: key),
                                           let targetEditor = self.requestedEditors[key]?.reversed().compactMap(\.editor).first(where: {
@@ -810,7 +871,7 @@ enum CopilotBundledServer {
                     self.diagnose(ticket, .excluded, reason: .malformedResponse)
                     self.status = "AI候補の応答形式を処理できませんでした。"; return
                 }
-                var candidates = parse(items, next: isNextEdit)
+                var candidates = await parse(items, next: isNextEdit)
                 if !isNextEdit, self.automaticPolicy.needsNextEditFallback(displayableInlineCount: candidates.count, serverAvailable: !self.nextEditsUnavailable) {
                     let fallback = self.diagnostics.ticket(.fallbackNextEdit)
                     rpcTicket = fallback; self.diagnosticRequest = fallback
@@ -831,8 +892,11 @@ enum CopilotBundledServer {
                         self.diagnose(fallback, .excluded, reason: .malformedResponse)
                         self.status = "NESの応答形式を処理できませんでした。"; return
                     }
-                    candidates = parse(items, next: true)
+                    candidates = await parse(items, next: true)
                 }
+                guard !Task.isCancelled, self.epoch == token, editor.string.utf16.elementsEqual(snapshot.utf16),
+                      editor.semanticRevision == revision, editor.selectedRange() == NSRange(location: caret, length: 0),
+                      editor.semanticDocumentContext?().url == file, self.eligible(editor) == languageId else { return }
                 guard !candidates.isEmpty else {
                     self.diagnose(rpcTicket, .excluded, reason: .noCandidates)
                     if !nextEdit, !isNextEdit { self.diagnose(rpcTicket, .skipped, reason: items.isEmpty ? .nextEditDisabled : .inlineNonempty) }
@@ -882,7 +946,7 @@ enum CopilotBundledServer {
         guard automaticSuggestions || automaticNextEdits, let owner = client,
               let language = eligible(editor) else { return }
         let uri = editor.semanticDocumentContext?().url ?? URL.temporaryDirectory.appendingPathComponent("compeditor-\(editor.semanticBufferID).\(language)")
-        guard requestedEditors[uri.absoluteString]?.contains(where: { $0.editor === editor }) == true else { return }
+        guard requestedEditors[uri.absoluteString]?.contains(where: { $0.editor === editor || $0.storage === editor.textStorage }) == true else { return }
         let snapshot = editor.string, revision = editor.semanticRevision
         Task { @MainActor [weak self, weak editor] in
             guard let self, let editor, self.client === owner,
@@ -896,7 +960,7 @@ enum CopilotBundledServer {
         guard var state = suggestions, view === editor, state.candidates[state.index].nextEdit,
               eligible(editor) == state.languageId, editor.semanticDocumentContext?().url == state.file else { return false }
         state.candidates = state.candidates.compactMap { candidate in
-            if candidate.target != nil { return candidate }
+            if candidate.target != nil || candidate.projectTarget != nil { return candidate }
             guard let hunks = CopilotNextEditPolicy.rebasedHunks(candidate.hunks ?? [candidate.edit], from: state.snapshot, to: editor.string),
                   let edit = CopilotNextEditPolicy.combined(hunks, in: editor.string) else { return nil }
             var result = candidate; result.edit = edit; result.hunks = hunks; return result
@@ -911,10 +975,10 @@ enum CopilotBundledServer {
         guard current(in: editor), var state = suggestions else { return }
         let candidate = state.candidates[state.index]
         let language = LSPLanguage(rawValue: state.languageId) ?? .python
-        let old = candidate.nextEdit && candidate.target == nil ? (state.snapshot as NSString).substring(with: candidate.edit.range) : nil
-        let targetText = candidate.target.map { "→ \($0.uri.lastPathComponent)\n\(candidate.edit.text)" }
+        let old = candidate.nextEdit && candidate.target == nil && candidate.projectTarget == nil ? (state.snapshot as NSString).substring(with: candidate.edit.range) : nil
+        let targetText = candidate.projectTarget.map { "→ \($0.uri.lastPathComponent)\nTab: 文書へ移動して候補を再確認" } ?? candidate.target.map { "→ \($0.uri.lastPathComponent)\n\(candidate.edit.text)" }
         applying = true
-        editor.semanticGhost = SemanticGhostPreview(text: targetText ?? candidate.plan?.text ?? candidate.edit.text, snapshot: state.snapshot, caret: state.caret, fileURL: state.file, language: language, copilot: true, languageId: state.languageId, parts: candidate.plan?.parts ?? [], nextEdit: candidate.nextEdit, replacementRange: candidate.target == nil ? candidate.edit.range : NSRange(location: state.caret, length: 0), replacedText: old, revision: state.revision, replacementHunks: candidate.target == nil ? candidate.hunks ?? [] : [])
+        editor.semanticGhost = SemanticGhostPreview(text: targetText ?? candidate.plan?.text ?? candidate.edit.text, snapshot: state.snapshot, caret: state.caret, fileURL: state.file, language: language, copilot: true, languageId: state.languageId, parts: candidate.plan?.parts ?? [], nextEdit: candidate.nextEdit, replacementRange: candidate.target == nil && candidate.projectTarget == nil ? candidate.edit.range : NSRange(location: state.caret, length: 0), replacedText: old, revision: state.revision, replacementHunks: candidate.target == nil && candidate.projectTarget == nil ? candidate.hunks ?? [] : [])
         applying = false
         guard editor.semanticGhostIsCurrent else {
             if let ticket = diagnosticRequest { diagnose(ticket, .excluded, reason: .ghostNotCurrent) }
@@ -949,7 +1013,7 @@ enum CopilotBundledServer {
     }
     func jumpToNextEdit(in editor: EditorTextView) {
         guard current(in: editor), var state = suggestions, state.candidates[state.index].nextEdit else { return }
-        if state.candidates[state.index].target != nil { _ = accept(in: editor); return }
+        if state.candidates[state.index].target != nil || state.candidates[state.index].projectTarget != nil { _ = accept(in: editor); return }
         applying = true
         editor.selectedRange = NSRange(location: state.candidates[state.index].edit.range.location, length: 0)
         editor.scrollRangeToVisible(editor.selectedRange()); applying = false
@@ -959,6 +1023,54 @@ enum CopilotBundledServer {
     private func accept(in editor: EditorTextView) -> Bool {
         guard current(in: editor), var state = suggestions, editor.semanticGhost?.copilot == true, editor.semanticGhostIsCurrent else { return false }
         let candidate = state.candidates[state.index]
+        if let target = candidate.projectTarget {
+            guard let project = target.project,
+                  (editor.window?.windowController as? DocumentWindowController)?.semanticProjectDocument === project,
+                  project.fileURL == target.root else { invalidate(); return false }
+            invalidate()
+            projectNavigation?.cancel()
+            let identifier = UUID(); projectNavigationID = identifier
+            let otherLanguages = self.otherLanguages
+            let sourceDocument = project.currentDocument
+            projectNavigation = Task { @MainActor [weak self, weak project, weak editor] in
+                guard let self, let project, let editor else { return }
+                defer { if self.projectNavigationID == identifier { self.projectNavigation = nil } }
+                do {
+                    let snapshot = try await Task.detached { try CopilotProjectTargetPolicy.snapshot(target.uri, root: target.root, otherLanguages: otherLanguages) }.value
+                    try Task.checkCancellation()
+                    guard self.enabled, self.consented, self.projectNavigationID == identifier,
+                          project.fileURL == target.root, project.currentDocument === sourceDocument,
+                          editor.window?.isKeyWindow == true, editor.window?.firstResponder === editor,
+                          editor.semanticRevision == state.revision, LSPText.sameText(editor.string, state.snapshot),
+                          !editor.hasMarkedText(),
+                          (editor.window?.windowController as? DocumentWindowController)?.semanticProjectDocument === project else { return }
+                    // Opening uses the normal project model, preserving any existing
+                    // unsaved buffer. It never applies the unowned server edit.
+                    guard await project.openDocument(at: snapshot.uri, asPlainText: true), !Task.isCancelled,
+                          self.projectNavigationID == identifier, project.fileURL == target.root,
+                          let document = project.currentDocument as? Document, document.fileURL == snapshot.uri,
+                          let destination = document.textViews.first as? EditorTextView,
+                          let window = destination.window, window.isVisible, window.isKeyWindow, NSApp.isActive,
+                          !CopilotProjectTargetPolicy.containsSecret(destination.string) else { return }
+                    destination.copilotController = self
+                    #if DEBUG
+                    destination.nativeCompletionTrace = editor.nativeCompletionTrace
+                    #endif
+                    window.makeFirstResponder(destination)
+                    // Revalidate exclusions after asynchronous open. Source content
+                    // is synchronized only by a fresh request on the foreground view.
+                    _ = try await Task.detached { try CopilotProjectTargetPolicy.target(target.uri, root: target.root, otherLanguages: otherLanguages) }.value
+                    try Task.checkCancellation()
+                    guard self.projectNavigationID == identifier, project.currentDocument === document,
+                          NSApp.isActive, window.isKeyWindow, window.firstResponder === destination,
+                          destination.string.utf8.count <= 4_000_000, !CopilotProjectTargetPolicy.containsSecret(destination.string),
+                          destination.semanticDocumentContext?().url == snapshot.uri else { return }
+                    self.requestSuggestions(in: destination, explicit: true, nextEdit: true)
+                } catch is CancellationError { return }
+                catch { if self.projectNavigationID == identifier { self.status = "対象文書の安全な確認に失敗しました。文書を開いてから候補を再取得してください。" } }
+            }
+            return true
+        }
         if let target = candidate.target {
             // The first Tab only focuses an already-requested open document.
             // Never read/open a server-selected path or apply two files at once.
@@ -1041,6 +1153,7 @@ enum CopilotBundledServer {
         if current(in: editor), flags == .option, event.keyCode == 30 { cycle(1, in: editor); return true }
         if current(in: editor), flags == .option, event.keyCode == 33 { cycle(-1, in: editor); return true }
         if flags.isEmpty, event.keyCode == 53 {
+            projectNavigation?.cancel(); projectNavigation = nil; projectNavigationID = UUID()
             if let state = suggestions, state.candidates[state.index].nextEdit,
                editor.isNativeCompletionVisible || SemanticCompletionController.shared.isSuggestionListVisible(in: editor) { return false }
             let visible = hasVisibleSuggestion(in: editor)

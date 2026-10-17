@@ -99,8 +99,23 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     // The controller supplies live identity after Save As and syntax changes.
     var semanticDocumentContext: (() -> (url: URL?, syntax: String))?
     private var semanticTrackingArea: NSTrackingArea?
-    let semanticBufferID = UUID()
-    var semanticRevision = 0
+    private final class SemanticBufferState {
+        let id = UUID()
+        var revision = 0
+    }
+    private static let semanticBuffers = NSMapTable<NSTextStorage, SemanticBufferState>.weakToStrongObjects()
+    private let detachedSemanticBuffer = SemanticBufferState()
+    private var semanticBuffer: SemanticBufferState {
+        guard let storage = self.textStorage else { return detachedSemanticBuffer }
+        if let state = Self.semanticBuffers.object(forKey: storage) { return state }
+        let state = SemanticBufferState(); Self.semanticBuffers.setObject(state, forKey: storage)
+        return state
+    }
+    var semanticBufferID: UUID { semanticBuffer.id }
+    var semanticRevision: Int {
+        get { semanticBuffer.revision }
+        set { semanticBuffer.revision = newValue }
+    }
     // One owner for both actual AppKit events and completion/viewport callbacks.
     lazy var copilotController: CopilotCompletionController = .shared
     var semanticDiagnostics: SemanticDiagnostics? { didSet { needsDisplay = true; SemanticCompletionController.shared.cancelHover() } }

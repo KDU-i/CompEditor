@@ -680,6 +680,8 @@ extension NSTextView: EditorCounter.Source { }
     
     
     override func close() {
+        self.semanticIsClosed = true
+        NotificationCenter.default.post(name: Self.semanticDidClose, object: self)
         
         super.close()
         
@@ -691,6 +693,9 @@ extension NSTextView: EditorCounter.Source { }
         self.urlDetector?.cancel()
         self.lineEndingScanner.cancel()
     }
+
+    static let semanticDidClose = Notification.Name("CompEditorSemanticDocumentDidClose")
+    private(set) var semanticIsClosed = false
     
     
     override func printOperation(withSettings printSettings: [NSPrintInfo.AttributeKey: Any]) throws -> NSPrintOperation {
