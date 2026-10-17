@@ -84,7 +84,19 @@ enum CopilotBundledServer {
         let uri: URL
         let languageId: String
     }
-    private var requestedEditors: [String: RequestedEditor] = [:]
+    private var requestedEditors: [String: [RequestedEditor]] = [:]
+    private func pruneRequestedEditors(closing window: NSWindow? = nil) {
+        for key in Array(requestedEditors.keys) {
+            let live = requestedEditors[key, default: []].filter {
+                guard let editor = $0.editor else { return false }
+                return window == nil || editor.window !== window
+            }
+            if live.isEmpty {
+                requestedEditors.removeValue(forKey: key)
+                if let uri = URL(string: key), let owner = client { Task { await owner.close(uri) } }
+            } else { requestedEditors[key] = live }
+        }
+    }
     private final class NextEditResponse {
         var value: Result<LSPJSON, any Error>?
     }
@@ -274,11 +286,7 @@ enum CopilotBundledServer {
             MainActor.assumeIsolated {
                 guard let self, let window else { return }
                 if window === self.view?.window { self.invalidate() }
-                let closing = self.requestedEditors.filter { $0.value.editor == nil || $0.value.editor?.window === window }.map(\.key)
-                for key in closing {
-                    self.requestedEditors.removeValue(forKey: key)
-                    if let uri = URL(string: key), let owner = self.client { Task { await owner.close(uri) } }
-                }
+                self.pruneRequestedEditors(closing: window)
             }
         })
         if enabled, executable != nil { restoreAuthentication() }
@@ -673,8 +681,12 @@ enum CopilotBundledServer {
         let token = epoch
         let tabSize = editor.tabWidth, insertSpaces = editor.isAutomaticTabExpansionEnabled
         let uri = file ?? URL.temporaryDirectory.appendingPathComponent("compeditor-\(editor.semanticBufferID).\(languageId)")
-        requestedEditors = requestedEditors.filter { $0.value.editor != nil }
-        requestedEditors[uri.absoluteString] = RequestedEditor(editor)
+        for key in Array(requestedEditors.keys) where key != uri.absoluteString {
+            requestedEditors[key]?.removeAll { $0.editor === editor }
+        }
+        pruneRequestedEditors()
+        requestedEditors[uri.absoluteString, default: []].removeAll { $0.editor === editor }
+        requestedEditors[uri.absoluteString, default: []].append(RequestedEditor(editor))
         let selected = SemanticCompletionController.shared.selectedSuggestion(in: editor)
         let selectedContext = selected.flatMap { edit in try? LSPJSON.object(["range": CopilotInline.rangeJSON(edit.range, in: snapshot), "text": .string(edit.text)]) }
         status = explicit ? "AI候補を手動で取得しています…" : "AI候補を取得しています…"
@@ -768,7 +780,9 @@ enum CopilotBundledServer {
                                 case .foreignDocument:
                                     guard let key = item["textDocument"]["uri"].string,
                                           let document = synchronizedDocuments[key], let targetURI = URL(string: key),
-                                          let targetEditor = self.requestedEditors[key]?.editor,
+                                          let targetEditor = self.requestedEditors[key]?.reversed().compactMap(\.editor).first(where: {
+                                              $0.window?.isVisible == true && LSPText.sameText($0.string, document.text)
+                                          }),
                                           targetEditor.semanticDocumentContext?().url == targetURI,
                                           LSPText.sameText(targetEditor.string, document.text),
                                           CopilotInline.nextEditTarget(item, uri: targetURI, version: document.version) == .current,
@@ -866,9 +880,9 @@ enum CopilotBundledServer {
     }
     private func synchronizeObservedText(in editor: EditorTextView) {
         guard automaticSuggestions || automaticNextEdits, let owner = client,
-              let language = eligible(editor),
-              let key = requestedEditors.first(where: { $0.value.editor === editor })?.key,
-              let uri = URL(string: key) else { return }
+              let language = eligible(editor) else { return }
+        let uri = editor.semanticDocumentContext?().url ?? URL.temporaryDirectory.appendingPathComponent("compeditor-\(editor.semanticBufferID).\(language)")
+        guard requestedEditors[uri.absoluteString]?.contains(where: { $0.editor === editor }) == true else { return }
         let snapshot = editor.string, revision = editor.semanticRevision
         Task { @MainActor [weak self, weak editor] in
             guard let self, let editor, self.client === owner,

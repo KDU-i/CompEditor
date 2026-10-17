@@ -55,7 +55,22 @@ import Foundation
    check(LSPText.sameText(applying(CopilotNextEditPolicy.hunks(edit, in: before), to: before), after), "deterministic Unicode hunk roundtrip")
   }
   let large = String(repeating: "x", count: 3000)
-  check(CopilotNextEditPolicy.hunks(.init(range: NSRange(location: 0, length: 3000), text: String(repeating: "y", count: 3000), primary: true), in: large).count == 1, "large diff has bounded contiguous fallback")
+  check(CopilotNextEditPolicy.hunks(.init(range: NSRange(location: 0, length: 3000), text: String(repeating: "y", count: 3000), primary: true), in: large).count == 1, "complete rewrite has one actual changed region")
+  let longIsland = String(repeating: "same😀 ", count: 4000) + "needle😀" + String(repeating: "same😀 ", count: 4000)
+  let longBefore = "old " + longIsland + "old", longAfter = "new " + longIsland + "new"
+  let longEdit = LSPText.Edit(range: NSRange(location: 0, length: longBefore.utf16.count), text: longAfter, primary: true)
+  let longHunks = CopilotNextEditPolicy.hunks(longEdit, in: longBefore)
+  check(longHunks.count == 2, "large single-line edit over former 2048/product caps keeps independent changes")
+  check(LSPText.sameText(applying(longHunks, to: longBefore), longAfter), "large hunk reconstruction preserves exact Unicode")
+  let changedIsland = longBefore.replacingOccurrences(of: "needle😀", with: "edited🌱")
+  let shiftedLong = CopilotNextEditPolicy.rebasedHunks(longHunks, from: longBefore, to: changedIsland)!
+  check(LSPText.sameText(applying(shiftedLong, to: changedIsland), longAfter.replacingOccurrences(of: "needle😀", with: "edited🌱")), "large candidate preserves edited Unicode island")
+  let multilineIsland = (0..<4000).map { "unchangedLine\($0)()\r\n" }.joined()
+  let multilineBefore = "old\r\n" + multilineIsland + "old", multilineAfter = "new\r\n" + multilineIsland + "new"
+  let multilineHunks = CopilotNextEditPolicy.hunks(.init(range: NSRange(location: 0, length: multilineBefore.utf16.count), text: multilineAfter, primary: true), in: multilineBefore)
+  check(multilineHunks.count == 2 && LSPText.sameText(applying(multilineHunks, to: multilineBefore), multilineAfter), "large multiline CRLF edit keeps separated changes")
+  let exhausted = CopilotNextEditPolicy.hunks(longEdit, in: longBefore, budget: .zero)
+  check(LSPText.sameText(applying(exhausted, to: longBefore), longAfter), "actual computation-budget exhaustion still reconstructs safely")
   let unicode = CopilotNextEditPolicy.minimized(.init(range: NSRange(location: 0, length: 4), text: "😀ab", primary: true), in: "😀ac")
   check(unicode.range == NSRange(location: 3, length: 1) && unicode.text == "b", "Unicode boundaries preserved")
   for newline in ["\n", "\r\n", "\r"] {

@@ -891,6 +891,29 @@ import Testing
                 try await Task.sleep(for: .milliseconds(20))
             }
             try #require(copilot.hasVisibleSuggestion(in: targetView))
+            // Two document windows may own the same already-synchronized URI.
+            // Closing the most recently requested view must not close the live
+            // baseline still owned by the first window.
+            do {
+                let siblingDocument = Document()
+                siblingDocument.makeWindowControllers()
+                let siblingWindow = try #require(siblingDocument.windowControllers.first?.window)
+                let siblingView = try #require(siblingDocument.textViews.first as? EditorTextView)
+                siblingView.copilotController = copilot
+                siblingView.string = targetSource
+                siblingView.semanticDocumentContext = { (targetURI, "Python") }
+                siblingView.selectedRange = NSRange(location: 1, length: 0)
+                siblingWindow.tabbingMode = .disallowed
+                try settleEditorWindow(siblingWindow, editor: siblingView)
+                _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+                for _ in 0..<200 {
+                    focusWindow(siblingWindow, editor: siblingView)
+                    if copilot.hasVisibleSuggestion(in: siblingView) { break }
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+                try #require(copilot.hasVisibleSuggestion(in: siblingView))
+                siblingWindow.orderOut(nil); siblingDocument.close()
+            }
             let source = "Hello source"
             view.string = source; view.selectedRange = NSRange(location: 1, length: 0)
             try settleEditorWindow(window, editor: view)
@@ -918,14 +941,15 @@ import Testing
             #expect(!copilot.handleKey(try key(48), in: view))
             #expect(view.string == source && targetView.string == targetSource + "!")
             let unknown = directory.appendingPathComponent("never-requested.py")
+            try targetSource.write(to: unknown, atomically: true, encoding: .utf8)
             let unknownPayload: LSPJSON = .object(["source": .string(source), "edit": item,
                 "target": .object(["uri": .string(unknown.absoluteString), "version": .number(1)])])
             try JSONEncoder().encode(unknownPayload).write(to: fixture)
             _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
             try await waitFor("unknown cross-file target rejected") { copilot.connectionPresentation.detail.contains("表示できるAI候補") }
             #expect(view.semanticGhost == nil && view.string == source)
-            #expect(!FileManager.default.fileExists(atPath: unknown.path))
-            print("NES_CROSS_FILE_PASS knownOpenTarget=true firstTabNavigationOnly=true secondTabAccept=true sourceUnchanged=true targetUndo=true staleTargetRejected=true unknownTargetRejected=true")
+            #expect(try String(contentsOf: unknown, encoding: .utf8) == targetSource)
+            print("NES_CROSS_FILE_PASS knownOpenTarget=true firstTabNavigationOnly=true secondTabAccept=true sourceUnchanged=true targetUndo=true staleTargetRejected=true existingUnknownTargetRejected=true siblingClosePreservesBaseline=true")
         }
         focus()
         // Use a fresh synthetic document and a private event-group manager.
@@ -999,10 +1023,11 @@ import Testing
             undo.endUndoGrouping()
             try await waitForNormalization("new edit resumes after dismissal") { rpcCount() > dismissedRPCs && copilot.hasVisibleSuggestion(in: view) }
             _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
-            let hunkSource = "old + middle + old"
+            let hunkSource = "old + " + String(repeating: "context ", count: 600) + "middle + old"
+            try #require(hunkSource.utf16.count > 2048)
             view.string = hunkSource; view.selectedRange = NSRange(location: 0, length: 0)
             let hunkPayload: LSPJSON = .object(["source": .string(hunkSource), "edit": .object([
-                "text": .string("new + middle + new"), "range": try CopilotInline.rangeJSON(NSRange(location: 0, length: hunkSource.utf16.count), in: hunkSource)])])
+                "text": .string(hunkSource.replacingOccurrences(of: "old", with: "new")), "range": try CopilotInline.rangeJSON(NSRange(location: 0, length: hunkSource.utf16.count), in: hunkSource)])])
             try JSONEncoder().encode(hunkPayload).write(to: fixture)
             _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
             try await waitForNormalization("derived two-hunk proposal") { copilot.hasVisibleSuggestion(in: view) }
@@ -1011,7 +1036,7 @@ import Testing
             view.insertText("updated😀", replacementRange: (view.string as NSString).range(of: "middle"))
             undo.endUndoGrouping()
             #expect(copilot.hasVisibleSuggestion(in: view) && view.semanticGhost?.replacementHunks.count == 2)
-            let editedIsland = "old + updated😀 + old"
+            let editedIsland = hunkSource.replacingOccurrences(of: "middle", with: "updated😀")
             #expect(LSPText.sameText(view.string, editedIsland))
             // Column zero intentionally gives Tab to indentation. Exercise
             // adoption from inside the affected word instead.
@@ -1020,7 +1045,7 @@ import Testing
             undo.beginUndoGrouping()
             window.sendEvent(try key(48))
             undo.endUndoGrouping()
-            let acceptedHunks = "new + updated😀 + new"
+            let acceptedHunks = editedIsland.replacingOccurrences(of: "old", with: "new")
             try #require(LSPText.sameText(view.string, acceptedHunks))
             #expect(view.selectedRange() == NSRange(location: acceptedHunks.utf16.count, length: 0))
             undo.undo()
@@ -1029,7 +1054,7 @@ import Testing
             #expect(LSPText.sameText(view.string, hunkSource))
             undo.redo(); undo.redo()
             #expect(LSPText.sameText(view.string, acceptedHunks))
-            print("NES_HUNKS_PASS twoDerivedHunks=true unchangedIslandRebase=true lastActualCaret=true separateUndo=true redo=true")
+            print("NES_HUNKS_PASS twoDerivedHunks=true largeUTF16=\(hunkSource.utf16.count) unchangedIslandRebase=true lastActualCaret=true separateUndo=true redo=true")
         }
         focus()
         // A remote whole-line edit starts at column zero. Its second Tab must

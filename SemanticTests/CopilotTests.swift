@@ -40,31 +40,26 @@ import Foundation
         check(state["opened"].int == 2 && state["shown"].int == 1 && state["accepted"].int == 1 && state["cancelled"].int! >= 2, "retain requested documents, show/accept notifications, protocol cancellation")
         _ = try await client.inlineCompletion(uri: uri, language: .python, text: "DELAY plus", caret: 10)
         check(await client.version(of: uri) == 5, "returning document retains real synchronization version")
-        for index in 0..<9 {
-            _ = try await client.inlineCompletion(uri: root.appendingPathComponent("Bounded\(index).py"), language: .python, text: "bounded", caret: 7)
+        let openDocuments = (0..<40).map { root.appendingPathComponent("Open\($0).py") }
+        for document in openDocuments {
+            _ = try await client.inlineCompletion(uri: document, language: .python, text: "before", caret: 6)
         }
-        let bounded = try await client.request("test/state", .object([:]))
-        check(bounded["opened"].int == 8, "provider history is bounded to eight already-requested documents")
-        check(await client.version(of: uri) == nil, "least recently requested document is evicted")
-        // Observed Undo/Redo reopens previously requested, evicted documents
-        // through direct synchronization, without a completion request.
-        for index in 0..<12 {
-            let observed = root.appendingPathComponent("Observed\(index).py")
-            _ = try await client.inlineCompletion(uri: observed, language: .python, text: "before", caret: 6)
-        }
-        for index in 0..<4 {
-            let observed = root.appendingPathComponent("Observed\(index).py")
+        let retained = await client.copilotDocuments()
+        let server = try await client.request("test/state", .object([:]))
+        check(retained.count == 42 && server["opened"].int == 42, "all forty requested open documents retain history without an eight-document cap")
+        check(await client.version(of: uri) == 5, "requesting other open documents does not reset the first document version")
+        for (index, observed) in openDocuments.prefix(4).enumerated() {
             if index.isMultiple(of: 2) { try await client.synchronizeDocument(uri: observed, language: .python, text: "undo") }
             else { try await client.synchronizeDocument(uri: observed, languageId: "python", text: "redo") }
-            let server = try await client.request("test/state", .object([:]))
-            let retained = await client.copilotDocuments()
-            check(server["opened"].int == 8 && retained.count == 8, "observed synchronization preserves client/server eight-document bound")
+            check(await client.version(of: observed) == 2, "observed Undo/Redo updates the owned baseline without closing/reopening it")
         }
         let seeded = root.appendingPathComponent("HistorySeed.py")
         _ = try await client.prepareNextEditHistory(uri: seeded, languageId: "python", previous: "before", caret: 6)
-        check((await client.copilotDocuments()).count == 8, "history initialization shares the same bound")
-        _ = try await client.inlineCompletion(uri: uri, language: .python, text: "again", caret: 5)
-        check((try await client.request("test/state", .object([:]))) ["opened"].int == 8, "normal request after observed reopens remains bounded")
+        check((await client.copilotDocuments()).count == 43, "history initialization retains all other open baselines")
+        await client.close(openDocuments[0])
+        check((await client.copilotDocuments()).count == 42, "closing a document releases its baseline")
+        check(await client.version(of: openDocuments[0]) == nil, "closed document version is removed")
+        check(await client.version(of: openDocuments[1]) == 2, "closing one document preserves other open history")
         await client.closeCopilotDocuments()
         check((try await client.request("test/state", .object([:])))["opened"].int == 0, "permission narrowing closes all retained documents")
         check(CopilotInline.command(.object(["command": .string("arbitrary.command"), "arguments": .array([])]), name: "github.copilot.didAcceptCompletionItem") == nil, "arbitrary commands rejected")

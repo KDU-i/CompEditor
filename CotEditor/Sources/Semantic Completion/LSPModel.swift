@@ -670,21 +670,18 @@ enum CopilotInline {
 enum CopilotNextEditPolicy {
     /// Derive independent changes from the public API's single outer range.
     /// Tokens compare exact UTF-16 (Swift Character equality normalizes accents).
-    /// Bound diff work; very large edits keep the validated contiguous fallback.
-    static func hunks(_ edit: LSPText.Edit, in snapshot: String) -> [LSPText.Edit] {
+    /// Like the reference editor, bound actual diff exploration by time rather
+    /// than declaring long, otherwise simple edits unsupported by their size.
+    static func hunks(_ edit: LSPText.Edit, in snapshot: String, budget: Duration = .milliseconds(50)) -> [LSPText.Edit] {
         let edit = minimized(edit, in: snapshot)
         guard edit.range.length > 0 || !edit.text.isEmpty else { return [] }
+        guard edit.range.length > 0, !edit.text.isEmpty else { return [edit] }
+        guard budget > .zero else { return [edit] }
         let old = (snapshot as NSString).substring(with: edit.range)
         let a = old.map { Array(String($0).utf16) }, b = edit.text.map { Array(String($0).utf16) }
-        guard a.count <= 2048, b.count <= 2048, a.count * b.count <= 2_000_000 else { return [edit] }
-        let changes = b.difference(from: a)
-        var removed = Set<Int>(), inserted = Set<Int>()
-        for change in changes {
-            switch change {
-                case .remove(let offset, _, _): removed.insert(offset)
-                case .insert(let offset, _, _): inserted.insert(offset)
-            }
-        }
+        // A complete rewrite has no unchanged island to preserve.
+        guard !Set(a).isDisjoint(with: Set(b)) else { return [edit] }
+        guard let (removed, inserted) = diffChanges(a, b, budget: budget) else { return [edit] }
         let units = Array(edit.text.utf16)
         var result: [LSPText.Edit] = [], i = 0, j = 0, oldOffset = 0, newOffset = 0
         while i < a.count || j < b.count {
@@ -715,6 +712,44 @@ enum CopilotNextEditPolicy {
         if let last = grouped.popLast() { grouped.append(.init(range: last.range, text: last.text, primary: edit.primary)) }
         return grouped
     }
+    /// Myers' shortest edit path. Sparse changes cost O((N+M)D), allowing long
+    /// unchanged islands without an N*M matrix. The frontier trace stores only
+    /// explored diagonals and time is checked during both exploration and snakes.
+    private static func diffChanges(_ a: [[UInt16]], _ b: [[UInt16]], budget: Duration) -> (Set<Int>, Set<Int>)? {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: budget)
+        var frontier = [1: 0], trace: [[Int: Int]] = []
+        for distance in 0...(a.count + b.count) {
+            guard clock.now < deadline else { return nil }
+            trace.append(frontier)
+            for diagonal in stride(from: -distance, through: distance, by: 2) {
+                if diagonal.isMultiple(of: 32), clock.now >= deadline { return nil }
+                let down = diagonal == -distance || (diagonal != distance && frontier[diagonal - 1, default: -1] < frontier[diagonal + 1, default: -1])
+                var x = down ? frontier[diagonal + 1, default: 0] : frontier[diagonal - 1, default: 0] + 1
+                var y = x - diagonal
+                while x < a.count, y < b.count, a[x] == b[y] {
+                    x += 1; y += 1
+                    if x.isMultiple(of: 256), clock.now >= deadline { return nil }
+                }
+                frontier[diagonal] = x
+                guard x == a.count, y == b.count else { continue }
+                var removed = Set<Int>(), inserted = Set<Int>()
+                for step in stride(from: distance, through: 0, by: -1) {
+                    let previous = trace[step], k = x - y
+                    let cameDown = k == -step || (k != step && previous[k - 1, default: -1] < previous[k + 1, default: -1])
+                    let previousK = cameDown ? k + 1 : k - 1
+                    let previousX = previous[previousK, default: 0], previousY = previousX - previousK
+                    while x > previousX, y > previousY { x -= 1; y -= 1 }
+                    if step > 0 {
+                        if x == previousX { y -= 1; inserted.insert(y) }
+                        else { x -= 1; removed.insert(x) }
+                    }
+                }
+                return (removed, inserted)
+            }
+        }
+        return nil
+    }
     static func combined(_ edits: [LSPText.Edit], in snapshot: String) -> LSPText.Edit? {
         guard let first = edits.first, let last = edits.last else { return nil }
         let range = NSRange(location: first.range.location, length: NSMaxRange(last.range) - first.range.location)
@@ -744,14 +779,18 @@ enum CopilotNextEditPolicy {
     }
     static func minimized(_ edit: LSPText.Edit, in snapshot: String) -> LSPText.Edit {
         let old = (snapshot as NSString).substring(with: edit.range)
-        let a = Array(old), b = Array(edit.text)
-        var prefix = 0, suffix = 0
-        while prefix < min(a.count, b.count), String(a[prefix]).utf16.elementsEqual(String(b[prefix]).utf16) { prefix += 1 }
-        while suffix < min(a.count, b.count) - prefix, String(a[a.count - suffix - 1]).utf16.elementsEqual(String(b[b.count - suffix - 1]).utf16) { suffix += 1 }
-        let removedPrefix = String(a.prefix(prefix)).utf16.count
-        let removedSuffix = String(a.suffix(suffix)).utf16.count
+        var a = old.startIndex, b = edit.text.startIndex, aEnd = old.endIndex, bEnd = edit.text.endIndex
+        while a < aEnd, b < bEnd, String(old[a]).utf16.elementsEqual(String(edit.text[b]).utf16) {
+            old.formIndex(after: &a); edit.text.formIndex(after: &b)
+        }
+        while a < aEnd, b < bEnd {
+            let previousA = old.index(before: aEnd), previousB = edit.text.index(before: bEnd)
+            guard String(old[previousA]).utf16.elementsEqual(String(edit.text[previousB]).utf16) else { break }
+            aEnd = previousA; bEnd = previousB
+        }
+        let removedPrefix = old[..<a].utf16.count, removedSuffix = old[aEnd...].utf16.count
         return .init(range: NSRange(location: edit.range.location + removedPrefix, length: edit.range.length - removedPrefix - removedSuffix),
-                     text: String(b.dropFirst(prefix).dropLast(suffix)), primary: edit.primary)
+                     text: String(edit.text[b..<bEnd]), primary: edit.primary)
     }
     static func directAccept(snapshot: String, caret: Int, range: NSRange, continuing: Bool, visible: Bool) -> Bool {
         let source = snapshot as NSString

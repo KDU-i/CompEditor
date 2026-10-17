@@ -78,7 +78,6 @@ actor LSPClient {
     private var openClose = true
     private var workspace: URL?
     private var nextEditHistory: Set<String> = []
-    private var copilotDocumentOrder: [String] = []
     struct CopilotDocument: Sendable {
         let version: Int
         let text: String
@@ -282,16 +281,6 @@ actor LSPClient {
         guard ready, !stopped else { throw LSPError.stopped }
         let key = uri.absoluteString
         if let previous = openedLanguages[key], previous != languageId { close(uri) }
-        if copilotMode {
-            // Every synchronization entry point shares the same lifecycle,
-            // including observed edits/Undo and initial history seeding.
-            copilotDocumentOrder.removeAll { $0 == key }
-            copilotDocumentOrder.append(key)
-            while copilotDocumentOrder.count > 8 {
-                if let old = URL(string: copilotDocumentOrder[0]) { close(old) }
-                else { copilotDocumentOrder.removeFirst() }
-            }
-        }
         if let version = opened[key], !LSPText.sameText(snapshots[key], text) {
             let next = version + 1
             var change: [String: LSPJSON] = ["text": .string(text)]
@@ -380,7 +369,6 @@ actor LSPClient {
 
     func close(_ uri: URL) {
         let key = uri.absoluteString
-        copilotDocumentOrder.removeAll { $0 == key }
         nextEditHistory.remove(key)
         openedLanguages.removeValue(forKey: key)
         diagnosticsByURI.removeValue(forKey: key)

@@ -66,8 +66,11 @@ struct CopilotSelectionTriggerPolicy {
     private var lastRequest: TimeInterval?
     private var lastRejection: TimeInterval?
     mutating func edited(_ buffer: UUID, at now: TimeInterval) {
+        // Entries older than the provider's trigger window cannot trigger again.
+        // Keep every still-recent document instead of evicting an active one by
+        // an unrelated fixed document count.
+        documents = documents.filter { now - $0.value.edited < 10 }
         documents[buffer] = Document(edited: now)
-        if documents.count > 32, let oldest = documents.min(by: { $0.value.edited < $1.value.edited })?.key { documents.removeValue(forKey: oldest) }
     }
     mutating func requested(at now: TimeInterval) { lastRequest = now }
     mutating func rejected(at now: TimeInterval) { lastRejection = now }

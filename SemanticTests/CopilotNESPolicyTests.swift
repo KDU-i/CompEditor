@@ -27,6 +27,15 @@ import Foundation
   check(!selections.shouldRequest(buffer, line: 2, at: 16), "elapsed rejection window alone does not revive dropped history")
   selections.edited(buffer, at: 16); selections.requested(at: 16)
   check(selections.shouldRequest(buffer, line: 2, at: 16), "new edit restores tracked selection triggers")
+  var many = CopilotSelectionTriggerPolicy()
+  let recent = (0..<40).map { _ in UUID() }
+  for (index, document) in recent.enumerated() { many.edited(document, at: Double(index) / 100) }
+  many.requested(at: 0.5)
+  check(many.shouldRequest(recent[0], line: 1, at: 0.6), "forty recent documents do not evict the first trigger history")
+  check(many.shouldRequest(recent[39], line: 1, at: 0.7), "latest recent document remains eligible too")
+  let fresh = UUID(); many.edited(fresh, at: 11); many.requested(at: 11)
+  check(!many.shouldRequest(recent[0], line: 2, at: 11), "expired history is pruned by the real ten-second trigger window")
+  check(many.shouldRequest(fresh, line: 1, at: 11), "time-based cleanup preserves fresh history")
   let uri = URL(fileURLWithPath: "/synthetic/current.py")
   let current: LSPJSON = .object(["textDocument": .object(["uri": .string(uri.absoluteString), "version": .number(3)])])
   let stale: LSPJSON = .object(["textDocument": .object(["uri": .string(uri.absoluteString), "version": .number(2)])])
