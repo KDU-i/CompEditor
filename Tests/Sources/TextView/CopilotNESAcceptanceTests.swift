@@ -245,7 +245,7 @@ import Testing
         }
         // Exercise native ordinary-completion visibility with NES, retaining the
         // original normal-inline exclusion policy.
-        let popupSource = "HelloWorld\nfirst()\nvalue = Hello"
+        let popupSource = "HelloWorld\nHelloUniverse\nfirst()\nvalue = Hello"
         let popupWord = (popupSource as NSString).range(of: "Hello", options: .backwards)
         view.lineEnding = .lf; view.string = popupSource
         view.semanticDocumentContext = { (nil, "Python") }
@@ -256,20 +256,47 @@ import Testing
         _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
         try await waitFor("popup NES") { view.semanticGhost?.nextEdit == true && copilot.hasVisibleSuggestion(in: view) }
         #expect(!view.hasExclusiveCopilotInlineGhost)
-        #expect(view.completions(forPartialWordRange: popupWord, indexOfSelectedItem: nil)?.contains("HelloWorld") == true)
+        var popupSelection = 0
+        #expect(view.completions(forPartialWordRange: popupWord, indexOfSelectedItem: &popupSelection)?.contains("HelloWorld") == true)
         let savedPreview = view.semanticGhost
         var inlinePreview = try #require(savedPreview)
         inlinePreview.nextEdit = false
         view.semanticGhost = inlinePreview
         #expect(view.hasExclusiveCopilotInlineGhost)
-        #expect(view.completions(forPartialWordRange: popupWord, indexOfSelectedItem: nil)?.isEmpty != false)
+        #expect(view.completions(forPartialWordRange: popupWord, indexOfSelectedItem: &popupSelection)?.isEmpty != false)
         view.semanticGhost = savedPreview
+        @MainActor final class PopupObservation {
+            var shown = false; var tabConsumed = false; var escapeConsumed = false; var attempts = 0
+        }
+        let popupObservation = PopupObservation()
+        // AppKit can track a completion popup in a nested event loop. A common-
+        // mode timer observes that real popup and posts Escape to this QA app only.
+        let popupTimer = Timer(timeInterval: 0.05, repeats: true) { timer in
+            let finished = MainActor.assumeIsolated {
+                popupObservation.attempts += 1
+                guard view.isNativeCompletionVisible || popupObservation.attempts >= 100 else { return false }
+                popupObservation.shown = view.isNativeCompletionVisible
+                let tab = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48)!
+                let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+                popupObservation.tabConsumed = copilot.handleKey(tab, in: view)
+                popupObservation.escapeConsumed = copilot.handleKey(escape, in: view)
+                NSApp.postEvent(escape, atStart: true)
+                return true
+            }
+            if finished { timer.invalidate() }
+        }
+        RunLoop.main.add(popupTimer, forMode: .common)
         view.complete(nil)
-        try await waitFor("native completion popup") { view.isNativeCompletionVisible }
-        #expect(!copilot.handleKey(try key(48), in: view))
+        try await waitFor("native completion popup observed") { popupObservation.attempts > 0 && !popupTimer.isValid }
+        popupTimer.invalidate()
+        #expect(popupObservation.shown)
+        #expect(!popupObservation.tabConsumed && !popupObservation.escapeConsumed)
         #expect(!view.string.contains("Goodbye"))
-        view.insertCompletion("Hello", forPartialWordRange: view.rangeForUserCompletion, movement: NSIllegalTextMovement, isFinal: true)
         #expect(!view.isNativeCompletionVisible)
+        // Subsequent cases replace the whole synthetic document directly. Native
+        // completion undo records belong to this old fixture, not the next one.
+        view.breakUndoCoalescing()
+        view.undoManager?.removeAllActions()
         view.string = popupSource
 
         // Rebase a displayed payload through a real text mutation, then reject a

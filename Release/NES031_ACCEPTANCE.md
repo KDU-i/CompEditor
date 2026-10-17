@@ -40,17 +40,23 @@ PASS means the stated host behavior is covered by the named evidence, not all se
 |08|PASS|Red old word and compact green replacement directly near target; visual evidence.|
 |09|PASS|16 Java/Python × LF/CRLF × insertion/replacement/deletion/multiline payloads, emoji/tab/no final newline; one primary range remains intentional.|
 |10|PASS|Adjacent-line/direct and remote/jump Tab, consecutive-visible policy, indentation precedence; native key tests plus policy tests.|
-|11|BLOCKED|Native completion list wins in routing code; indentation tested. Full native popup/focused-hover interaction not exercised. Host hover cannot become key; Tab-focus setting absent.|
+|11|BLOCKED|Ordinary semantic/native generation now remains allowed beside NES; normal inline alone is exclusive. Tab and Esc defer to the ordinary popup. A real native popup was observed and those key predicates passed before a later fixture Undo-range failure; fixture history is now isolated. Final full rerun is BLOCKED by QA active=false/key=false. Host hover cannot become key; Tab-focus setting absent.|
 |12|PASS|Native Esc dismissal, no stale adoption; composition guards preserved.|
 |13|PASS|Native before-target rebase; matching prefix/conflict/after-target/combining/normalization model tests; strict UTF-16 snapshots.|
 |14|PASS|Native caret folded at final minimized difference, including deletion and common suffix; no selected replacement text.|
 |15|PASS|Native separate Undo/Redo; automatic NES enabled and actual mock RPC count unchanged after Undo; fresh edit/explicit requests resume.|
 |16|意図した差|Post-accept NES request preserved; continuing-visible Tab policy added. Provider prefetch/cache and NES word/line partial acceptance not mirrored.|
 |17|PASS|Native marked-text and auxiliary/multiple-caret application refusal pass. Physical IME conversion remains unverified.|
-|18|BLOCKED|Scroll/resize retention and responsive preview reconstruction pass in the native matrix. Final actual offscreen/gutter regression is pending at this snapshot.|
+|18|BLOCKED|Scroll/resize retention and responsive preview reconstruction pass in the native matrix. The later native offscreen/gutter run passed on the prior core snapshot; final ordinary-popup extension requires foreground rerun.|
 |19|PASS|Independent option persistence/policy tests and native unsupported-server toggle/reprobe tests pass; authentication unchanged.|
 |20|PASS|Protocol stale version/cancellation and native reversed A/B response/document-switch rejection pass; existing empty/unsupported/timeout distinctions retained.|
 
 ## Candidate distribution evidence
 
 An initial local Release candidate built from tree a8d6d3651a78569080bb4d519f7b2c8062936fcc passed artifact audit: 68,987 files, 92 Mach-O binaries, 197 nested archives. Its app and feed declare 0.3.1/build861; archive and feed signatures used the existing dedicated Sparkle Keychain account, and the archive signature was independently verified with only the shipped public key. That initial archive is superseded by the gutter correction and must not be published. Rebuild/re-sign the reviewed final tree before any publication. No release, tag, merge, latest-feed update or installation has occurred.
+
+## Final additional priority fix and blocked rerun
+
+An additional inspection found ordinary-completion request guards still excluded NES. They now exclude only normal inline ghosts. NES also defers Esc to a visible ordinary completion popup. The new AppKit popup fixture uses a common-mode timer to observe real completion UI and post an Escape event only to the synthetic QA application's event queue. Native popup undo records are cleared only at synthetic-document boundaries in the fixture.
+
+The expanded fixture compiled. A real popup reached the Tab/Esc checks; the initial continuation exposed old native Undo ranges after wholesale fixture replacement. That fixture issue was corrected. Subsequent complete runs failed before requests with QA `active=false`, `key=false`; no new service response or key acceptance is counted as passing in those runs. Explicit activation, separate /tmp staging and a fresh QA identifier did not produce a stable foreground run; the UI bridge could not resolve the fresh identifier. This is neither an approval denial nor a zero-candidate service result. Re-run the entire CopilotNESAcceptanceTests suite in a real foreground QA host before publication.

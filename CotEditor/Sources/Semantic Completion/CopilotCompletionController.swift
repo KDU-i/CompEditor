@@ -879,6 +879,8 @@ enum CopilotBundledServer {
         if current(in: editor), flags == .option, event.keyCode == 30 { cycle(1, in: editor); return true }
         if current(in: editor), flags == .option, event.keyCode == 33 { cycle(-1, in: editor); return true }
         if flags.isEmpty, event.keyCode == 53 {
+            if let state = suggestions, state.candidates[state.index].nextEdit,
+               editor.isNativeCompletionVisible || SemanticCompletionController.shared.isSuggestionListVisible(in: editor) { return false }
             let visible = hasVisibleSuggestion(in: editor)
             if view === editor { invalidate() }
             return visible
