@@ -84,6 +84,8 @@ enum CopilotBundledServer {
     }
     private var suggestions: Suggestions?
     private var applying = false
+    private var continuingAcceptance = false
+    private weak var undoSuppressedEditor: EditorTextView?
     private var automaticSuggestions = true
     private var otherLanguages = false
     private var automaticNextEdits = false
@@ -177,6 +179,12 @@ enum CopilotBundledServer {
                     if note.name == NSText.didChangeNotification {
                         guard let editor else { return }
                         self.lastTextEditTime = ProcessInfo.processInfo.systemUptime
+                        if editor.undoManager?.isUndoing == true || editor.undoManager?.isRedoing == true {
+                            self.undoSuppressedEditor = editor; self.continuingAcceptance = false
+                            self.invalidate(reason: .textChanged); return
+                        }
+                        self.undoSuppressedEditor = nil; self.continuingAcceptance = false
+                        if editor === self.view, self.rebaseNextEdit(in: editor) { return }
                         if editor === self.view { self.invalidate(reason: .textChanged) }
                         if self.automaticSuggestions || self.automaticNextEdits {
                             Task { @MainActor [weak self, weak editor] in
@@ -204,6 +212,20 @@ enum CopilotBundledServer {
                         case NSView.boundsDidChangeNotification: reason = .viewportChanged
                         case NSApplication.didResignActiveNotification: reason = .appInactive
                         default: reason = .windowChanged
+                    }
+                    if reason == .viewportChanged || note.name == NSWindow.didResizeNotification || note.name == NSWindow.didMoveNotification {
+                        if let editor = self.view, self.current(in: editor), self.suggestions?.candidates[self.suggestions!.index].nextEdit == true {
+                            self.viewportOrigin = editor.enclosingScrollView?.contentView.bounds.origin
+                            editor.updateSemanticGhostPresentation(); return
+                        }
+                    }
+                    if reason == .selectionChanged, let editor, var state = self.suggestions,
+                       state.candidates[state.index].nextEdit, self.eligible(editor) == state.languageId,
+                       editor.semanticDocumentContext?().url == state.file {
+                        if !editor.string.utf16.elementsEqual(state.snapshot.utf16) { return } // text notification rebases it
+                        self.continuingAcceptance = false
+                        state.caret = editor.selectedRange().location; state.jumped = false
+                        self.suggestions = state; self.present(in: editor); return
                     }
                     self.invalidate(reason: reason)
                     if reason == .selectionChanged, self.automaticPolicy.request(after: .caretMove) == .nextEdit,
@@ -367,6 +389,7 @@ enum CopilotBundledServer {
         LSPProcesses.copilot.stopAll()
     }
     private func invalidate(reason: CopilotDiagnostics.Reason = .interaction) {
+        if reason != .replacedRequest { continuingAcceptance = false }
         selectionRequest?.cancel(); selectionRequest = nil
         if let ticket = diagnosticRequest { diagnose(ticket, .cancelled, reason: reason); diagnosticRequest = nil }
         epoch += 1; work?.cancel(); work = nil; if view?.semanticGhost?.copilot == true { view?.semanticGhost = nil }; suggestions = nil; fingerprint = nil }
@@ -516,7 +539,7 @@ enum CopilotBundledServer {
         return .unsupportedLanguage
     }
     private func current(in editor: EditorTextView) -> Bool {
-        guard let state = suggestions, self.view === editor, editor.string == state.snapshot,
+        guard let state = suggestions, self.view === editor, editor.string.utf16.elementsEqual(state.snapshot.utf16),
               editor.selectedRange() == NSRange(location: state.caret, length: 0), editor.semanticRevision == state.revision,
               editor.semanticDocumentContext?().url == state.file, eligible(editor) == state.languageId else { return false }
         return true
@@ -565,8 +588,10 @@ enum CopilotBundledServer {
         return true
     }
     func typed(in editor: EditorTextView, previous: String) {
-        guard editor.string != previous, !applying else { return }
+        guard !editor.string.utf16.elementsEqual(previous.utf16), !applying else { return }
         lastTextEditTime = ProcessInfo.processInfo.systemUptime
+        undoSuppressedEditor = nil; continuingAcceptance = false
+        if rebaseNextEdit(in: editor) { return }
         if eligible(editor) != nil, previous.utf16.count <= 1_000_000 {
             recentBefore = (editor.semanticBufferID, editor.semanticRevision, previous)
         }
@@ -579,6 +604,7 @@ enum CopilotBundledServer {
         }
     }
     private func requestSuggestions(in editor: EditorTextView, explicit: Bool, nextEdit: Bool = false, cycleOffset: Int = 0, previous: String? = nil) {
+        if !explicit, undoSuppressedEditor === editor { return }
         let ticket = diagnostics.ticket(nextEdit ? (explicit ? .manualNextEdit : .automaticNextEdit) : (explicit ? .manualInline : .automaticInline))
         diagnose(ticket, .attempt)
         // Covers queued typing notifications, caret triggers and programmatic manual actions.
@@ -590,7 +616,7 @@ enum CopilotBundledServer {
         let snapshot = editor.string, caret = editor.selectedRange().location, file = editor.semanticDocumentContext?().url, revision = editor.semanticRevision
         let observedPrevious = previous ?? (recentBefore?.buffer == editor.semanticBufferID && recentBefore?.revision == revision ? recentBefore?.text : nil)
         if !explicit, work != nil, let queued = fingerprint,
-           queued.0 == editor.semanticBufferID, queued.1 == snapshot, queued.2 == caret, queued.3 == languageId { diagnose(ticket, .skipped, reason: .duplicateRequest); return }
+           queued.0 == editor.semanticBufferID, queued.1.utf16.elementsEqual(snapshot.utf16), queued.2 == caret, queued.3 == languageId { diagnose(ticket, .skipped, reason: .duplicateRequest); return }
         invalidate(reason: .replacedRequest); diagnosticRequest = ticket
         self.view = editor; viewportOrigin = editor.enclosingScrollView?.contentView.bounds.origin
         fingerprint = (editor.semanticBufferID, snapshot, caret, languageId)
@@ -642,7 +668,7 @@ enum CopilotBundledServer {
                 var items = result[field].array ?? []
                 self.diagnose(ticket, .response, fieldPresent: result.object?[field] != nil,
                               arrayPresent: result[field].array != nil, count: items.count)
-                guard !Task.isCancelled, self.epoch == token, editor.string == snapshot,
+                guard !Task.isCancelled, self.epoch == token, editor.string.utf16.elementsEqual(snapshot.utf16),
                       editor.selectedRange() == NSRange(location: caret, length: 0), editor.semanticRevision == revision, editor.semanticDocumentContext?().url == file,
                       self.eligible(editor) == languageId else { self.diagnose(ticket, .excluded, reason: .staleResponse); return }
                 guard let requestedVersion = await client.version(of: uri) else {
@@ -660,7 +686,8 @@ enum CopilotBundledServer {
                             }
                         }
                         let plan = next ? nil : try? CopilotInline.plan(item, text: snapshot, caret: caret)
-                        guard let edit = next ? try? CopilotInline.nextEdit(item, text: snapshot) : plan?.edit else { self.diagnose(rpcTicket, .excluded, reason: .invalidEdit); continue }
+                        guard let parsedEdit = next ? try? CopilotInline.nextEdit(item, text: snapshot) : plan?.edit else { self.diagnose(rpcTicket, .excluded, reason: .invalidEdit); continue }
+                        let edit = next ? CopilotNextEditPolicy.minimized(parsedEdit, in: snapshot) : parsedEdit
                         if !next, plan?.parts.isEmpty != false { self.diagnose(rpcTicket, .excluded, reason: .noInlineParts); continue }
                         if parsed.contains(where: { $0.edit.range == edit.range && $0.edit.text == edit.text }) { self.diagnose(rpcTicket, .excluded, reason: .duplicateCandidate); continue }
                         self.reference += 1; parsed.append(Candidate(reference: self.reference, item: item, local: item, edit: edit, plan: plan, nextEdit: next))
@@ -680,7 +707,7 @@ enum CopilotBundledServer {
                     items = edits["edits"].array ?? []; isNextEdit = true
                     self.diagnose(fallback, .response, fieldPresent: edits.object?["edits"] != nil,
                                   arrayPresent: edits["edits"].array != nil, count: items.count)
-                    guard !Task.isCancelled, self.epoch == token, editor.string == snapshot,
+                    guard !Task.isCancelled, self.epoch == token, editor.string.utf16.elementsEqual(snapshot.utf16),
                           editor.selectedRange() == NSRange(location: caret, length: 0), editor.semanticRevision == revision,
                           editor.semanticDocumentContext?().url == file, self.eligible(editor) == languageId else {
                         self.diagnose(fallback, .excluded, reason: .staleResponse); return
@@ -726,7 +753,22 @@ enum CopilotBundledServer {
     func hasVisibleSuggestion(in editor: EditorTextView) -> Bool {
         current(in: editor) && editor.semanticGhost?.copilot == true && editor.semanticGhostIsCurrent
     }
-    func ordinarySuggestionChanged(in editor: EditorTextView) { if current(in: editor) { present(in: editor) } }
+    func ordinarySuggestionChanged(in editor: EditorTextView) {
+        if current(in: editor) { present(in: editor) }
+    }
+    @discardableResult private func rebaseNextEdit(in editor: EditorTextView) -> Bool {
+        guard var state = suggestions, view === editor, state.candidates[state.index].nextEdit,
+              eligible(editor) == state.languageId, editor.semanticDocumentContext?().url == state.file else { return false }
+        state.candidates = state.candidates.compactMap { candidate in
+            guard let edit = CopilotNextEditPolicy.rebase(candidate.edit, from: state.snapshot, to: editor.string) else { return nil }
+            var result = candidate; result.edit = edit; return result
+        }
+        guard !state.candidates.isEmpty else { return false }
+        epoch += 1; work?.cancel(); work = nil; selectionRequest?.cancel(); selectionRequest = nil
+        state.index = min(state.index, state.candidates.count - 1); state.snapshot = editor.string
+        state.caret = editor.selectedRange().location; state.revision = editor.semanticRevision; state.jumped = false
+        suggestions = state; present(in: editor); return true
+    }
     private func present(in editor: EditorTextView) {
         guard current(in: editor), var state = suggestions else { return }
         let candidate = state.candidates[state.index]
@@ -743,8 +785,10 @@ enum CopilotBundledServer {
         // selection before Tab can be routed to an ordinary candidate. Loading alone
         // never suppresses ordinary completion.
         applying = true
-        SemanticCompletionController.shared.dismissSuggestionsForCopilot(in: editor)
-        editor.suppressWordCompletionForCopilot()
+        if !candidate.nextEdit {
+            SemanticCompletionController.shared.dismissSuggestionsForCopilot(in: editor)
+            editor.suppressWordCompletionForCopilot()
+        }
         applying = false
         guard current(in: editor), editor.semanticGhost?.copilot == true, editor.semanticGhostIsCurrent else {
             if let ticket = diagnosticRequest { diagnose(ticket, .excluded, reason: .stalePresentation) }
@@ -757,17 +801,27 @@ enum CopilotBundledServer {
             Task { try? await owner.notify(method, .object(["item": item])) }
         }
         suggestions = state; viewportOrigin = editor.enclosingScrollView?.contentView.bounds.origin
-        status = candidate.nextEdit ? "次の編集の差分を表示しています。Tabで位置へ移動し、もう一度Tabで採用します。" : "AI候補 \(state.index + 1)/\(state.candidates.count) — Tab採用、⌘→部分採用、⌥[ / ⌥]切替。"
+        status = candidate.nextEdit ? "次の編集の差分を表示しています。対象行付近ではTabで採用、遠い候補はTabで移動します。" : "AI候補 \(state.index + 1)/\(state.candidates.count) — Tab採用、⌘→部分採用、⌥[ / ⌥]切替。"
     }
     private func cycle(_ delta: Int, in editor: EditorTextView) {
         guard current(in: editor), var state = suggestions else { return }
         if state.candidates.count == 1 { requestSuggestions(in: editor, explicit: true, nextEdit: state.candidates[0].nextEdit, cycleOffset: delta); return }
         state.index = (state.index + delta + state.candidates.count) % state.candidates.count; suggestions = state; present(in: editor)
     }
+    func jumpToNextEdit(in editor: EditorTextView) {
+        guard current(in: editor), var state = suggestions, state.candidates[state.index].nextEdit else { return }
+        applying = true
+        editor.selectedRange = NSRange(location: state.candidates[state.index].edit.range.location, length: 0)
+        editor.scrollRangeToVisible(editor.selectedRange()); applying = false
+        state.caret = editor.selectedRange().location; state.jumped = true
+        suggestions = state; present(in: editor)
+    }
     private func accept(in editor: EditorTextView) -> Bool {
         guard current(in: editor), var state = suggestions, editor.semanticGhost?.copilot == true, editor.semanticGhostIsCurrent else { return false }
         let candidate = state.candidates[state.index]
-        if candidate.nextEdit, state.caret != candidate.edit.range.location, !state.jumped {
+        if candidate.nextEdit, !state.jumped,
+           !CopilotNextEditPolicy.directAccept(snapshot: state.snapshot, caret: state.caret, range: candidate.edit.range,
+                                             continuing: continuingAcceptance, visible: editor.nextEditTargetIsVisible) {
             applying = true; editor.selectedRange = NSRange(location: candidate.edit.range.location, length: 0)
             editor.scrollRangeToVisible(editor.selectedRange()); applying = false
             state.caret = editor.selectedRange().location; state.jumped = true; suggestions = state; present(in: editor); return true
@@ -778,6 +832,7 @@ enum CopilotBundledServer {
         if accepted {
             ForkUsageMetrics.shared.record(.copilotCompletionAccepted)
             if let command = CopilotInline.command(candidate.item["command"], name: "github.copilot.didAcceptCompletionItem") { Task { _ = try? await state.client.request("workspace/executeCommand", command) } }
+            continuingAcceptance = candidate.nextEdit
             documentEdited(in: editor)
         }
         return accepted
@@ -808,7 +863,7 @@ enum CopilotBundledServer {
         let length = CopilotInline.acceptedLength(raw: item["insertText"].string ?? "", normalizedPrefixLength: caret - candidate.edit.range.location, snapshot: updated)
         Task { [weak self, weak editor] in
             guard let self, self.enabled, self.consented, self.connected, self.client === owner else { return }
-            if let editor, self.view === editor, editor.string == updated, self.eligible(editor) == language { try? await owner.synchronizeDocument(uri: uri, languageId: language, text: updated) }
+            if let editor, self.view === editor, editor.string.utf16.elementsEqual(updated.utf16), self.eligible(editor) == language { try? await owner.synchronizeDocument(uri: uri, languageId: language, text: updated) }
             guard self.enabled, self.client === owner else { return }
             if let length { try? await owner.notify("textDocument/didPartiallyAcceptCompletion", .object(["item": item, "acceptedLength": .number(length)])) }
         }
@@ -830,6 +885,13 @@ enum CopilotBundledServer {
         }
         if flags == .command, event.keyCode == 124 { return acceptPartial(in: editor, line: false) }
         guard flags.isEmpty, event.keyCode == 48, current(in: editor), editor.semanticGhost?.copilot == true, editor.semanticGhostIsCurrent else { return false }
+        if suggestions?.candidates[suggestions!.index].nextEdit == true {
+            if editor.isNativeCompletionVisible || SemanticCompletionController.shared.isSuggestionListVisible(in: editor) || SemanticCompletionController.shared.isFocusedHoverVisible(in: editor) { return false }
+            let source = editor.string as NSString
+            let line = source.lineRange(for: editor.selectedRange())
+            let prefix = source.substring(with: NSRange(location: line.location, length: editor.selectedRange().location - line.location))
+            if !continuingAcceptance, prefix.allSatisfy({ $0 == " " || $0 == "\t" }) { return false }
+        }
         SemanticCompletionController.shared.dismissSuggestionsForCopilot(in: editor)
         return accept(in: editor)
     }

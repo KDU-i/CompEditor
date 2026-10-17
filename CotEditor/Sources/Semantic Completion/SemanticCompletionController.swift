@@ -547,6 +547,9 @@ import LineEnding
         guard targetView === view else { return }
         invalidateAutomatic(notifyCopilot: false)
     }
+    func isFocusedHoverVisible(in view: EditorTextView) -> Bool {
+        hoverView === view && hoverPanel?.isVisible == true && hoverPanel?.firstResponder !== hoverPanel
+    }
     func isSuggestionListVisible(in view: EditorTextView) -> Bool { targetView === view && automaticPanel?.isVisible == true }
     func selectedSuggestion(in view: EditorTextView) -> LSPText.Edit? {
         guard isSuggestionListVisible(in: view), let row = candidateTable?.selectedRow, choices.indices.contains(row) else { return nil }

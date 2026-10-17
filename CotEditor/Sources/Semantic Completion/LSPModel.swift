@@ -613,7 +613,7 @@ enum CopilotInline {
         guard let value = item["insertText"].string ?? item["text"].string, value.utf16.count <= 100_000 else { throw LSPError.unsupportedEdit }
         let range = try LSPText.range(item["range"], in: text)
         let normalized = normalize(value, in: text)
-        guard (text as NSString).substring(with: range) != normalized else { throw LSPError.unsupportedEdit }
+        guard !(text as NSString).substring(with: range).utf16.elementsEqual(normalized.utf16) else { throw LSPError.unsupportedEdit }
         return LSPText.Edit(range: range, text: normalized, primary: true)
     }
     static func partialLength(_ text: String, line: Bool) -> Int {
@@ -657,5 +657,46 @@ enum CopilotInline {
     static func command(_ value: LSPJSON, name: String) -> LSPJSON? {
         guard value["command"].string == name, value["arguments"].array != nil else { return nil }
         return .object(["command": .string(name), "arguments": value["arguments"]])
+    }
+}
+
+/// Host-side NES policy. Original implementation; VS Code is a behavioral reference only.
+enum CopilotNextEditPolicy {
+    static func minimized(_ edit: LSPText.Edit, in snapshot: String) -> LSPText.Edit {
+        let old = (snapshot as NSString).substring(with: edit.range)
+        let a = Array(old), b = Array(edit.text)
+        var prefix = 0, suffix = 0
+        while prefix < min(a.count, b.count), String(a[prefix]).utf16.elementsEqual(String(b[prefix]).utf16) { prefix += 1 }
+        while suffix < min(a.count, b.count) - prefix, String(a[a.count - suffix - 1]).utf16.elementsEqual(String(b[b.count - suffix - 1]).utf16) { suffix += 1 }
+        let removedPrefix = String(a.prefix(prefix)).utf16.count
+        let removedSuffix = String(a.suffix(suffix)).utf16.count
+        return .init(range: NSRange(location: edit.range.location + removedPrefix, length: edit.range.length - removedPrefix - removedSuffix),
+                     text: String(b.dropFirst(prefix).dropLast(suffix)), primary: edit.primary)
+    }
+    static func directAccept(snapshot: String, caret: Int, range: NSRange, continuing: Bool, visible: Bool) -> Bool {
+        let source = snapshot as NSString
+        guard caret >= 0, range.location >= 0, range.length >= 0, caret <= source.length, NSMaxRange(range) <= source.length else { return false }
+        let caretLine = (try? LSPText.position(caret, in: snapshot)["line"].int) ?? 0
+        let startLine = (try? LSPText.position(range.location, in: snapshot)["line"].int) ?? 0
+        let endLine = (try? LSPText.position(NSMaxRange(range), in: snapshot)["line"].int) ?? 0
+        return (caretLine >= startLine - 1 && caretLine <= endLine + 1) || (continuing && visible)
+    }
+    /// Rebase one contiguous user edit. Overlapping conflicts are rejected; matching typed
+    /// prefixes consume the proposal. Never interprets an old server response as a new one.
+    static func rebase(_ edit: LSPText.Edit, from before: String, to after: String) -> LSPText.Edit? {
+        guard !before.utf16.elementsEqual(after.utf16) else { return edit }
+        let change = minimized(.init(range: NSRange(location: 0, length: before.utf16.count), text: after, primary: true), in: before)
+        let delta = change.text.utf16.count - change.range.length
+        if NSMaxRange(change.range) <= edit.range.location, !(change.range.length == 0 && change.range.location == edit.range.location) {
+            return .init(range: NSRange(location: edit.range.location + delta, length: edit.range.length), text: edit.text, primary: edit.primary)
+        }
+        if change.range.location >= NSMaxRange(edit.range), !(change.range.length == 0 && change.range.location == edit.range.location) { return edit }
+        if change.range.location == edit.range.location, change.range.length <= edit.range.length, edit.text.utf16.starts(with: change.text.utf16), !change.text.isEmpty {
+            let text = (edit.text as NSString).substring(from: change.text.utf16.count)
+            let range = NSRange(location: edit.range.location + change.text.utf16.count, length: edit.range.length - change.range.length)
+            guard range.length > 0 || !text.isEmpty else { return nil }
+            return .init(range: range, text: text, primary: edit.primary)
+        }
+        return nil
     }
 }

@@ -38,6 +38,8 @@ import Testing
         window.setContentSize(NSSize(width: 600, height: 300))
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(view)
+        _ = NSApp.setActivationPolicy(.regular)
+        NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
         NSApp.activate(ignoringOtherApps: true)
         copilot.installMenu()
         let installedMenu = NSApp.mainMenu?.items.last
@@ -63,12 +65,16 @@ import Testing
             return methods["textDocument/copilotInlineEdit"] ?? 0
         }
         try await waitUntil("authentication") { copilot.connectionPresentation.phase == .authenticated }
+        _ = NSApp.setActivationPolicy(.regular)
+        NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(view)
         try await waitUntil("focused editor", limit: 750) {
             // The test host can finish opening its initial empty window after auth.
-            NSApp.activate(ignoringOtherApps: true)
+            _ = NSApp.setActivationPolicy(.regular)
+        NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
             window.makeKey()
             window.makeMain()
@@ -122,6 +128,132 @@ import Testing
         copilot.typed(in: view, previous: "after recovery")
         try await Task.sleep(for: .milliseconds(350))
         #expect(rpcCount() == 2)
+    }
+
+    @Test func syntheticPayloadsUseRealControllerKeysAndViewport() async throws {
+        try await CopilotProcessTestLease.acquire()
+        defer { CopilotProcessTestLease.release() }
+        let directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fixture = directory.appendingPathComponent("fixture.json")
+        let executable = directory.appendingPathComponent("copilot-language-server")
+        let mock = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("SemanticTests/copilot_mock.py")
+        func literal(_ value: String) throws -> String { let encoder = JSONEncoder(); encoder.outputFormatting = .withoutEscapingSlashes; return String(data: try encoder.encode(value), encoding: .utf8)! }
+        let script = "#!/usr/bin/python3\nimport sys\nsys.argv=[\(try literal(mock.path)), '--preauthenticated', '--nes-fixture', \(try literal(fixture.path))]\nexec(compile(open(sys.argv[0]).read(), sys.argv[0], 'exec'))\n"
+        try script.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let suite = "NES031-" + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.set(true, forKey: "CompEditor.Copilot.rememberContextConsent.v1")
+        defaults.set(false, forKey: "CompEditor.Copilot.automaticSuggestions.v1")
+        defaults.set(false, forKey: "CompEditor.Copilot.automaticNextEdits.v1")
+        let copilot = CopilotCompletionController(defaults: defaults, executable: executable)
+        let document = Document()
+        let controller = EditorTextViewController(document: document)
+        controller.loadView()
+        let view = controller.textView
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 800, height: 400), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.tabbingMode = .disallowed; window.contentViewController = controller
+        func focus() {
+            _ = NSApp.setActivationPolicy(.regular)
+        NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil); window.makeKey(); window.makeMain(); window.makeFirstResponder(view)
+            for _ in 0..<50 { guard let event = NSApp.nextEvent(matching: .any, until: Date(), inMode: .default, dequeue: true) else { break }; NSApp.sendEvent(event) }
+        }
+        func waitFor(_ label: String, _ condition: () -> Bool) async throws {
+            for _ in 0..<1000 { focus(); if condition() { return }; try await Task.sleep(for: .milliseconds(20)) }
+            Issue.record("NES031 checkpoint: \(label); active=\(NSApp.isActive); key=\(NSApp.keyWindow === window); phase=\(copilot.connectionPresentation.phase); status=\(copilot.connectionPresentation.detail)"); throw CancellationError()
+        }
+        func key(_ code: UInt16) throws -> NSEvent {
+            try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: code == 48 ? "\t" : "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code))
+        }
+        focus(); copilot.installMenu()
+        let menu = NSApp.mainMenu?.items.last
+        defer {
+            _ = copilot.perform(NSSelectorFromString("toggle"))
+            if let menu { NSApp.mainMenu?.removeItem(menu) }
+            window.orderOut(nil); defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try await waitFor("authenticated") { copilot.connectionPresentation.phase == .authenticated }
+        for language in ["Python", "Java"] {
+            for newline in ["\n", "\r\n"] {
+                for (replacement, insertion) in [("Goodbye😀", false), ("", false), ("one\n\ttwo", false), (" + added😀", true)] {
+                    let source = ["# 😀", "first()", "second()", "third()", "value = Hello", "tail()"].joined(separator: newline)
+                    view.string = source; view.semanticDocumentContext = { (nil, language) }
+                    view.selectedRange = NSRange(location: 2, length: 0)
+                    let wordRange = (source as NSString).range(of: "Hello")
+                    let range = NSRange(location: wordRange.location, length: insertion ? 0 : wordRange.length)
+                    let item: LSPJSON = .object(["text": .string(replacement), "range": try CopilotInline.rangeJSON(range, in: source)])
+                    let payload: LSPJSON = .object(["source": .string(source), "edit": item])
+                    try JSONEncoder().encode(payload).write(to: fixture)
+                    _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+                    try await waitFor("display \(language) \(replacement)") { view.semanticGhost?.nextEdit == true && copilot.hasVisibleSuggestion(in: view) }
+                    #expect(view.string == source)
+                    let undoBefore = view.undoManager?.canUndo
+                    window.setContentSize(NSSize(width: 360, height: 300))
+                    NotificationCenter.default.post(name: NSWindow.didResizeNotification, object: window)
+                    view.enclosingScrollView?.contentView.scroll(to: NSPoint(x: 0, y: 16))
+                    NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: view.enclosingScrollView!.contentView)
+                    #expect(copilot.hasSuggestions(in: view))
+                    #expect(view.undoManager?.canUndo == undoBefore)
+                    #expect(copilot.handleKey(try key(48), in: view))
+                    #expect(view.string == source)
+                    #expect(view.selectedRange().location == range.location)
+                    #expect(copilot.handleKey(try key(48), in: view))
+                    let normalized = CopilotInline.normalize(replacement, in: source)
+                    #expect(view.string == (source as NSString).replacingCharacters(in: range, with: normalized))
+                    #expect(view.selectedRange() == NSRange(location: range.location + normalized.utf16.count, length: 0))
+                    view.undoManager?.undo()
+                    #expect(view.string == source)
+                    try await Task.sleep(for: .milliseconds(100))
+                    #expect(view.semanticGhost == nil)
+                    view.undoManager?.redo()
+                    #expect(view.string == (source as NSString).replacingCharacters(in: range, with: normalized))
+                    window.setContentSize(NSSize(width: 800, height: 400))
+                }
+            }
+        }
+        // Rebase a displayed payload through a real text mutation, then reject a
+        // late response after a newer request has already displayed.
+        let source = "first()\nvalue = Hello"
+        let range = (source as NSString).range(of: "Hello")
+        func setFixture(source: String, text: String, delay: Int = 0) throws {
+            let item: LSPJSON = .object(["text": .string(text), "range": try CopilotInline.rangeJSON((source as NSString).range(of: "Hello"), in: source)])
+            let payload: LSPJSON = .object(["source": .string(source), "edit": item, "delay": .number(delay)])
+            try JSONEncoder().encode(payload).write(to: fixture)
+        }
+        view.string = source; view.semanticDocumentContext = { (nil, "Python") }
+        view.selectedRange = NSRange(location: range.location, length: 0)
+        try setFixture(source: source, text: "Goodbye")
+        _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+        try await waitFor("rebase original") { view.semanticGhost?.text == "Goodbye" }
+        view.insertText("# 😀\n", replacementRange: NSRange(location: 0, length: 0))
+        copilot.typed(in: view, previous: source)
+        #expect(view.semanticGhost?.replacementRange?.location == range.location + "# 😀\n".utf16.count)
+        #expect(view.semanticGhost?.snapshot == view.string)
+        view.selectedRange = NSRange(location: view.string.utf16.count, length: 0)
+        NotificationCenter.default.post(name: NSTextView.didChangeSelectionNotification, object: view)
+        #expect(copilot.hasSuggestions(in: view))
+        #expect(copilot.handleKey(try key(53), in: view))
+        #expect(view.semanticGhost == nil)
+        view.string = source; view.selectedRange = NSRange(location: 1, length: 0)
+        try setFixture(source: source, text: "OLD", delay: 1)
+        _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+        try await Task.sleep(for: .milliseconds(100))
+        let newer = source + "!"
+        view.string = newer
+        NotificationCenter.default.post(name: NSText.didChangeNotification, object: view)
+        try setFixture(source: newer, text: "NEW")
+        _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+        try await waitFor("new response") { view.semanticGhost?.text == "NEW" }
+        try await Task.sleep(for: .milliseconds(1100))
+        #expect(view.semanticGhost?.text == "NEW")
+        #expect(view.semanticGhost?.snapshot == newer)
+        view.semanticDocumentContext = { (URL(fileURLWithPath: "/synthetic/other.py"), "Python") }
+        #expect(!copilot.hasSuggestions(in: view))
+        #expect(!copilot.handleKey(try key(48), in: view))
+        #expect(view.string == newer)
     }
 
     @Test func rewritePreviewDoesNotEditAndAcceptanceHasOneUndoStep() throws {

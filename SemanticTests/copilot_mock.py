@@ -2,7 +2,7 @@
 # Offline JSON-RPC peer. Synthetic strings only; no network or OAuth.
 import sys, json, threading, time
 import argparse, pathlib, os, hashlib
-parser=argparse.ArgumentParser();parser.add_argument('--session-state');parser.add_argument('--preauthenticated',action='store_true');parser.add_argument('--offline',action='store_true');parser.add_argument('--no-nes',action='store_true');options=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--session-state');parser.add_argument('--preauthenticated',action='store_true');parser.add_argument('--offline',action='store_true');parser.add_argument('--no-nes',action='store_true');parser.add_argument('--nes-fixture');options=parser.parse_args()
 session_path=pathlib.Path(options.session_state) if options.session_state else None
 session=json.loads(session_path.read_text()) if session_path and session_path.exists() else {'authenticated':options.preauthenticated,'methods':{}}
 authenticated=session['authenticated']
@@ -89,6 +89,14 @@ try:
             assert p['textDocument']['version']==version
             if options.no_nes:persist_synthetic_session()
             if options.no_nes or text=='NO_NES': send({'jsonrpc':'2.0','id':msg['id'],'error':{'code':-32601,'message':'Synthetic missing public method'}})
+            elif options.nes_fixture:
+                fixture=json.loads(pathlib.Path(options.nes_fixture).read_text())
+                edits=[]
+                if text == fixture['source']:
+                    edits=[dict(fixture['edit'],textDocument=dict(p['textDocument']))]
+                result={'edits':edits}
+                if fixture.get('delay'): threading.Timer(fixture['delay'],reply,args=(msg,result)).start()
+                else:reply(msg,result)
             else: reply(msg,{'edits':[{'insertText':'next','textDocument':dict(p['textDocument']),'range':{'start':{'line':0,'character':0},'end':{'line':0,'character':1}},'command':{'command':'github.copilot.didAcceptCompletionItem','arguments':['mock-nes']}}]})
         elif method=='textDocument/didShowCompletion': shown+=1
         elif method=='textDocument/didShowInlineEdit': shown_next+=1

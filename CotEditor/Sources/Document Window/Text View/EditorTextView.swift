@@ -175,6 +175,7 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     private var instanceHighlightTask: Task<Void, any Error>?
     
     private var isShowingCompletion = false
+    var isNativeCompletionVisible: Bool { isShowingCompletion }
     private var partialCompletionWord: String?
     private lazy var completionDebouncer = Debouncer { [weak self] in self?.performCompletion() }
     
@@ -448,6 +449,9 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     }
 
     override func mouseDown(with event: NSEvent) {
+        if nextEditIndicatorHit(at: convert(event.locationInWindow, from: nil)) {
+            CopilotCompletionController.shared.jumpToNextEdit(in: self); return
+        }
         let mappedOffset = semanticGhostMouseOffset(at: convert(event.locationInWindow, from: nil))
         CopilotCompletionController.shared.dismissForInteraction(in: self)
         SemanticCompletionController.shared.cancelHover()
@@ -525,7 +529,9 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
         let previous = self.string
         super.keyDown(with: event)
         semantic.typed(event, in: self, previousText: previous)
-        CopilotCompletionController.shared.typed(in: self, previous: previous)
+        if !(event.modifierFlags.contains(.command) && event.keyCode == 6) {
+            CopilotCompletionController.shared.typed(in: self, previous: previous)
+        }
     }
 
     override func didChangeText() {
