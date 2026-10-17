@@ -70,10 +70,13 @@ extension EditorTextView {
         updateSemanticGhostPanel(); enclosingScrollView?.verticalRulerView?.needsDisplay = true; needsDisplay = true
     }
     func updateSemanticGhostPanel() {
-        if let panel = semanticGhostPanel { panel.orderOut(nil); panel.parent?.removeChildWindow(panel); semanticGhostPanel = nil }
-        guard semanticGhostIsCurrent, let ghost = semanticGhost, ghost.copilot, let window else { return }
+        guard semanticGhostIsCurrent, let ghost = semanticGhost, ghost.copilot, let window else {
+            dismissSemanticGhostPanel(); return
+        }
         let lines = ghost.text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: .newlines).count
-        guard (ghost.nextEdit && !nextEditIsInlineInsertion && !ghost.text.isEmpty) || lines > 200 else { return }
+        guard (ghost.nextEdit && !nextEditIsInlineInsertion && !ghost.text.isEmpty) || lines > 200 else {
+            dismissSemanticGhostPanel(); return
+        }
         let available = window.screen?.visibleFrame ?? window.frame
         if ghost.nextEdit {
             let surface = nextEditSurface(for: ghost)
@@ -88,14 +91,10 @@ extension EditorTextView {
                                y: min(max(target.minY + ((layoutManager as? LayoutManager)?.lineHeight ?? target.height) + 1, visibleRect.minY), visibleRect.maxY - height), width: width, height: height)
             let screen = window.convertToScreen(convert(local, to: nil))
             let x = min(max(screen.minX, viewport.minX + 1), viewport.maxX - width - 1)
-            let panel = SemanticCandidatePanel(contentRect: NSRect(x: x, y: screen.minY, width: width, height: height), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-            panel.hasShadow = false; panel.hidesOnDeactivate = true; panel.isReleasedWhenClosed = false
-            panel.isOpaque = false; panel.backgroundColor = .clear
             let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: width, height: height))
             scroll.drawsBackground = false; scroll.documentView = surface
             scroll.hasVerticalScroller = surface.fullHeight > height; scroll.autohidesScrollers = true
-            panel.contentView = scroll; panel.appearance = effectiveAppearance
-            window.addChildWindow(panel, ordered: .above); semanticGhostPanel = panel; panel.orderFront(nil)
+            presentSemanticGhostPanel(scroll, frame: NSRect(x: x, y: screen.minY, width: width, height: height), nextEdit: true, in: window)
             return
         }
         let width = min(600, max(100, visibleRect.width - 24), available.width - 20)
@@ -104,10 +103,29 @@ extension EditorTextView {
         let anchor = window.convertToScreen(convert(semanticGhostRect, to: nil))
         let x = min(max(anchor.minX, available.minX), available.maxX - width)
         let y = min(max(anchor.minY - height - 4, available.minY), available.maxY - height)
-        let panel = SemanticCandidatePanel(contentRect: NSRect(x: x, y: y, width: width, height: height), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.hasShadow = true; panel.hidesOnDeactivate = true; panel.isReleasedWhenClosed = false
-        panel.contentView = surface; panel.appearance = effectiveAppearance
-        window.addChildWindow(panel, ordered: .above); semanticGhostPanel = panel; panel.orderFront(nil)
+        presentSemanticGhostPanel(surface, frame: NSRect(x: x, y: y, width: width, height: height), nextEdit: false, in: window)
+    }
+    private func dismissSemanticGhostPanel() {
+        guard let panel = semanticGhostPanel else { return }
+        semanticGhostPanel = nil
+        panel.parent?.removeChildWindow(panel)
+        panel.close()
+    }
+    private func presentSemanticGhostPanel(_ content: NSView, frame: NSRect, nextEdit: Bool, in window: NSWindow) {
+        // Reposition an existing preview instead of creating another native
+        // window on every caret/viewport callback. Avoid redundant ordering and
+        // frame requests that leave obsolete WindowServer geometry events.
+        let panel = semanticGhostPanel ?? SemanticCandidatePanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.hasShadow = !nextEdit; panel.hidesOnDeactivate = true; panel.isReleasedWhenClosed = false
+        panel.isOpaque = !nextEdit; panel.backgroundColor = nextEdit ? .clear : .windowBackgroundColor; panel.appearance = effectiveAppearance
+        if panel.frame != frame { panel.setFrame(frame, display: false) }
+        panel.contentView = content
+        if panel.parent !== window {
+            panel.parent?.removeChildWindow(panel)
+            window.addChildWindow(panel, ordered: .above)
+        }
+        semanticGhostPanel = panel
+        if !panel.isVisible { panel.orderFront(nil) }
     }
     private var semanticGhostRect: NSRect {
         guard let ghost = semanticGhost, let window else { return .zero }

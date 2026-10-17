@@ -166,10 +166,18 @@ import Testing
             scroll.rulersVisible = true
             scroll.tile()
         }
+        func focusWindow(_ window: NSWindow, editor view: EditorTextView) {
+            if !NSApp.isActive {
+                _ = NSApp.setActivationPolicy(.regular)
+                NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+                NSApp.activate()
+            }
+            if !window.isVisible || NSApp.keyWindow !== window { window.makeKeyAndOrderFront(nil) }
+            if NSApp.mainWindow !== window { window.makeMain() }
+            if window.firstResponder !== view { window.makeFirstResponder(view) }
+        }
         func focus() {
-            _ = NSApp.setActivationPolicy(.regular)
-            NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-            NSApp.activate(); window.makeKeyAndOrderFront(nil); window.makeKey(); window.makeMain(); window.makeFirstResponder(view)
+            focusWindow(window, editor: view)
             for _ in 0..<50 { guard let event = NSApp.nextEvent(matching: .any, until: Date(), inMode: .default, dequeue: true) else { break }; NSApp.sendEvent(event) }
         }
         func waitFor(_ label: String, _ condition: () -> Bool) async throws {
@@ -291,6 +299,12 @@ import Testing
                     view.scrollRangeToVisible(editRange)
                     view.updateSemanticGhostPresentation()
                     #expect(view.string == visualSource)
+                    if let panel = view.semanticGhostPanel {
+                        let number = panel.windowNumber
+                        for _ in 0..<3 { view.updateSemanticGhostPresentation() }
+                        #expect(view.semanticGhostPanel === panel && panel.windowNumber == number)
+                        #expect(panel.parent === window && NSApp.keyWindow === window)
+                    }
                     if label == "overflow" {
                         let panel = try #require(view.semanticGhostPanel)
                         #expect(panel.frame.width <= view.visibleRect.width)
@@ -370,6 +384,62 @@ import Testing
         }
         defer { notificationObservers.forEach(NotificationCenter.default.removeObserver) }
         #endif
+        func prepareNativeCommandWindow(_ targetWindow: NSWindow, editor targetView: EditorTextView) throws {
+            focusWindow(targetWindow, editor: targetView)
+            targetView.layoutSubtreeIfNeeded(); targetWindow.displayIfNeeded(); NSApp.updateWindows()
+            #if DEBUG
+            observingNativeCommand = true
+            #endif
+            let timestamp = ProcessInfo.processInfo.systemUptime - 0.1
+            let moved = try #require(NSEvent.otherEvent(with: .appKitDefined, location: .zero, modifierFlags: [], timestamp: timestamp, windowNumber: targetView.semanticGhostPanel?.windowNumber ?? targetWindow.windowNumber, context: nil, subtype: NSEvent.EventSubtype.windowMoved.rawValue, data1: 0, data2: 0))
+            #if DEBUG
+            priorWindowMoveTimestamp = moved.timestamp
+            #endif
+            // WindowServer can deliver an older geometry event after a synthetic
+            // key was already enqueued. Reproduce that delayed delivery too.
+            let movedWindowNumber = moved.windowNumber
+            let movedTimestamp = moved.timestamp
+            let delivery = Timer(timeInterval: 0.02, repeats: false) { _ in
+                MainActor.assumeIsolated {
+                    let delayed = NSEvent.otherEvent(with: .appKitDefined, location: .zero, modifierFlags: [], timestamp: movedTimestamp, windowNumber: movedWindowNumber, context: nil, subtype: NSEvent.EventSubtype.windowMoved.rawValue, data1: 0, data2: 0)!
+                    NSApp.postEvent(delayed, atStart: false)
+                }
+            }
+            RunLoop.main.add(delivery, forMode: .common)
+            defer { delivery.invalidate() }
+            let deadline = Date().addingTimeInterval(2)
+            var lastGeometry = ProcessInfo.processInfo.systemUptime
+            var frame = targetWindow.frame
+            var viewport = targetView.visibleRect
+            var sawStagedMove = false
+            var geometryEvents = 0
+            while Date() < deadline {
+                // Unlike until:Date(), a future deadline lets WindowServer's
+                // in-flight messages arrive through the real event loop.
+                if let event = NSApp.nextEvent(matching: .any, until: Date().addingTimeInterval(0.02), inMode: .default, dequeue: true) {
+                    if event.type == .appKitDefined {
+                        geometryEvents += 1
+                        lastGeometry = ProcessInfo.processInfo.systemUptime
+                        if event.subtype == .windowMoved, abs(event.timestamp - moved.timestamp) < 0.000001 { sawStagedMove = true }
+                    }
+                    NSApp.sendEvent(event)
+                }
+                if frame != targetWindow.frame || viewport != targetView.visibleRect {
+                    frame = targetWindow.frame; viewport = targetView.visibleRect
+                    lastGeometry = ProcessInfo.processInfo.systemUptime
+                }
+                if !NSApp.isActive || NSApp.keyWindow !== targetWindow || targetWindow.firstResponder !== targetView {
+                    focusWindow(targetWindow, editor: targetView)
+                    lastGeometry = ProcessInfo.processInfo.systemUptime
+                }
+                if sawStagedMove, ProcessInfo.processInfo.systemUptime - lastGeometry >= 0.2 {
+                    print("NES_IDLE stagedMoveDelivered=true geometryQuiet=0.2 events=\(geometryEvents) window=\(targetWindow.windowNumber) active=\(NSApp.isActive) key=\(NSApp.keyWindow === targetWindow) viewport=\(targetView.visibleRect.origin)")
+                    return
+                }
+            }
+            Issue.record("Native window preparation did not settle before command")
+            throw CancellationError()
+        }
         func requestWordCompletion() throws {
             // F5 is AppKit's standard complete: binding. Deliver it through the
             // application event queue, as a user command, instead of calling a
@@ -379,15 +449,6 @@ import Testing
             #endif
             let character = String(UnicodeScalar(NSF5FunctionKey)!)
             let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.function], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: 96))
-            // CI exposed old windowMoved events from the preceding preview
-            // windows. A real key follows those events in FIFO order. Pushing
-            // F5 at the front lets a stale move terminate AppKit's new popup.
-            // Stage that exact ordering hazard as a deterministic regression.
-            let moved = try #require(NSEvent.otherEvent(with: .appKitDefined, location: .zero, modifierFlags: [], timestamp: event.timestamp - 0.1, windowNumber: view.semanticGhostPanel?.windowNumber ?? window.windowNumber, context: nil, subtype: NSEvent.EventSubtype.windowMoved.rawValue, data1: 0, data2: 0))
-            #if DEBUG
-            priorWindowMoveTimestamp = moved.timestamp
-            #endif
-            NSApp.postEvent(moved, atStart: false)
             NSApp.postEvent(event, atStart: false)
         }
         let popupItem: LSPJSON = .object(["text": .string("Goodbye"), "range": try CopilotInline.rangeJSON(popupWord, in: popupSource)])
@@ -404,12 +465,25 @@ import Testing
         #expect(view.hasExclusiveCopilotInlineGhost)
         #expect(view.completions(forPartialWordRange: popupWord, indexOfSelectedItem: &popupSelection)?.isEmpty != false)
         view.semanticGhost = savedPreview
+        let panelBeforeNativeUI = try #require(view.semanticGhostPanel)
+        var previewCloseCount = 0
+        let closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: panelBeforeNativeUI, queue: .main) { _ in
+            MainActor.assumeIsolated { previewCloseCount += 1 }
+        }
+        defer { NotificationCenter.default.removeObserver(closeObserver) }
         @MainActor final class PopupObservation {
             var shown = false; var tabConsumed = false; var escapeConsumed = false; var attempts = 0
         }
         let popupObservation = PopupObservation()
         // AppKit can track a completion popup in a nested event loop. A common-
         // mode timer observes that real popup and posts Escape to this QA app only.
+        // Also exercise a real completion command while the retained NES target
+        // is offscreen. AppKit must bring its actual completion into view.
+        view.enclosingScrollView?.contentView.scroll(to: NSPoint(x: 0, y: 500))
+        NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: view.enclosingScrollView!.contentView)
+        #expect(!view.nextEditTargetIsVisible && copilot.hasSuggestions(in: view))
+        try prepareNativeCommandWindow(window, editor: view)
+        #expect(!view.nextEditTargetIsVisible && copilot.hasSuggestions(in: view))
         let popupTimer = Timer(timeInterval: 0.05, repeats: true) { timer in
             let finished = MainActor.assumeIsolated {
                 popupObservation.attempts += 1
@@ -426,11 +500,6 @@ import Testing
         }
         RunLoop.main.add(popupTimer, forMode: .common)
         #expect(!view.isNativeCompletionVisible)
-        // Also exercise a real completion command while the retained NES target
-        // is offscreen. AppKit must bring its actual completion into view.
-        view.enclosingScrollView?.contentView.scroll(to: NSPoint(x: 0, y: 500))
-        NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: view.enclosingScrollView!.contentView)
-        #expect(!view.nextEditTargetIsVisible && copilot.hasSuggestions(in: view))
         print("NES_NATIVE ESC before range=\(view.rangeForUserCompletion) selected=\(view.selectedRange()) visibleRect=\(view.visibleRect)")
         try requestWordCompletion()
         try await waitFor("native completion popup observed") { popupObservation.attempts > 0 && !popupTimer.isValid }
@@ -458,6 +527,7 @@ import Testing
         _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
         try await waitFor("native Tab NES baseline") { copilot.hasVisibleSuggestion(in: view) }
         let tabObservation = PopupObservation()
+        try prepareNativeCommandWindow(window, editor: view)
         let tabTimer = Timer(timeInterval: 0.05, repeats: true) { timer in
             let finished = MainActor.assumeIsolated {
                 tabObservation.attempts += 1
@@ -490,6 +560,82 @@ import Testing
         let ordinaryResults = ["HelloWorld", "HelloUniverse"].map { (popupSource as NSString).replacingCharacters(in: popupWord, with: $0) }
         #expect(ordinaryResults.contains(view.string))
         #expect(!view.string.contains("Goodbye"))
+        #expect(previewCloseCount == 1)
+        #expect(panelBeforeNativeUI.parent == nil && !panelBeforeNativeUI.isVisible)
+
+        // Normal multiple-document use: the first editor stays visible while a
+        // second document owns native completion. No old NES child stays attached.
+        do {
+            let firstWindowText = view.string
+            let otherDocument = Document()
+            otherDocument.makeWindowControllers()
+            let otherWindow = try #require(otherDocument.windowControllers.first?.window)
+            let otherView = try #require(otherDocument.textViews.first as? EditorTextView)
+            otherView.copilotController = copilot
+            otherView.semanticDocumentContext = { (nil, "Python") }
+            otherView.isAutomaticCompletionEnabled = false
+            otherView.completionWordTypes = .document
+            otherWindow.tabbingMode = .disallowed
+            otherWindow.setContentSize(NSSize(width: 600, height: 320))
+            otherView.insertText(popupSource, replacementRange: NSRange(location: 0, length: 0))
+            otherView.selectedRange = NSRange(location: NSMaxRange(popupWord), length: 0)
+            var otherClosed = false
+            defer {
+                if !otherClosed { otherWindow.orderOut(nil); otherDocument.close() }
+                focus()
+            }
+            focusWindow(otherWindow, editor: otherView)
+            try prepareNativeCommandWindow(otherWindow, editor: otherView)
+            #expect(window.isVisible && otherWindow.isVisible && NSApp.keyWindow === otherWindow)
+            #expect(otherView.rangeForUserCompletion == popupWord)
+            let observation = PopupObservation()
+            #if DEBUG
+            var otherFinalWasEscape = false
+            otherView.nativeCompletionTrace = { event in
+                MainActor.assumeIsolated {
+                    if event.hasPrefix("insertCompletion final=true") { otherFinalWasEscape = event.hasPrefix("insertCompletion final=true movement=\(NSCancelTextMovement) ") }
+                    print("NES_OTHER_WINDOW " + event)
+                }
+            }
+            defer { otherView.nativeCompletionTrace = nil }
+            #endif
+            let timer = Timer(timeInterval: 0.05, repeats: true) { timer in
+                let finished = MainActor.assumeIsolated {
+                    observation.attempts += 1
+                    guard otherView.isNativeCompletionVisible || observation.attempts >= 100 else { return false }
+                    observation.shown = otherView.isNativeCompletionVisible
+                    let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: otherWindow.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+                    observation.escapeConsumed = copilot.handleKey(escape, in: otherView)
+                    NSApp.postEvent(escape, atStart: false)
+                    return true
+                }
+                if finished { timer.invalidate() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            defer { timer.invalidate() }
+            let character = String(UnicodeScalar(NSF5FunctionKey)!)
+            let command = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.function], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: otherWindow.windowNumber, context: nil, characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: 96))
+            NSApp.postEvent(command, atStart: false)
+            let deadline = Date().addingTimeInterval(6)
+            while (timer.isValid || otherView.isNativeCompletionVisible), Date() < deadline {
+                if let event = NSApp.nextEvent(matching: .any, until: Date().addingTimeInterval(0.02), inMode: .default, dequeue: true) { NSApp.sendEvent(event) }
+            }
+            #expect(observation.shown && !observation.escapeConsumed && !timer.isValid)
+            #expect(!otherView.isNativeCompletionVisible && otherView.string == popupSource)
+            #expect(view.string == firstWindowText && panelBeforeNativeUI.parent == nil)
+            #if DEBUG
+            #expect(otherFinalWasEscape)
+            observingNativeCommand = false
+            #endif
+            print("MULTIWINDOW_UI_RESULT firstVisible=\(window.isVisible) secondPopup=\(observation.shown) oldPreviewClosed=\(previewCloseCount == 1) firstTextUnchanged=\(view.string == firstWindowText)")
+            otherWindow.orderOut(nil); otherDocument.close(); otherClosed = true
+            try prepareNativeCommandWindow(window, editor: view)
+            #expect(!otherWindow.isVisible && NSApp.keyWindow === window && view.string == firstWindowText)
+            #if DEBUG
+            observingNativeCommand = false
+            #endif
+            print("MULTIWINDOW_TEARDOWN_READY firstKey=\(NSApp.keyWindow === window) secondClosed=\(!otherWindow.isVisible)")
+        }
         // Subsequent cases replace the whole synthetic document directly. Native
         // completion undo records belong to this old fixture, not the next one.
         view.breakUndoCoalescing()
@@ -580,16 +726,20 @@ import Testing
             view.copilotController = copilot
             view.semanticDocumentContext = { (nil, "Python") }
             func focusNormalization() {
-                NSApp.activate(); window.makeKeyAndOrderFront(nil); window.makeFirstResponder(view)
+                focusWindow(window, editor: view)
             }
             func waitForNormalization(_ label: String, _ condition: () -> Bool) async throws {
                 for _ in 0..<200 { focusNormalization(); if condition() { return }; try await Task.sleep(for: .milliseconds(20)) }
-                Issue.record("Normalization checkpoint: \(label)"); throw CancellationError()
+                Issue.record("Normalization checkpoint: \(label); active=\(NSApp.isActive); key=\(NSApp.keyWindow === window); responder=\(window.firstResponder === view); phase=\(copilot.connectionPresentation.phase); detail=\(copilot.connectionPresentation.detail)"); throw CancellationError()
             }
             func key(_ code: UInt16) throws -> NSEvent {
                 try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: code == 48 ? "\t" : "\u{1b}", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code))
             }
             focusNormalization()
+            try prepareNativeCommandWindow(window, editor: view)
+            #if DEBUG
+            observingNativeCommand = false
+            #endif
             defer { window.orderOut(nil); normalizationDocument.close() }
             let decomposed = "e\u{301} Hello!"
             view.string = decomposed; view.selectedRange = NSRange(location: 3, length: 0)

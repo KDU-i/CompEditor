@@ -390,6 +390,11 @@ enum CopilotBundledServer {
         LSPProcesses.copilot.stopAll()
     }
     private func invalidate(reason: CopilotDiagnostics.Reason = .interaction) {
+        #if DEBUG
+        if let editor = view {
+            editor.nativeCompletionTrace?("suggestion invalidated reason=\(reason) active=\(NSApp.isActive) key=\(NSApp.keyWindow === editor.window) responder=\(editor.window?.firstResponder === editor) selected=\(editor.selectedRange()) revision=\(editor.semanticRevision) hasState=\(suggestions != nil)")
+        }
+        #endif
         if reason != .replacedRequest { continuingAcceptance = false }
         selectionRequest?.cancel(); selectionRequest = nil
         if let ticket = diagnosticRequest { diagnose(ticket, .cancelled, reason: reason); diagnosticRequest = nil }
