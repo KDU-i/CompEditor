@@ -178,6 +178,10 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     
     private var isShowingCompletion = false
     var isNativeCompletionVisible: Bool { isShowingCompletion }
+    #if DEBUG
+    /// Test-owned observer only; nil by default, absent from release builds.
+    var nativeCompletionTrace: ((String) -> Void)?
+    #endif
     private var partialCompletionWord: String?
     private lazy var completionDebouncer = Debouncer { [weak self] in self?.performCompletion() }
     
@@ -1843,6 +1847,9 @@ extension EditorTextView {
     
     override func completions(forPartialWordRange charRange: NSRange, indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String]? {
         
+        #if DEBUG
+        nativeCompletionTrace?("candidates request range=\(charRange) selected=\(selectedRange()) marked=\(hasMarkedText()) exclusiveInline=\(hasExclusiveCopilotInlineGhost)")
+        #endif
         guard
             !self.hasExclusiveCopilotInlineGhost, !charRange.isEmpty,
             !self.completionWordTypes.isEmpty
@@ -1888,6 +1895,9 @@ extension EditorTextView {
             return []
         }
         
+        #if DEBUG
+        nativeCompletionTrace?("candidates result count=\(candidateWords.count)")
+        #endif
         return candidateWords
     }
     
@@ -1895,7 +1905,9 @@ extension EditorTextView {
     override func insertCompletion(_ word: String, forPartialWordRange charRange: NSRange, movement: Int, isFinal flag: Bool) {
         
         self.completionDebouncer.cancel()
-        
+        #if DEBUG
+        nativeCompletionTrace?("insertCompletion final=\(flag) movement=\(movement) range=\(charRange)")
+        #endif
         self.isShowingCompletion = !flag
         
         // store original string
@@ -1978,6 +1990,9 @@ extension EditorTextView {
     }
 
     override func complete(_ sender: Any?) {
+        #if DEBUG
+        nativeCompletionTrace?("complete called selected=\(selectedRange()) marked=\(hasMarkedText()) active=\(NSApp.isActive) key=\(NSApp.keyWindow === window) responder=\(window?.firstResponder === self)")
+        #endif
         guard !hasMarkedText() else { return }
         copilotController.dismissForInteraction(in: self)
         presentNativeCompletion(sender)
@@ -1988,7 +2003,15 @@ extension EditorTextView {
         // popup that never calls insertCompletion until a candidate is chosen.
         // Own Tab/Esc throughout that lifetime, not only after preview insertion.
         isShowingCompletion = true
-        defer { isShowingCompletion = false }
+        #if DEBUG
+        nativeCompletionTrace?("AppKit enter range=\(rangeForUserCompletion) selected=\(selectedRange())")
+        #endif
+        defer {
+            isShowingCompletion = false
+            #if DEBUG
+            nativeCompletionTrace?("AppKit returned selected=\(selectedRange())")
+            #endif
+        }
         super.complete(sender)
     }
 }

@@ -309,10 +309,24 @@ import Testing
         // original normal-inline exclusion policy.
         let popupSource = "HelloWorld\nHelloUniverse\nfirst()\nvalue = Hello"
         let popupWord = (popupSource as NSString).range(of: "Hello", options: .backwards)
-        view.lineEnding = .lf; view.string = popupSource
+        view.lineEnding = .lf
+        view.isAutomaticCompletionEnabled = false
+        view.completionWordTypes = .document
+        // Replacing string directly bypasses didChangeText/revision and AppKit's
+        // text-input lifecycle. Native completion must observe real input, just
+        // like the user opening the menu after editing a document.
+        let beforePopupRevision = view.semanticRevision
+        view.insertText(popupSource, replacementRange: NSRange(location: 0, length: view.string.utf16.count))
+        #expect(view.semanticRevision > beforePopupRevision)
         view.semanticDocumentContext = { (nil, "Python") }
         view.selectedRange = NSRange(location: NSMaxRange(popupWord), length: 0)
-        view.completionWordTypes = .document
+        view.scrollRangeToVisible(view.selectedRange())
+        view.layoutSubtreeIfNeeded(); window.displayIfNeeded()
+        try #require(view.rangeForUserCompletion == popupWord)
+        #if DEBUG
+        view.nativeCompletionTrace = { print("NES_NATIVE " + $0) }
+        defer { view.nativeCompletionTrace = nil }
+        #endif
         let popupItem: LSPJSON = .object(["text": .string("Goodbye"), "range": try CopilotInline.rangeJSON(popupWord, in: popupSource)])
         try JSONEncoder().encode(LSPJSON.object(["source": .string(popupSource), "edit": popupItem])).write(to: fixture)
         _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
@@ -349,7 +363,9 @@ import Testing
         }
         RunLoop.main.add(popupTimer, forMode: .common)
         #expect(!view.isNativeCompletionVisible)
+        print("NES_NATIVE ESC before range=\(view.rangeForUserCompletion) selected=\(view.selectedRange()) visibleRect=\(view.visibleRect)")
         view.complete(nil)
+        print("NES_NATIVE ESC after attempts=\(popupObservation.attempts) shown=\(popupObservation.shown)")
         try await waitFor("native completion popup observed") { popupObservation.attempts > 0 && !popupTimer.isValid }
         popupTimer.invalidate()
         #expect(popupObservation.shown)
@@ -357,7 +373,10 @@ import Testing
         #expect(!view.string.contains("Goodbye"))
         #expect(!view.isNativeCompletionVisible)
         view.breakUndoCoalescing(); view.undoManager?.removeAllActions()
-        view.string = popupSource; view.selectedRange = NSRange(location: NSMaxRange(popupWord), length: 0)
+        view.insertText(popupSource, replacementRange: NSRange(location: 0, length: view.string.utf16.count))
+        view.selectedRange = NSRange(location: NSMaxRange(popupWord), length: 0)
+        view.scrollRangeToVisible(view.selectedRange()); view.layoutSubtreeIfNeeded(); window.displayIfNeeded()
+        try #require(view.rangeForUserCompletion == popupWord)
         _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
         try await waitFor("native Tab NES baseline") { copilot.hasVisibleSuggestion(in: view) }
         let tabObservation = PopupObservation()
@@ -375,7 +394,9 @@ import Testing
         }
         RunLoop.main.add(tabTimer, forMode: .common)
         #expect(!view.isNativeCompletionVisible)
+        print("NES_NATIVE TAB before range=\(view.rangeForUserCompletion) selected=\(view.selectedRange())")
         view.complete(nil)
+        print("NES_NATIVE TAB after attempts=\(tabObservation.attempts) shown=\(tabObservation.shown)")
         try await waitFor("native Tab applied") { !tabTimer.isValid && !view.isNativeCompletionVisible }
         tabTimer.invalidate()
         #expect(tabObservation.shown && !tabObservation.tabConsumed)
