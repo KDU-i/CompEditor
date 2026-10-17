@@ -10,7 +10,8 @@ def persist_synthetic_session():
     if session_path:
         session.update(authenticated=authenticated)
         if 'opened' in globals(): session['versions']=dict(opened)
-        session_path.write_text(json.dumps(session))
+        temporary = session_path.with_suffix('.tmp')
+        temporary.write_text(json.dumps(session)); temporary.replace(session_path)
 def utf16_offset(value, position):
     lines = value.splitlines(keepends=True)
     if position['line'] == len(lines): return len(value)
@@ -63,6 +64,8 @@ try:
         elif method=='textDocument/didOpen':
             text=p['textDocument']['text']; version=p['textDocument']['version']; opened[p['textDocument']['uri']]=version; language=p['textDocument']['languageId']
             documents[p['textDocument']['uri']]={'text':text,'language':language}
+            session.setdefault('openedURIs',[]).append(p['textDocument']['uri'])
+            persist_synthetic_session()
         elif method=='textDocument/didChange':
             text=documents[p['textDocument']['uri']]['text']
             assert 'range' in p['contentChanges'][0]

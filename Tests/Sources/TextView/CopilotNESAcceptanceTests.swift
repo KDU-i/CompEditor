@@ -1009,7 +1009,20 @@ import Testing
         focus()
         do {
             let projectRoot = directory.appendingPathComponent("ordinary-project").resolvingSymlinksInPath()
-            try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+            let repository = directory.appendingPathComponent("project-admin")
+            try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+            func fixtureGit(_ arguments: [String]) throws {
+                let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+                process.arguments = ["--no-optional-locks"] + arguments; process.currentDirectoryURL = repository
+                process.environment = ["PATH":"/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM":"1", "GIT_CONFIG_GLOBAL":"/dev/null", "GIT_TERMINAL_PROMPT":"0", "LC_ALL":"C"]
+                process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+                try process.run(); process.waitUntilExit(); try #require(process.terminationStatus == 0)
+            }
+            try fixtureGit(["init", "-q"])
+            try fixtureGit(["config", "core.ignorecase", "true"])
+            try fixtureGit(["-c", "core.hooksPath=/dev/null", "-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "--allow-empty", "-qm", "fixture"])
+            try fixtureGit(["worktree", "add", "-qb", "nes-native", projectRoot.path])
+            try "sensitive.py\nPRIVATE/\n foo.py\n".write(to: projectRoot.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
             let sourceURI = projectRoot.appendingPathComponent("source.py"), targetURI = projectRoot.appendingPathComponent("unopened.py")
             let diskSourceText = "Hello source", sourceText = "Hello source!", targetText = "Hello unopened"
             try diskSourceText.write(to: sourceURI, atomically: true, encoding: .utf8)
@@ -1036,6 +1049,30 @@ import Testing
             try settleEditorWindow(projectWindow, editor: sourceView)
             let badEdit: LSPJSON = .object(["text": .string("UNVERIFIED"), "range": try CopilotInline.rangeJSON(NSRange(location: 0, length: 5), in: targetText)])
             let freshEdit: LSPJSON = .object(["text": .string("VERIFIED"), "range": try CopilotInline.rangeJSON(NSRange(location: 0, length: 5), in: targetText)])
+            for name in ["Sensitive.py", "private/normal.py", " foo.py"] {
+                let excluded = projectRoot.appendingPathComponent(name)
+                try FileManager.default.createDirectory(at: excluded.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try "Hello excluded".write(to: excluded, atomically: true, encoding: .utf8)
+                let rejected: LSPJSON = .object(["source": .string(sourceText), "edit": badEdit,
+                    "target": .object(["uri": .string(excluded.absoluteString), "version": .number(999)])])
+                try JSONEncoder().encode(rejected).write(to: fixture)
+                _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+                for _ in 0..<250 {
+                    if copilot.connectionPresentation.detail.contains("表示できるAI候補") { break }
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+                #expect(copilot.connectionPresentation.detail.contains("表示できるAI候補"))
+                #expect(sourceView.semanticGhost == nil && project.currentDocument === sourceDocument)
+                let tab = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: projectWindow.windowNumber, context: nil, characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48))
+                #expect(!copilot.handleKey(tab, in: sourceView))
+                let data = try Data(contentsOf: sessionState)
+                let state = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                #expect((state["versions"] as? [String: Int])?[excluded.absoluteString] == nil)
+                #expect((state["openedURIs"] as? [String])?.contains(excluded.absoluteString) == false)
+                #expect(try String(contentsOf: excluded, encoding: .utf8) == "Hello excluded")
+            }
+            print("NES_GIT_EXCLUSION_PASS caseFile=true caseParent=true leadingSpace=true noNavigation=true noTargetSync=true")
             let payload: LSPJSON = .object(["cases": .array([
                 .object(["source": .string(sourceText), "edit": badEdit, "target": .object(["uri": .string(targetURI.absoluteString), "version": .number(999)])]),
                 .object(["source": .string(targetText), "edit": freshEdit])])])
@@ -1103,7 +1140,7 @@ import Testing
             #expect(dirtyForeground.semanticGhost?.text == "VERIFIED" && dirtyForeground.string == dirtyMemory)
             #expect(dirtyDocument.isDocumentEdited && sourceDocument.textStorage.string == sourceText)
             #expect(try String(contentsOf: dirtyURI, encoding: .utf8) == dirtyDisk)
-            print("NES_PROJECT_PASS explicitOpenRoot=true unopenedNavigation=true unownedVersion999NeverApplied=true foregroundFreshRequest=true sourceUnsavedPreserved=true secondTabAdoptsFreshOnly=true targetUndo=true unsynchronizedDirtyTargetPreserved=true")
+            print("NES_PROJECT_PASS realGitWorktree=true explicitOpenRoot=true unopenedNavigation=true unownedVersion999NeverApplied=true foregroundFreshRequest=true sourceUnsavedPreserved=true secondTabAdoptsFreshOnly=true targetUndo=true unsynchronizedDirtyTargetPreserved=true")
         }
         focus()
         // Use a fresh synthetic document and a private event-group manager.
