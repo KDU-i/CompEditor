@@ -142,7 +142,11 @@ final class LineNumberView: NSRulerView {
             rect.intersection(self.frame).fill()
         }
         
+        // Number drawing translates the graphics context for its glyph baseline.
+        // Keep the navigation indicator in ruler coordinates.
+        NSGraphicsContext.saveGraphicsState()
         self.drawNumbers(in: rect)
+        NSGraphicsContext.restoreGraphicsState()
         if let indicator = nextEditIndicatorRect {
             NSAttributedString(string: "➜", attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .bold), .foregroundColor: NSColor.systemBlue]).draw(in: indicator)
         }

@@ -162,6 +162,7 @@ import Testing
             scroll.hasVerticalRuler = true
             scroll.verticalRulerView = LineNumberView(textView: view, scrollView: scroll, orientation: .verticalRuler)
             scroll.rulersVisible = true
+            scroll.tile()
         }
         func focus() {
             _ = NSApp.setActivationPolicy(.regular)
@@ -176,6 +177,7 @@ import Testing
         func capture(_ target: NSView, name: String) throws {
             let output = URL.temporaryDirectory.appendingPathComponent("compeditor-nes031-evidence")
             try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            target.layoutSubtreeIfNeeded()
             target.displayIfNeeded()
             if let bitmap = target.bitmapImageRepForCachingDisplay(in: target.bounds) {
                 target.cacheDisplay(in: target.bounds, to: bitmap)
