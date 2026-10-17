@@ -160,7 +160,10 @@ import Testing
         window.setContentSize(NSSize(width: 800, height: 400))
         if let scroll = view.enclosingScrollView {
             scroll.hasVerticalRuler = true
+            scroll.hasHorizontalRuler = false
+            scroll.horizontalRulerView?.isHidden = true
             scroll.verticalRulerView = LineNumberView(textView: view, scrollView: scroll, orientation: .verticalRuler)
+            scroll.verticalRulerView?.isHidden = false
             scroll.rulersVisible = true
             scroll.tile()
         }

@@ -149,7 +149,7 @@ extension EditorTextView {
     private func drawNextEditIndicator(in dirtyRect: NSRect) {
         guard let ghost = semanticGhost, let range = ghost.replacementRange else { return }
         let anchor = semanticGhostRect
-        if enclosingScrollView?.rulersVisible != true, let indicator = nextEditNavigationRect {
+        if !nextEditUsesGutter, let indicator = nextEditNavigationRect {
             NSAttributedString(string: anchor.isEmpty ? "↪" : "➜", attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .bold), .foregroundColor: NSColor.systemBlue]).draw(in: indicator)
         }
         guard range.length > 0, let layoutManager, let textContainer else { return }
@@ -165,6 +165,10 @@ extension EditorTextView {
             }
         }
     }
+    var nextEditUsesGutter: Bool {
+        guard let scroll = enclosingScrollView, let ruler = scroll.verticalRulerView else { return false }
+        return scroll.rulersVisible && scroll.hasVerticalRuler && !ruler.isHidden
+    }
     var nextEditNavigationRect: NSRect? {
         guard let ghost = semanticGhost, ghost.nextEdit, semanticGhostIsCurrent, let range = ghost.replacementRange else { return nil }
         guard let window else { return nil }
@@ -176,7 +180,7 @@ extension EditorTextView {
         return NSRect(x: visibleRect.maxX - 20, y: y, width: 18, height: height)
     }
     func nextEditIndicatorHit(at point: NSPoint) -> Bool {
-        enclosingScrollView?.rulersVisible != true && nextEditNavigationRect?.contains(point) == true
+        !nextEditUsesGutter && nextEditNavigationRect?.contains(point) == true
     }
     /// Hit testing is mapped to original characters before removing a virtual preview gap.
     func semanticGhostMouseOffset(at point: NSPoint) -> Int? {

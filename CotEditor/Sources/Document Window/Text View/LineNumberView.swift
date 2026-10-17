@@ -155,7 +155,7 @@ final class LineNumberView: NSRulerView {
     
     
     private var nextEditIndicatorRect: NSRect? {
-        guard let editor = textView as? EditorTextView, let anchor = editor.nextEditNavigationRect else { return nil }
+        guard orientation == .verticalRuler, let editor = textView as? EditorTextView, editor.nextEditUsesGutter, let anchor = editor.nextEditNavigationRect else { return nil }
         var rect = convert(anchor, from: editor)
         rect.origin.x = bounds.minX + 2
         return rect
