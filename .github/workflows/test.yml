@@ -57,13 +57,17 @@ jobs:
       uses: actions/checkout@v7
     - name: Unit Test for CotEditor
       run: |
-        xcodebuild test -scheme CotEditor COMPEDITOR_USAGE_ENDPOINT= CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= CODE_SIGN_ENTITLEMENTS_SUFFIX=-AdHoc -skipPackagePluginValidation
+        xcodebuild test -scheme CotEditor COMPEDITOR_USAGE_ENDPOINT= CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= CODE_SIGN_ENTITLEMENTS_SUFFIX=-AdHoc -skipPackagePluginValidation -skip-testing:Tests/CopilotNESAcceptanceTests
+    - name: NES native acceptance (exclusive AppKit window and event loop)
+      run: |
+        xcodebuild test-without-building -scheme CotEditor COMPEDITOR_USAGE_ENDPOINT= CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= CODE_SIGN_ENTITLEMENTS_SUFFIX=-AdHoc -skipPackagePluginValidation -parallel-testing-enabled NO -only-testing:Tests/CopilotNESAcceptanceTests
     - name: Offline Copilot session and completion checks
       run: |
         zsh Scripts/test-copilot-session.sh
         zsh Scripts/test-copilot.sh
         zsh Scripts/test-copilot-parity.sh
         zsh Scripts/test-copilot-incremental.sh
+        zsh Scripts/test-copilot-text-identity.sh
         zsh Scripts/test-copilot-nes-policy.sh
         zsh Scripts/test-copilot-nes-rebase.sh
         zsh Scripts/test-copilot-diagnostics.sh

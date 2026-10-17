@@ -90,6 +90,8 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     private var semanticTrackingArea: NSTrackingArea?
     let semanticBufferID = UUID()
     var semanticRevision = 0
+    // One owner for both actual AppKit events and completion/viewport callbacks.
+    lazy var copilotController: CopilotCompletionController = .shared
     var semanticDiagnostics: SemanticDiagnostics? { didSet { needsDisplay = true; SemanticCompletionController.shared.cancelHover() } }
     var semanticGhostPanel: SemanticCandidatePanel?
     var semanticGhost: SemanticGhostPreview? { didSet { updateSemanticGhostPresentation() } }
@@ -450,10 +452,10 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
 
     override func mouseDown(with event: NSEvent) {
         if nextEditIndicatorHit(at: convert(event.locationInWindow, from: nil)) {
-            CopilotCompletionController.shared.jumpToNextEdit(in: self); return
+            copilotController.jumpToNextEdit(in: self); return
         }
         let mappedOffset = semanticGhostMouseOffset(at: convert(event.locationInWindow, from: nil))
-        CopilotCompletionController.shared.dismissForInteraction(in: self)
+        copilotController.dismissForInteraction(in: self)
         SemanticCompletionController.shared.cancelHover()
         
         self.mouseDownPoint = self.convert(event.locationInWindow, from: nil)
@@ -524,20 +526,22 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     
     override func keyDown(with event: NSEvent) {
         let semantic = SemanticCompletionController.shared
-        if CopilotCompletionController.shared.handleKey(event, in: self) { return }
+        if copilotController.handleKey(event, in: self) { return }
         if semantic.handleAutomaticKey(event, in: self) { return }
         let previous = self.string
         super.keyDown(with: event)
         semantic.typed(event, in: self, previousText: previous)
         if !(event.modifierFlags.contains(.command) && event.keyCode == 6) {
-            CopilotCompletionController.shared.typed(in: self, previous: previous)
+            copilotController.typed(in: self, previous: previous)
         }
     }
 
     override func didChangeText() {
         
-        super.didChangeText()
+        // AppKit posts didChangeNotification synchronously from super. Observers
+        // must see the revision of the text they are rebasing against.
         semanticRevision += 1
+        super.didChangeText()
         SemanticCompletionController.shared.track(self)
         
         self.invalidateNonContiguousLayout()
@@ -1975,7 +1979,7 @@ extension EditorTextView {
 
     override func complete(_ sender: Any?) {
         guard !hasMarkedText() else { return }
-        CopilotCompletionController.shared.dismissForInteraction(in: self)
+        copilotController.dismissForInteraction(in: self)
         super.complete(sender)
     }
 }

@@ -28,20 +28,19 @@ import Testing
         defaults.set(true, forKey: "CompEditor.Copilot.automaticNextEdits.v1")
         let copilot = CopilotCompletionController(defaults: defaults, executable: executable)
         let document = Document()
-        let editorController = EditorTextViewController(document: document)
-        editorController.loadView()
-        let view = editorController.textView
+        document.makeWindowControllers()
+        let window = try #require(document.windowControllers.first?.window)
+        let view = try #require(document.textViews.first as? EditorTextView)
+        view.copilotController = copilot
         view.string = "NO_NES"
         view.semanticDocumentContext = { (nil, "Python") }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
         window.tabbingMode = .disallowed
-        window.contentViewController = editorController
         window.setContentSize(NSSize(width: 600, height: 300))
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(view)
         _ = NSApp.setActivationPolicy(.regular)
         NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         copilot.installMenu()
         let installedMenu = NSApp.mainMenu?.items.last
         defer {
@@ -68,14 +67,14 @@ import Testing
         try await waitUntil("authentication") { copilot.connectionPresentation.phase == .authenticated }
         _ = NSApp.setActivationPolicy(.regular)
         NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(view)
         try await waitUntil("focused editor", limit: 750) {
             // The test host can finish opening its initial empty window after auth.
             _ = NSApp.setActivationPolicy(.regular)
             NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
             window.makeKeyAndOrderFront(nil)
             window.makeKey()
             window.makeMain()
@@ -151,12 +150,12 @@ import Testing
         defaults.set(false, forKey: "CompEditor.Copilot.automaticNextEdits.v1")
         let copilot = CopilotCompletionController(defaults: defaults, executable: executable)
         let document = Document()
-        let controller = EditorTextViewController(document: document)
-        controller.loadView()
-        let view = controller.textView
+        document.makeWindowControllers()
+        let window = try #require(document.windowControllers.first?.window)
+        let view = try #require(document.textViews.first as? EditorTextView)
+        view.copilotController = copilot
         view.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
-        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 800, height: 400), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
-        window.tabbingMode = .disallowed; window.contentViewController = controller
+        window.tabbingMode = .disallowed
         window.setContentSize(NSSize(width: 800, height: 400))
         if let scroll = view.enclosingScrollView {
             scroll.hasVerticalRuler = true
@@ -170,12 +169,12 @@ import Testing
         func focus() {
             _ = NSApp.setActivationPolicy(.regular)
             NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-            NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil); window.makeKey(); window.makeMain(); window.makeFirstResponder(view)
+            NSApp.activate(); window.makeKeyAndOrderFront(nil); window.makeKey(); window.makeMain(); window.makeFirstResponder(view)
             for _ in 0..<50 { guard let event = NSApp.nextEvent(matching: .any, until: Date(), inMode: .default, dequeue: true) else { break }; NSApp.sendEvent(event) }
         }
         func waitFor(_ label: String, _ condition: () -> Bool) async throws {
             for _ in 0..<1000 { focus(); if condition() { return }; try await Task.sleep(for: .milliseconds(20)) }
-            Issue.record("NES031 checkpoint: \(label); active=\(NSApp.isActive); key=\(NSApp.keyWindow === window); phase=\(copilot.connectionPresentation.phase); status=\(copilot.connectionPresentation.detail)"); throw CancellationError()
+            Issue.record("NES031 checkpoint: \(label); active=\(NSApp.isActive); key=\(NSApp.keyWindow === window); running=\(NSApp.isRunning); pid=\(ProcessInfo.processInfo.processIdentifier); front=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil"); phase=\(copilot.connectionPresentation.phase); status=\(copilot.connectionPresentation.detail)"); throw CancellationError()
         }
         func capture(_ target: NSView, name: String) throws {
             let output = URL.temporaryDirectory.appendingPathComponent("compeditor-nes031-evidence")
@@ -185,6 +184,32 @@ import Testing
             if let bitmap = target.bitmapImageRepForCachingDisplay(in: target.bounds) {
                 target.cacheDisplay(in: target.bounds, to: bitmap)
                 if let png = bitmap.representation(using: .png, properties: [:]) { try png.write(to: output.appendingPathComponent(name + ".png")) }
+            }
+        }
+        func captureEditorWithPanel(name: String) throws {
+            let target = view.enclosingScrollView ?? view
+            target.layoutSubtreeIfNeeded(); target.displayIfNeeded()
+            guard let bitmap = target.bitmapImageRepForCachingDisplay(in: target.bounds) else { return }
+            target.cacheDisplay(in: target.bounds, to: bitmap)
+            let source = NSImage(size: target.bounds.size); source.addRepresentation(bitmap)
+            var overlay: NSImage?, overlayRect = NSRect.zero
+            if let panel = view.semanticGhostPanel, let content = panel.contentView,
+               let preview = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+                content.cacheDisplay(in: content.bounds, to: preview)
+                let image = NSImage(size: content.bounds.size); image.addRepresentation(preview); overlay = image
+                overlayRect = target.convert(window.convertFromScreen(panel.frame), from: nil)
+            }
+            // AppKit cacheDisplay excludes child windows. Composite their actual
+            // rendered pixels at the real screen-to-view frame, without restyling.
+            let image = NSImage(size: target.bounds.size, flipped: target.isFlipped) { rect in
+                source.draw(in: rect)
+                overlay?.draw(in: overlayRect)
+                return true
+            }
+            if let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                let output = URL.temporaryDirectory.appendingPathComponent("compeditor-nes031-evidence")
+                try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                try png.write(to: output.appendingPathComponent(name + ".png"))
             }
         }
         func key(_ code: UInt16) throws -> NSEvent {
@@ -225,7 +250,7 @@ import Testing
                     #expect(copilot.hasSuggestions(in: view))
                     if let preview = view.semanticGhostPanel?.contentView { try capture(preview, name: imageName + "-preview-narrow") }
                     #expect(view.undoManager?.canUndo == undoBefore)
-                    #expect(copilot.handleKey(try key(48), in: view))
+                    window.sendEvent(try key(48))
                     #expect(view.string == source)
                     #expect(view.selectedRange().location == range.location)
                     #expect(copilot.handleKey(try key(48), in: view))
@@ -243,6 +268,43 @@ import Testing
                 }
             }
         }
+        // Visual acceptance against the supplied VS Code examples. Both widths
+        // use the same real editor font/line height and synthetic source.
+        view.breakUndoCoalescing(); view.undoManager?.removeAllActions()
+        view.wrapsLines = true
+        let visualSource = "def say_hello(name: str, greeting: str):\n    return f'{greeting or \"Hello\"}, {name}!'\n\n\ndef function():\n    pass"
+        let visualRange = (visualSource as NSString).range(of: "Hello")
+        for dark in [true, false] {
+            view.backgroundColor = dark ? NSColor(calibratedWhite: 0.118, alpha: 1) : .white
+            view.textColor = dark ? NSColor(calibratedWhite: 0.83, alpha: 1) : NSColor(calibratedWhite: 0.18, alpha: 1)
+            window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            for width in [CGFloat(800), 360] {
+                window.setContentSize(NSSize(width: width, height: 300))
+                for (label, replacement, insertion) in [("word", "Goodbye", false), ("insert", "kind ", true), ("overflow", String(repeating: "long_identifier + ", count: 16) + "END", true), ("multiline", "Hello\n    another_line()", false)] {
+                    view.string = visualSource; view.semanticDocumentContext = { (nil, "Python") }
+                    view.selectedRange = NSRange(location: visualRange.location - 1, length: 0)
+                    let editRange = NSRange(location: visualRange.location, length: insertion ? 0 : visualRange.length)
+                    let item: LSPJSON = .object(["text": .string(replacement), "range": try CopilotInline.rangeJSON(editRange, in: visualSource)])
+                    try JSONEncoder().encode(LSPJSON.object(["source": .string(visualSource), "edit": item])).write(to: fixture)
+                    _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+                    try await waitFor("visual " + label) { copilot.hasVisibleSuggestion(in: view) }
+                    view.scrollRangeToVisible(editRange)
+                    view.updateSemanticGhostPresentation()
+                    #expect(view.string == visualSource)
+                    if label == "overflow" {
+                        let panel = try #require(view.semanticGhostPanel)
+                        #expect(panel.frame.width <= view.visibleRect.width)
+                        func textViews(_ target: NSView) -> [NSTextView] { (target as? NSTextView).map { [$0] } ?? target.subviews.flatMap(textViews) }
+                        let displayed = panel.contentView.map(textViews) ?? []
+                        #expect(displayed.contains { $0.string == replacement })
+                        #expect(displayed.allSatisfy { text in guard let layout = text.layoutManager, let container = text.textContainer else { return false }; return layout.glyphRange(for: container).length == layout.numberOfGlyphs })
+                    }
+                    try captureEditorWithPanel(name: "vscode-density-\(dark ? "dark" : "light")-\(Int(width))-\(label)")
+                }
+            }
+        }
+        window.appearance = nil; view.backgroundColor = .textBackgroundColor; view.textColor = .textColor
+        window.setContentSize(NSSize(width: 800, height: 400))
         // Exercise native ordinary-completion visibility with NES, retaining the
         // original normal-inline exclusion policy.
         let popupSource = "HelloWorld\nHelloUniverse\nfirst()\nvalue = Hello"
@@ -293,6 +355,31 @@ import Testing
         #expect(!popupObservation.tabConsumed && !popupObservation.escapeConsumed)
         #expect(!view.string.contains("Goodbye"))
         #expect(!view.isNativeCompletionVisible)
+        view.breakUndoCoalescing(); view.undoManager?.removeAllActions()
+        view.string = popupSource; view.selectedRange = NSRange(location: NSMaxRange(popupWord), length: 0)
+        _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+        try await waitFor("native Tab NES baseline") { copilot.hasVisibleSuggestion(in: view) }
+        let tabObservation = PopupObservation()
+        let tabTimer = Timer(timeInterval: 0.05, repeats: true) { timer in
+            let finished = MainActor.assumeIsolated {
+                tabObservation.attempts += 1
+                guard view.isNativeCompletionVisible || tabObservation.attempts >= 100 else { return false }
+                tabObservation.shown = view.isNativeCompletionVisible
+                let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48)!
+                tabObservation.tabConsumed = copilot.handleKey(event, in: view)
+                NSApp.postEvent(event, atStart: true)
+                return true
+            }
+            if finished { timer.invalidate() }
+        }
+        RunLoop.main.add(tabTimer, forMode: .common)
+        view.complete(nil)
+        try await waitFor("native Tab applied") { !tabTimer.isValid && !view.isNativeCompletionVisible }
+        tabTimer.invalidate()
+        #expect(tabObservation.shown && !tabObservation.tabConsumed)
+        let ordinaryResults = ["HelloWorld", "HelloUniverse"].map { (popupSource as NSString).replacingCharacters(in: popupWord, with: $0) }
+        #expect(ordinaryResults.contains(view.string))
+        #expect(!view.string.contains("Goodbye"))
         // Subsequent cases replace the whole synthetic document directly. Native
         // completion undo records belong to this old fixture, not the next one.
         view.breakUndoCoalescing()
@@ -346,7 +433,9 @@ import Testing
         _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
         try await waitFor("rebase original") { view.semanticGhost?.text == "Goodbye" }
         view.insertText("# 😀\n", replacementRange: NSRange(location: 0, length: 0))
-        copilot.typed(in: view, previous: source)
+        // Non-key input posts AppKit notifications without a keyDown/typed repair.
+        #expect(view.semanticGhost?.revision == view.semanticRevision)
+        #expect(copilot.hasVisibleSuggestion(in: view))
         #expect(view.semanticGhost?.replacementRange?.location == range.location + "# 😀\n".utf16.count)
         #expect(view.semanticGhost?.snapshot == view.string)
         view.selectedRange = NSRange(location: view.string.utf16.count, length: 0)
@@ -367,6 +456,74 @@ import Testing
         try await Task.sleep(for: .milliseconds(1100))
         #expect(view.semanticGhost?.text == "NEW")
         #expect(view.semanticGhost?.snapshot == newer)
+        // Use a fresh synthetic document and a private event-group manager.
+        // XCTest dispatches multiple synthetic user events in one task, while
+        // real NSApplication closes each event's group. Never close a document's
+        // live automatic groups: an asynchronous autosave can own one of them.
+        do {
+            let normalizationDocument = Document()
+            let undo = UndoManager(); undo.groupsByEvent = false
+            normalizationDocument.undoManager = undo
+            normalizationDocument.makeWindowControllers()
+            let window = try #require(normalizationDocument.windowControllers.first?.window)
+            let view = try #require(normalizationDocument.textViews.first as? EditorTextView)
+            view.copilotController = copilot
+            view.semanticDocumentContext = { (nil, "Python") }
+            func focusNormalization() {
+                NSApp.activate(); window.makeKeyAndOrderFront(nil); window.makeFirstResponder(view)
+            }
+            func waitForNormalization(_ label: String, _ condition: () -> Bool) async throws {
+                for _ in 0..<200 { focusNormalization(); if condition() { return }; try await Task.sleep(for: .milliseconds(20)) }
+                Issue.record("Normalization checkpoint: \(label)"); throw CancellationError()
+            }
+            func key(_ code: UInt16) throws -> NSEvent {
+                try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: code == 48 ? "\t" : "\u{1b}", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code))
+            }
+            focusNormalization()
+            defer { window.orderOut(nil); normalizationDocument.close() }
+            let decomposed = "e\u{301} Hello!"
+            view.string = decomposed; view.selectedRange = NSRange(location: 3, length: 0)
+            try setFixture(source: decomposed, text: "Bye")
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            try await waitForNormalization("normalization original") { copilot.hasVisibleSuggestion(in: view) }
+            undo.beginUndoGrouping()
+            view.insertText("é", replacementRange: NSRange(location: 0, length: 2))
+            undo.endUndoGrouping()
+            #expect(LSPText.sameText(view.string, "é Hello!"))
+            #expect(view.semanticGhost?.replacementRange == NSRange(location: 2, length: 5))
+            #expect(view.semanticGhost?.revision == view.semanticRevision && copilot.hasVisibleSuggestion(in: view))
+            undo.beginUndoGrouping()
+            window.sendEvent(try key(48))
+            undo.endUndoGrouping()
+            #expect(LSPText.sameText(view.string, "é Bye!"))
+            view.undoManager?.undo()
+            #expect(LSPText.sameText(view.string, "é Hello!"))
+            view.undoManager?.undo()
+            #expect(LSPText.sameText(view.string, decomposed))
+            view.undoManager?.redo()
+            #expect(LSPText.sameText(view.string, "é Hello!"))
+            let dismissedSource = view.string
+            view.selectedRange = NSRange(location: 2, length: 0)
+            try setFixture(source: dismissedSource, text: "Bye")
+            _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            try await waitForNormalization("dismiss original") { copilot.hasVisibleSuggestion(in: view) }
+            window.sendEvent(try key(53))
+            #expect(view.semanticGhost == nil)
+            let dismissedRPCs = rpcCount()
+            try await Task.sleep(for: .milliseconds(300))
+            view.selectedRange = NSRange(location: view.string.utf16.count, length: 0)
+            NotificationCenter.default.post(name: NSTextView.didChangeSelectionNotification, object: view)
+            try await Task.sleep(for: .milliseconds(450))
+            #expect(rpcCount() == dismissedRPCs)
+            try setFixture(source: dismissedSource + "!", text: "Bye")
+            undo.beginUndoGrouping()
+            view.insertText("!", replacementRange: NSRange(location: view.string.utf16.count, length: 0))
+            undo.endUndoGrouping()
+            try await waitForNormalization("new edit resumes after dismissal") { rpcCount() > dismissedRPCs && copilot.hasVisibleSuggestion(in: view) }
+            _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
+        }
+        focus()
         // A remote whole-line edit starts at column zero. Its second Tab must
         // adopt, not insert indentation after the navigation stage.
         let lineSource = "first()\na()\nb()\nc()\nHello"
@@ -390,9 +547,10 @@ import Testing
 
     @Test func rewritePreviewDoesNotEditAndAcceptanceHasOneUndoStep() throws {
         let document = Document()
-        let controller = EditorTextViewController(document: document)
-        controller.loadView()
-        let view = controller.textView
+        document.makeWindowControllers()
+        let window = try #require(document.windowControllers.first?.window)
+        let view = try #require(document.textViews.first as? EditorTextView)
+        defer { window.orderOut(nil) }
         let original = "def f(number):\n    return value\n"
         view.string = original
         view.semanticDocumentContext = { (nil, "Python") }
@@ -417,9 +575,10 @@ import Testing
 
     @Test func nextEditCannotApplyDuringCompositionOrMultipleSelection() throws {
         let document = Document()
-        let controller = EditorTextViewController(document: document)
-        controller.loadView()
-        let view = controller.textView
+        document.makeWindowControllers()
+        let window = try #require(document.windowControllers.first?.window)
+        let view = try #require(document.textViews.first as? EditorTextView)
+        defer { window.orderOut(nil) }
         view.string = "abc"
         let edit = LSPText.Edit(range: NSRange(location: 0, length: 1), text: "x", primary: true)
         view.selectedRange = NSRange(location: 0, length: 0)

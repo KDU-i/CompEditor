@@ -1,62 +1,58 @@
-# NES 0.3.1 acceptance record — review candidate
+# NES 0.3.1 acceptance record — independent re-review candidate
 
-Baseline: public v0.3.0 commit 53327572ca71a6d0f10d1aa03aef59b2b757e759. Work is isolated on fix/nes-v031. The installed 0.3.0/build860 application is not replaced. The QA host uses a separate bundle identifier and synthetic documents.
+Baseline: public v0.3.0 commit 53327572ca71a6d0f10d1aa03aef59b2b757e759. Work is isolated on fix/nes-v031. The installed 0.3.0/build860 application and user documents are not replaced. QA uses a separate bundle identifier, synthetic documents and existing opaque authentication only.
 
-## Evidence so far
+## Review corrections
 
-- Debug application build passed. A native fixture compilation also covers the controller and AppKit presentation.
-- Offline Copilot model/protocol, incremental history, consent/session, diagnostics privacy, update policy and startup update tests passed.
-- New rebase/Tab tests cover matching/conflicting input, before/after target edits, minimization, UTF-16 emoji, canonical normalization, partial combining grapheme, LF/CRLF/CR proximity, adjacent/remote/continuing acceptance.
-- Real-service probes using the official bundled 1.552.0 server and existing opaque authentication returned valid current-document NES in Python and Java (2/2). This is transport/provider evidence, not UI acceptance and not a requirement that a particular wording be predicted.
-- Native application fixture passed four tests (16 payload variants plus policy/lifetime cases), then visual QA found a gutter overlap and added a final viewport regression. It is exercised with the same synthetic payload across Python/Java, LF/CRLF, insertion/replacement/deletion/multiline, Unicode/emoji, tabs and no trailing newline. It checks preview immutability, remote Tab jump, adoption caret, Undo/Redo, scrolling/resizing, rebase and reversed response ordering.
-- Earlier native attempts failed at a fixture path-escaping error and inactive QA host; these are not counted as passes. IME/multi-caret application refusal and basic preview/Undo tests passed in those runs. A later full native run passed all four tests, including real RPC-count suppression after Undo. Physical IME interaction remains unverified; synthetic marked-text and multi-caret refusal passed.
+The first candidate failed independent review. Its signed artifacts are superseded. This revision corrects all three reported defects:
 
-## Release preparation
+- Protocol synchronization, unobserved-history replay, response validation and semantic snapshot guards compare exact UTF-16 sequences. Canonically equivalent Swift Strings can have different protocol offsets. The new real-client/mock integration test checks NFD→NFC, NFC→NFD, subsequent edits, server-generated ranges, exact application and delayed NES/inline replies.
+- Editor revision increments before AppKit synchronously sends its text-change notification. Rebase observers see the current revision. A real `insertText` case checks candidate validity without calling `typed()` manually; a fresh normalization document then dispatches Tab through the actual editor controller owner.
+- Inline insertion is used only when its text and the original line suffix fit. Overflow uses a compact, character-wrapping surface with vertical scrolling, including width 360 and line wrapping enabled. Preview never silently truncates the candidate horizontally.
 
-1. Commit reviewed source and record its tree SHA. Export using `Scripts/prepare-release-source.py`; never build a distribution from the QA identity or uncommitted files.
-2. Run `Scripts/build-release-candidate.sh` with new source/build directories and approved cached packages, semantic servers, Node/JDK and checksum-pinned official Copilot server. Keep coverage disabled and anonymous path mapping.
-3. Confirm Info.plist 0.3.1/861, original identity, required signed-feed/archive flags, existing public key and exact approved latest feed URL. Run artifact audit and strict nested/ad-hoc code-signature verification.
-4. Package matching app/source/corresponding sources with existing audit scripts. Reuse the existing dependency supplement only after verifying pinned components are unchanged; rename/version its manifest accurately.
-5. Use official Sparkle tools and the existing dedicated Keychain account to sign archive and appcast without exporting private material. Verify with the shipped public key, check fixed v0.3.1 links, version/build/length/hash and source-tree provenance together. No key/permission changes.
-6. Return the exact tree, candidate hashes and all residuals for independent review. Wait for the parent's explicit release instruction before merge/tag/publication/latest-feed change. Installation is excluded.
+The supplied VS Code reference images (Library libfile_14e789f146a481918120709940f67f60 and libfile_a0fb11c737288191951f15359eb2965f) were actually inspected. Short insertions retain a restrained inline green background; old words are red with a small green replacement immediately below. Preview text uses the editor font, line height and baseline. Thin borders, 2-point vertical padding, small blue gutter arrows and exact-height layout space replace the former minimum 120×44 shadowed panel. Long/multiline edits use wrapping or stacked/side-by-side code surfaces without headings or diff-prefix decoration. Gutter drawing is clipped and its text matrix reset, preventing line numbers from escaping into code.
 
-## Residuals
+Ordinary completion generation remains possible beside NES, and explicitly opening the ordinary UI no longer discards NES in advance. The actual EditorTextView key/typing/mouse and ordinary-completion callbacks share one controller owner (the default remains the singleton). Tests therefore dispatch real AppKit keys through the injected QA owner rather than testing an unrelated controller. The native popup test checks actual Esc cancellation and Tab adoption of exactly one ordinary candidate, without adopting the AI replacement. Explicit NES dismissal suppresses automatic regeneration on caret movement until a fresh edit or an explicit request.
 
-Provider internals, cross-file transactions, arbitrary multi-hunk structure and VS Code settings/experiments remain intentionally outside the single-primary-edit host implementation. The native focused-hover feature and a VS Code-style Tab-focus setting do not exist in this host. Full native popup/hover interaction, physical IME, arbitrary soft-wrap/RTL and simultaneous service+UI behavior are not claimed. Do not describe this record as proof of every VS Code feature or prediction matching.
+## Evidence and limits
 
-## Twenty-item outcome table
+Exact commit/tree, final logs, CI status, screenshot Library IDs and signed artifact hashes belong in the external re-review packet. Evidence from older commits is historical and does not establish this revision's acceptance.
 
-PASS means the stated host behavior is covered by the named evidence, not all settings/providers in VS Code. Intentional differences and unverified cases prevent a blanket “all differences fixed” claim.
+Offline checks include the existing ten suites plus `Scripts/test-copilot-text-identity.sh`. Native acceptance covers 16 Java/Python × LF/CRLF × insertion/replacement/deletion/multiline payloads; emoji, tabs and no trailing newline; preview text/Undo immutability; actual key dispatch; direct/far/line-start Tab; actual minimized edit-end caret; Undo/Redo and automatic-RPC suppression; non-key rebase; normalization; reversed replies; document switches; marked text/multiple carets; offscreen scroll/resize; native popup Tab/Esc; and dark/light visual captures at widths 800/360. A fresh normalization fixture uses a private UndoManager with explicit per-event groups, because XCTest executes several synthetic events in one task. Production Undo grouping remains unchanged; a discarded experiment that closed a document's automatic group is not part of this revision.
 
-|No.|Outcome|Implementation and evidence / residual|
+The earlier foreground blocker is resolved by using normal Document windows, an isolated QA app name/identity and current AppKit activation. Earlier blocked/failed runs are retained but not counted as passes. A previous CI run passed NES acceptance but failed an unrelated URLDetector timing assertion while other suites ran beside the modal popup. CI now executes the NES suite in an exclusive second invocation, preserving every test and the normal unit invocation.
+
+Real-service probes must return valid current-document candidates in both synthetic Python and Java cases; zero candidates are not acceptance. These probes verify the protocol/provider path separately from UI acceptance. Physical keyboard IME, arbitrary RTL layouts and simultaneous live-provider plus native UI adoption remain unverified.
+
+## Twenty-item disposition
+
+PASS is scoped to the stated host behavior and evidence. Missing host features are residuals, not private-model differences. Do not claim every VS Code feature, setting or prediction is identical.
+
+|No.|Outcome|Implementation / remaining difference|
 |---|---|---|
-|01|意図した差|Keep ordinary inline-first/fallback and active-NES ownership; policy/protocol tests pass. The official standalone server does not expose VS Code joint-provider scheduling.|
-|02|意図した差|Keep existing cancellable 50ms debounce and duplicate suppression. Provider latency/cache policy is not mirrored.|
-|03|意図した差|Keep observed pre-edit/current-document history; incremental and live probes pass. No workspace-wide or cross-file history collection.|
-|04|PASS|Empty single-caret moves retain NES; native test moves within displayed candidate; selected text/marked text/multiple carets still refuse.|
-|05|PASS|Target-anchored rendering and navigation; current URI/version validation. Native foreign-document refusal passes; no cross-file adoption.|
-|06|PASS|Green inline insertion, compact red/green replacement, deletion strike, stacked/wide difference surfaces; synthetic image evidence.|
-|07|PASS|Inline green insertion at target, navigation arrow; source and Undo unchanged by preview.|
-|08|PASS|Red old word and compact green replacement directly near target; visual evidence.|
-|09|PASS|16 Java/Python × LF/CRLF × insertion/replacement/deletion/multiline payloads, emoji/tab/no final newline; one primary range remains intentional.|
-|10|PASS|Adjacent-line/direct and remote/jump Tab, consecutive-visible policy, indentation precedence; native key tests plus policy tests.|
-|11|BLOCKED|Ordinary semantic/native generation now remains allowed beside NES; normal inline alone is exclusive. Tab and Esc defer to the ordinary popup. A real native popup was observed and those key predicates passed before a later fixture Undo-range failure; fixture history is now isolated. Final full rerun is BLOCKED by QA active=false/key=false. Host hover cannot become key; Tab-focus setting absent.|
-|12|PASS|Native Esc dismissal, no stale adoption; composition guards preserved.|
-|13|PASS|Native before-target rebase; matching prefix/conflict/after-target/combining/normalization model tests; strict UTF-16 snapshots.|
-|14|PASS|Native caret folded at final minimized difference, including deletion and common suffix; no selected replacement text.|
-|15|PASS|Native separate Undo/Redo; automatic NES enabled and actual mock RPC count unchanged after Undo; fresh edit/explicit requests resume.|
-|16|意図した差|Post-accept NES request preserved; continuing-visible Tab policy added. Provider prefetch/cache and NES word/line partial acceptance not mirrored.|
-|17|PASS|Native marked-text and auxiliary/multiple-caret application refusal pass. Physical IME conversion remains unverified.|
-|18|BLOCKED|Scroll/resize retention and responsive preview reconstruction pass in the native matrix. The later native offscreen/gutter run passed on the prior core snapshot; final ordinary-popup extension requires foreground rerun.|
-|19|PASS|Independent option persistence/policy tests and native unsupported-server toggle/reprobe tests pass; authentication unchanged.|
-|20|PASS|Protocol stale version/cancellation and native reversed A/B response/document-switch rejection pass; existing empty/unsupported/timeout distinctions retained.|
+|01|Provider difference|Inline-first/fallback and one active provider; standalone API does not expose VS Code joint-provider scheduling.|
+|02|Provider difference|Existing cancellable 50ms debounce and duplicate suppression; provider latency/cache policy is not mirrored.|
+|03|Provider difference; host corrected|Observed pre-edit/current-document history, exact UTF-16 replay and synchronization; no workspace-wide/cross-file history collection.|
+|04|PASS|Empty single-caret moves/clicks retain compatible NES; selected text/marked text/multiple carets refuse.|
+|05|PASS|Target anchor/navigation and exact current URI/version/text validation; foreign-document refusal. No cross-file adoption.|
+|06|PASS, visual review required|Shape-specific compact green/red surfaces, deletion strike, responsive multiline layout and overflow fallback; actual reference images inspected.|
+|07|PASS|Fitting inline green insertion moves the original suffix; overflow surface makes full text accessible; preview leaves source/Undo unchanged.|
+|08|PASS, visual review required|Red old word and small green replacement immediately below, matched font/line height/baseline, minimal padding/border.|
+|09|PASS|16 payload variants plus real-client normalization regression; single primary range only. Arbitrary multi-hunk/cross-file transactions remain unsupported host features.|
+|10|PASS|Actual editor-key route plus near/direct, far/jump, line-start second Tab, consecutive-visible and indentation precedence tests.|
+|11|PASS within host|Ordinary generation and actual native Tab/Esc ownership/adoption tested. Focusable hover and VS Code's Tab-focus setting are absent host features, not model differences.|
+|12|PASS|Actual Esc dismissal; caret moves do not automatically regenerate until fresh input/explicit request. Ordinary popup Esc retains ownership.|
+|13|PASS|Non-key notification rebase uses the new revision; before/after/matching/conflicting edits and normalization have regression coverage.|
+|14|PASS|Caret ends at final minimized difference, including deletion/common suffix; no selected replacement.|
+|15|PASS within fixture scope|Default-manager payload Undo/Redo and automatic RPC suppression; fresh private-event-manager normalization fixture distinguishes preceding edit from adoption. Production grouping is unchanged.|
+|16|Provider/host residual|Post-accept request and continuing-visible Tab policy preserved. Provider prefetch/cache and NES word/line partial adoption are not implemented.|
+|17|PASS within synthetic scope|Marked-text and auxiliary/multiple-caret refusal; physical IME conversion remains unverified.|
+|18|PASS within tested layouts|Scroll/resize/offscreen retention, clipped gutter, responsive surfaces and long narrow wrapped insertion; arbitrary wrap/RTL remains unverified.|
+|19|PASS|Independent persistence/policy and native unsupported-server toggle/reprobe; authentication unchanged.|
+|20|PASS|Exact UTF-16 protocol sync/response guards, delayed canonical-change response rejection, reversed A/B replies, URI/version/epoch/cancellation and error distinctions.|
 
-## Candidate distribution evidence
+## Distribution and publication gate
 
-An initial local Release candidate built from tree a8d6d3651a78569080bb4d519f7b2c8062936fcc passed artifact audit: 68,987 files, 92 Mach-O binaries, 197 nested archives. Its app and feed declare 0.3.1/build861; archive and feed signatures used the existing dedicated Sparkle Keychain account, and the archive signature was independently verified with only the shipped public key. That initial archive is superseded by the gutter correction and must not be published. Rebuild/re-sign the reviewed final tree before any publication. No release, tag, merge, latest-feed update or installation has occurred.
+Export committed source with `Scripts/prepare-release-source.py`, recording its exact tree. Build original Release arm64 identity with coverage disabled and anonymous path maps, using the existing cached/pinned runtime dependencies. Never distribute a QA bundle or an older signed candidate. Reaudit the app, matching source and corresponding sources; verify nested ad-hoc signatures and 0.3.1/build861, existing public key/feed and mandatory signature policy. Sign the archive/feed through official Sparkle tools and the existing dedicated Keychain account without key export or permission changes. Verify the archive using only the shipped public key and verify the feed with the official tool. Record fixed v0.3.1 links, bytes and hashes in the external packet.
 
-## Final additional priority fix and blocked rerun
-
-An additional inspection found ordinary-completion request guards still excluded NES. They now exclude only normal inline ghosts. NES also defers Esc to a visible ordinary completion popup. The new AppKit popup fixture uses a common-mode timer to observe real completion UI and post an Escape event only to the synthetic QA application's event queue. Native popup undo records are cleared only at synthetic-document boundaries in the fixture.
-
-The expanded fixture compiled. A real popup reached the Tab/Esc checks; the initial continuation exposed old native Undo ranges after wholesale fixture replacement. That fixture issue was corrected. Subsequent complete runs failed before requests with QA `active=false`, `key=false`; no new service response or key acceptance is counted as passing in those runs. Explicit activation, separate /tmp staging and a fresh QA identifier did not produce a stable foreground run; the UI bridge could not resolve the fresh identifier. This is neither an approval denial nor a zero-candidate service result. Re-run the entire CopilotNESAcceptanceTests suite in a real foreground QA host before publication.
+Independent re-review and the parent's explicit instruction remain mandatory before merge/tag/release publication/latest-feed changes. Installation is excluded. No such action is authorized by a passing local test alone.

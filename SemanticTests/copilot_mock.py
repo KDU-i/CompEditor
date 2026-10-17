@@ -2,7 +2,7 @@
 # Offline JSON-RPC peer. Synthetic strings only; no network or OAuth.
 import sys, json, threading, time
 import argparse, pathlib, os, hashlib
-parser=argparse.ArgumentParser();parser.add_argument('--session-state');parser.add_argument('--preauthenticated',action='store_true');parser.add_argument('--offline',action='store_true');parser.add_argument('--no-nes',action='store_true');parser.add_argument('--nes-fixture');options=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--session-state');parser.add_argument('--preauthenticated',action='store_true');parser.add_argument('--offline',action='store_true');parser.add_argument('--no-nes',action='store_true');parser.add_argument('--nes-fixture');parser.add_argument('--nes-word-fixture',action='store_true');options=parser.parse_args()
 session_path=pathlib.Path(options.session_state) if options.session_state else None
 session=json.loads(session_path.read_text()) if session_path and session_path.exists() else {'authenticated':options.preauthenticated,'methods':{}}
 authenticated=session['authenticated']
@@ -89,6 +89,14 @@ try:
             assert p['textDocument']['version']==version
             if options.no_nes:persist_synthetic_session()
             if options.no_nes or text=='NO_NES': send({'jsonrpc':'2.0','id':msg['id'],'error':{'code':-32601,'message':'Synthetic missing public method'}})
+            elif options.nes_word_fixture:
+                # Compute the range from the server's actual synchronized bytes,
+                # never from request positions or the client's expected text.
+                start = len(text[:text.index('Hello')].encode('utf-16-le')) // 2
+                edit={'text':'Bye','textDocument':dict(p['textDocument']),'range':{'start':{'line':0,'character':start},'end':{'line':0,'character':start+5}}}
+                result={'edits':[edit]}
+                if 'LATE_AI' in text: threading.Timer(.35,reply,args=(msg,result)).start()
+                else:reply(msg,result)
             elif options.nes_fixture:
                 persist_synthetic_session()
                 fixture=json.loads(pathlib.Path(options.nes_fixture).read_text())

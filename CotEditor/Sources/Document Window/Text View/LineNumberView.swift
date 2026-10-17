@@ -136,6 +136,8 @@ final class LineNumberView: NSRulerView {
         
         NSGraphicsContext.saveGraphicsState()
         
+        bounds.intersection(rect).clip()
+
         // workaround opaque background (2026-08, macOS 27 SDK)
         if let textView, textView.isOpaque {
             textView.backgroundColor.setFill()
@@ -148,7 +150,7 @@ final class LineNumberView: NSRulerView {
         self.drawNumbers(in: rect)
         NSGraphicsContext.restoreGraphicsState()
         if let indicator = nextEditIndicatorRect {
-            NSAttributedString(string: "➜", attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .bold), .foregroundColor: NSColor.systemBlue]).draw(in: indicator)
+            SemanticNextEditPreview.drawArrow(in: indicator)
         }
         NSGraphicsContext.restoreGraphicsState()
     }
@@ -204,6 +206,8 @@ final class LineNumberView: NSRulerView {
             let context = NSGraphicsContext.current?.cgContext
         else { return assertionFailure() }
         
+        context.textMatrix = .identity
+        context.textPosition = .zero
         context.setFont(self.lineNumberFont)
         context.setFontSize(drawingInfo.fontSize)
         context.setFillColor(self.foregroundColor().cgColor)
@@ -395,7 +399,7 @@ extension LineNumberView {
     /// Starts selecting correspondent lines in text view with a dragging / clicking event.
     override func mouseDown(with event: NSEvent) {
         if let editor = textView as? EditorTextView, nextEditIndicatorRect?.contains(convert(event.locationInWindow, from: nil)) == true {
-            CopilotCompletionController.shared.jumpToNextEdit(in: editor)
+            editor.copilotController.jumpToNextEdit(in: editor)
             return
         }
         guard

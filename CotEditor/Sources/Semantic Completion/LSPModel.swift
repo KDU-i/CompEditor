@@ -83,6 +83,12 @@ enum LSPError: Error, LocalizedError {
 enum LSPText {
     /// Preserve the actual edit window for Copilot's recent-edit history.
     /// Boundaries never split a UTF-16 surrogate pair or CRLF sequence.
+    /// Protocol ranges address UTF-16 code units. Swift's canonical String
+    /// equality can hide a normalization edit and leave server offsets stale.
+    static func sameText(_ snapshot: String?, _ text: String) -> Bool {
+        snapshot?.utf16.elementsEqual(text.utf16) == true
+    }
+
     static func incrementalChange(from previous: String, to current: String) throws -> LSPJSON {
         let old = Array(previous.utf16), new = Array(current.utf16)
         var start = 0
@@ -378,7 +384,7 @@ struct LSPHoverStamp: Sendable {
     let fileURL: URL?
     let symbol: NSRange
     func matches(epoch: Int, generation: Int, snapshot: String, fileURL: URL?, symbol: NSRange?) -> Bool {
-        self.epoch == epoch && self.generation == generation && self.snapshot == snapshot && self.fileURL == fileURL && self.symbol == symbol
+        self.epoch == epoch && self.generation == generation && LSPText.sameText(self.snapshot, snapshot) && self.fileURL == fileURL && self.symbol == symbol
     }
 }
 

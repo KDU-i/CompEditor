@@ -11,7 +11,7 @@ struct SemanticDiagnostics {
 
 extension EditorTextView {
     func drawSemanticDiagnostics(in dirty: NSRect) {
-        guard let diagnostics = semanticDiagnostics, diagnostics.snapshot == string,
+        guard let diagnostics = semanticDiagnostics, LSPText.sameText(diagnostics.snapshot, string),
               diagnostics.fileURL == semanticDocumentContext?().url,
               layoutOrientation == .horizontal, let layoutManager, let textContainer else { return }
         let visible = layoutManager.glyphRange(forBoundingRect: dirty.offsetBy(dx: -textContainerOrigin.x, dy: -textContainerOrigin.y), in: textContainer)

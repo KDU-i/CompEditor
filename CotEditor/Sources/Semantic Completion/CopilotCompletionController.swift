@@ -86,6 +86,7 @@ enum CopilotBundledServer {
     private var applying = false
     private var continuingAcceptance = false
     private weak var undoSuppressedEditor: EditorTextView?
+    private weak var dismissedEditor: EditorTextView?
     private var automaticSuggestions = true
     private var otherLanguages = false
     private var automaticNextEdits = false
@@ -183,7 +184,7 @@ enum CopilotBundledServer {
                             self.undoSuppressedEditor = editor; self.continuingAcceptance = false
                             self.invalidate(reason: .textChanged); return
                         }
-                        self.undoSuppressedEditor = nil; self.continuingAcceptance = false
+                        self.undoSuppressedEditor = nil; self.dismissedEditor = nil; self.continuingAcceptance = false
                         if editor === self.view, self.rebaseNextEdit(in: editor) { return }
                         if editor === self.view { self.invalidate(reason: .textChanged) }
                         if self.automaticSuggestions || self.automaticNextEdits {
@@ -554,7 +555,7 @@ enum CopilotBundledServer {
     @objc private func acceptSuggestion() { if let editor = activeEditor() { _ = accept(in: editor) } }
     @objc private func acceptWord() { if let editor = activeEditor() { _ = acceptPartial(in: editor, line: false) } }
     @objc private func acceptLine() { if let editor = activeEditor() { _ = acceptPartial(in: editor, line: true) } }
-    @objc private func dismissSuggestion() { invalidate() }
+    @objc private func dismissSuggestion() { dismissedEditor = view; invalidate() }
     @objc private func toggleOtherLanguages() {
         if !otherLanguages {
             let dialog = NSAlert(); dialog.messageText = "Java/Python以外のAI補完を有効にしますか？"
@@ -590,7 +591,7 @@ enum CopilotBundledServer {
     func typed(in editor: EditorTextView, previous: String) {
         guard !editor.string.utf16.elementsEqual(previous.utf16), !applying else { return }
         lastTextEditTime = ProcessInfo.processInfo.systemUptime
-        undoSuppressedEditor = nil; continuingAcceptance = false
+        undoSuppressedEditor = nil; dismissedEditor = nil; continuingAcceptance = false
         if rebaseNextEdit(in: editor) { return }
         if eligible(editor) != nil, previous.utf16.count <= 1_000_000 {
             recentBefore = (editor.semanticBufferID, editor.semanticRevision, previous)
@@ -604,7 +605,8 @@ enum CopilotBundledServer {
         }
     }
     private func requestSuggestions(in editor: EditorTextView, explicit: Bool, nextEdit: Bool = false, cycleOffset: Int = 0, previous: String? = nil) {
-        if !explicit, undoSuppressedEditor === editor { return }
+        if !explicit, undoSuppressedEditor === editor || dismissedEditor === editor { return }
+        if explicit { dismissedEditor = nil }
         let ticket = diagnostics.ticket(nextEdit ? (explicit ? .manualNextEdit : .automaticNextEdit) : (explicit ? .manualInline : .automaticInline))
         diagnose(ticket, .attempt)
         // Covers queued typing notifications, caret triggers and programmatic manual actions.
@@ -689,7 +691,7 @@ enum CopilotBundledServer {
                         guard let parsedEdit = next ? try? CopilotInline.nextEdit(item, text: snapshot) : plan?.edit else { self.diagnose(rpcTicket, .excluded, reason: .invalidEdit); continue }
                         let edit = next ? CopilotNextEditPolicy.minimized(parsedEdit, in: snapshot) : parsedEdit
                         if !next, plan?.parts.isEmpty != false { self.diagnose(rpcTicket, .excluded, reason: .noInlineParts); continue }
-                        if parsed.contains(where: { $0.edit.range == edit.range && $0.edit.text == edit.text }) { self.diagnose(rpcTicket, .excluded, reason: .duplicateCandidate); continue }
+                        if parsed.contains(where: { $0.edit.range == edit.range && LSPText.sameText($0.edit.text, edit.text) }) { self.diagnose(rpcTicket, .excluded, reason: .duplicateCandidate); continue }
                         self.reference += 1; parsed.append(Candidate(reference: self.reference, item: item, local: item, edit: edit, plan: plan, nextEdit: next))
                     }
                     return parsed
@@ -748,7 +750,14 @@ enum CopilotBundledServer {
             }
         }
     }
-    func dismissForInteraction(in editor: EditorTextView) { if view === editor { invalidate() } }
+    func dismissForInteraction(in editor: EditorTextView) {
+        guard view === editor else { return }
+        continuingAcceptance = false
+        // Selection notifications validate an NES after the click. Opening an
+        // ordinary completion menu must not throw away the edit beside it.
+        if suggestions?.candidates[suggestions!.index].nextEdit == true { return }
+        invalidate()
+    }
     func hasSuggestions(in editor: EditorTextView) -> Bool { current(in: editor) }
     func hasVisibleSuggestion(in editor: EditorTextView) -> Bool {
         current(in: editor) && editor.semanticGhost?.copilot == true && editor.semanticGhostIsCurrent
@@ -882,7 +891,7 @@ enum CopilotBundledServer {
             if let state = suggestions, state.candidates[state.index].nextEdit,
                editor.isNativeCompletionVisible || SemanticCompletionController.shared.isSuggestionListVisible(in: editor) { return false }
             let visible = hasVisibleSuggestion(in: editor)
-            if view === editor { invalidate() }
+            if view === editor { if visible { dismissedEditor = editor }; invalidate() }
             return visible
         }
         if flags == .command, event.keyCode == 124 { return acceptPartial(in: editor, line: false) }

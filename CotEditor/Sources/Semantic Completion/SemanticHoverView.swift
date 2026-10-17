@@ -40,7 +40,7 @@ extension EditorTextView {
         guard glyphRect.contains(point) else { return nil }
         let character = layoutManager.characterIndexForGlyph(at: glyph)
         let diagnostic = semanticDiagnostics.flatMap { value -> (NSRange, String)? in
-            guard value.snapshot == string, value.fileURL == semanticDocumentContext?().url else { return nil }
+            guard LSPText.sameText(value.snapshot, string), value.fileURL == semanticDocumentContext?().url else { return nil }
             return LSPDiagnosticHover.target(value.items, at: character, length: (string as NSString).length)
         }
         guard let symbol = diagnostic?.0 ?? LSPHoverPresentation.symbol(in: string, at: character) else { return nil }
