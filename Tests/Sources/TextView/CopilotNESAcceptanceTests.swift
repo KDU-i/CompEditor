@@ -180,9 +180,45 @@ import Testing
             focusWindow(window, editor: view)
             for _ in 0..<50 { guard let event = NSApp.nextEvent(matching: .any, until: Date(), inMode: .default, dequeue: true) else { break }; NSApp.sendEvent(event) }
         }
+        func settleEditorWindow(_ targetWindow: NSWindow, editor targetView: EditorTextView, awaiting timestamp: TimeInterval? = nil) throws {
+            focusWindow(targetWindow, editor: targetView)
+            targetView.layoutSubtreeIfNeeded(); targetWindow.displayIfNeeded(); NSApp.updateWindows()
+            let deadline = Date().addingTimeInterval(2)
+            var lastGeometry = ProcessInfo.processInfo.systemUptime
+            var frame = targetWindow.frame
+            var viewport = targetView.visibleRect
+            var sawStagedMove = timestamp == nil
+            var geometryEvents = 0
+            while Date() < deadline {
+                // Unlike until:Date(), a future deadline lets WindowServer's
+                // in-flight messages arrive through the real event loop.
+                if let event = NSApp.nextEvent(matching: .any, until: Date().addingTimeInterval(0.02), inMode: .default, dequeue: true) {
+                    if event.type == .appKitDefined {
+                        geometryEvents += 1
+                        lastGeometry = ProcessInfo.processInfo.systemUptime
+                        if event.subtype == .windowMoved, timestamp.map({ abs(event.timestamp - $0) < 0.000001 }) == true { sawStagedMove = true }
+                    }
+                    NSApp.sendEvent(event)
+                }
+                if frame != targetWindow.frame || viewport != targetView.visibleRect {
+                    frame = targetWindow.frame; viewport = targetView.visibleRect
+                    lastGeometry = ProcessInfo.processInfo.systemUptime
+                }
+                if !NSApp.isActive || NSApp.keyWindow !== targetWindow || targetWindow.firstResponder !== targetView {
+                    focusWindow(targetWindow, editor: targetView)
+                    lastGeometry = ProcessInfo.processInfo.systemUptime
+                }
+                if sawStagedMove, targetView.window === targetWindow, ProcessInfo.processInfo.systemUptime - lastGeometry >= 0.2 {
+                    print("NES_IDLE awaitedMove=\(timestamp != nil) moveRequirementMet=\(sawStagedMove) geometryQuiet=0.2 events=\(geometryEvents) window=\(targetWindow.windowNumber) active=\(NSApp.isActive) key=\(NSApp.keyWindow === targetWindow) viewport=\(targetView.visibleRect.origin)")
+                    return
+                }
+            }
+            Issue.record("Native window preparation did not settle before command")
+            throw CancellationError()
+        }
         func waitFor(_ label: String, _ condition: () -> Bool) async throws {
             for _ in 0..<1000 { focus(); if condition() { return }; try await Task.sleep(for: .milliseconds(20)) }
-            Issue.record("NES031 checkpoint: \(label); active=\(NSApp.isActive); key=\(NSApp.keyWindow === window); running=\(NSApp.isRunning); pid=\(ProcessInfo.processInfo.processIdentifier); front=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil"); phase=\(copilot.connectionPresentation.phase); status=\(copilot.connectionPresentation.detail)"); throw CancellationError()
+            Issue.record("NES031 checkpoint: \(label); active=\(NSApp.isActive); key=\(NSApp.keyWindow === window); running=\(NSApp.isRunning); pid=\(ProcessInfo.processInfo.processIdentifier); front=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil"); responder=\(window.firstResponder === view); attached=\(view.window === window); selected=\(view.selectedRange()); revision=\(view.semanticRevision); ghostCaret=\(view.semanticGhost?.caret ?? -1); ghostRevision=\(view.semanticGhost?.revision ?? -1); ghostExists=\(view.semanticGhost != nil); ghostCopilot=\(view.semanticGhost?.copilot == true); ghostCurrent=\(view.semanticGhostIsCurrent); snapshotSame=\(view.semanticGhost.map { LSPText.sameText($0.snapshot, view.string) } ?? false); context=\(view.semanticDocumentContext?().syntax ?? "nil"); phase=\(copilot.connectionPresentation.phase); status=\(copilot.connectionPresentation.detail)"); throw CancellationError()
         }
         func capture(_ target: NSView, name: String) throws {
             let output = URL.temporaryDirectory.appendingPathComponent("compeditor-nes031-evidence")
@@ -223,6 +259,10 @@ import Testing
         func key(_ code: UInt16) throws -> NSEvent {
             try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: code == 48 ? "\t" : "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code))
         }
+        #if DEBUG
+        view.nativeCompletionTrace = { print("NES_SETUP " + $0) }
+        defer { view.nativeCompletionTrace = nil }
+        #endif
         focus(); copilot.installMenu()
         let menu = NSApp.mainMenu?.items.last
         defer {
@@ -232,6 +272,7 @@ import Testing
             try? FileManager.default.removeItem(at: directory)
         }
         try await waitFor("authenticated") { copilot.connectionPresentation.phase == .authenticated }
+        try settleEditorWindow(window, editor: view)
         for language in ["Python", "Java"] {
             for newline in ["\n", "\r\n"] {
                 for (replacement, insertion) in [("Goodbye😀", false), ("", false), ("one\n\ttwo", false), (" + added😀", true)] {
@@ -239,6 +280,9 @@ import Testing
                     view.lineEnding = newline == "\r\n" ? .crlf : .lf
                     view.string = source; view.semanticDocumentContext = { (nil, language) }
                     view.selectedRange = NSRange(location: 2, length: 0)
+                    try settleEditorWindow(window, editor: view)
+                    try #require(LSPText.sameText(view.string, source) && view.selectedRange() == NSRange(location: 2, length: 0))
+                    try #require(view.semanticDocumentContext?().syntax == language && view.window === window)
                     let wordRange = (source as NSString).range(of: "Hello")
                     let range = NSRange(location: wordRange.location, length: insertion ? 0 : wordRange.length)
                     let item: LSPJSON = .object(["text": .string(replacement), "range": try CopilotInline.rangeJSON(range, in: source)])
@@ -407,39 +451,9 @@ import Testing
             }
             RunLoop.main.add(delivery, forMode: .common)
             defer { delivery.invalidate() }
-            let deadline = Date().addingTimeInterval(2)
-            var lastGeometry = ProcessInfo.processInfo.systemUptime
-            var frame = targetWindow.frame
-            var viewport = targetView.visibleRect
-            var sawStagedMove = false
-            var geometryEvents = 0
-            while Date() < deadline {
-                // Unlike until:Date(), a future deadline lets WindowServer's
-                // in-flight messages arrive through the real event loop.
-                if let event = NSApp.nextEvent(matching: .any, until: Date().addingTimeInterval(0.02), inMode: .default, dequeue: true) {
-                    if event.type == .appKitDefined {
-                        geometryEvents += 1
-                        lastGeometry = ProcessInfo.processInfo.systemUptime
-                        if event.subtype == .windowMoved, abs(event.timestamp - moved.timestamp) < 0.000001 { sawStagedMove = true }
-                    }
-                    NSApp.sendEvent(event)
-                }
-                if frame != targetWindow.frame || viewport != targetView.visibleRect {
-                    frame = targetWindow.frame; viewport = targetView.visibleRect
-                    lastGeometry = ProcessInfo.processInfo.systemUptime
-                }
-                if !NSApp.isActive || NSApp.keyWindow !== targetWindow || targetWindow.firstResponder !== targetView {
-                    focusWindow(targetWindow, editor: targetView)
-                    lastGeometry = ProcessInfo.processInfo.systemUptime
-                }
-                if sawStagedMove, ProcessInfo.processInfo.systemUptime - lastGeometry >= 0.2 {
-                    print("NES_IDLE stagedMoveDelivered=true geometryQuiet=0.2 events=\(geometryEvents) window=\(targetWindow.windowNumber) active=\(NSApp.isActive) key=\(NSApp.keyWindow === targetWindow) viewport=\(targetView.visibleRect.origin)")
-                    return
-                }
-            }
-            Issue.record("Native window preparation did not settle before command")
-            throw CancellationError()
+            try settleEditorWindow(targetWindow, editor: targetView, awaiting: moved.timestamp)
         }
+
         func requestWordCompletion() throws {
             // F5 is AppKit's standard complete: binding. Deliver it through the
             // application event queue, as a user command, instead of calling a
