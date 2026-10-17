@@ -1964,7 +1964,7 @@ extension EditorTextView {
         
         // Automatic word completion may coexist with an AI request still loading.
         // Only the explicit normal-completion command cancels that request.
-        super.complete(self)
+        presentNativeCompletion(self)
     }
 
     func suppressWordCompletionForCopilot() {
@@ -1980,6 +1980,15 @@ extension EditorTextView {
     override func complete(_ sender: Any?) {
         guard !hasMarkedText() else { return }
         copilotController.dismissForInteraction(in: self)
+        presentNativeCompletion(sender)
+    }
+
+    private func presentNativeCompletion(_ sender: Any?) {
+        // AppKit tracks this UI synchronously, including an initially unselected
+        // popup that never calls insertCompletion until a candidate is chosen.
+        // Own Tab/Esc throughout that lifetime, not only after preview insertion.
+        isShowingCompletion = true
+        defer { isShowingCompletion = false }
         super.complete(sender)
     }
 }

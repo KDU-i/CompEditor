@@ -348,6 +348,7 @@ import Testing
             if finished { timer.invalidate() }
         }
         RunLoop.main.add(popupTimer, forMode: .common)
+        #expect(!view.isNativeCompletionVisible)
         view.complete(nil)
         try await waitFor("native completion popup observed") { popupObservation.attempts > 0 && !popupTimer.isValid }
         popupTimer.invalidate()
@@ -373,6 +374,7 @@ import Testing
             if finished { timer.invalidate() }
         }
         RunLoop.main.add(tabTimer, forMode: .common)
+        #expect(!view.isNativeCompletionVisible)
         view.complete(nil)
         try await waitFor("native Tab applied") { !tabTimer.isValid && !view.isNativeCompletionVisible }
         tabTimer.invalidate()
