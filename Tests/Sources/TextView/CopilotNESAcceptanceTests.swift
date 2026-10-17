@@ -325,12 +325,16 @@ import Testing
         try #require(view.rangeForUserCompletion == popupWord)
         #if DEBUG
         var completionInvocationEvents: [UInt16] = []
+        var completionCommandEvents: [String] = []
+        var finalCompletionEvents: [String] = []
+        var priorWindowMoveTimestamp: TimeInterval?
         view.nativeCompletionTrace = { event in
             MainActor.assumeIsolated {
                 if event.hasPrefix("complete called") {
                     let current = NSApp.currentEvent
                     completionInvocationEvents.append(current?.type == .keyDown ? current!.keyCode : UInt16.max)
                 }
+                if event.hasPrefix("insertCompletion final=true") { finalCompletionEvents.append(event) }
                 print("NES_NATIVE " + event)
             }
         }
@@ -340,6 +344,12 @@ import Testing
         var observingNativeCommand = false
         let eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .any) { event in
             if observingNativeCommand {
+                // Match event identity within clock precision after queue transport.
+                if event.type == .appKitDefined, event.subtype == .windowMoved, priorWindowMoveTimestamp.map({ abs(event.timestamp - $0) < 0.000001 }) == true {
+                    completionCommandEvents.append("priorWindowMove")
+                } else if event.type == .keyDown, event.keyCode == 96 {
+                    completionCommandEvents.append("F5")
+                }
                 let key = [.keyDown, .keyUp, .flagsChanged].contains(event.type) ? Int(event.keyCode) : -1
                 let subtype = [.appKitDefined, .applicationDefined, .systemDefined].contains(event.type) ? Int(event.subtype.rawValue) : -1
                 print("NES_EVENT type=\(event.type.rawValue) subtype=\(subtype) key=\(key) window=\(event.windowNumber) time=\(event.timestamp)")
@@ -369,7 +379,16 @@ import Testing
             #endif
             let character = String(UnicodeScalar(NSF5FunctionKey)!)
             let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.function], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: 96))
-            NSApp.postEvent(event, atStart: true)
+            // CI exposed old windowMoved events from the preceding preview
+            // windows. A real key follows those events in FIFO order. Pushing
+            // F5 at the front lets a stale move terminate AppKit's new popup.
+            // Stage that exact ordering hazard as a deterministic regression.
+            let moved = try #require(NSEvent.otherEvent(with: .appKitDefined, location: .zero, modifierFlags: [], timestamp: event.timestamp - 0.1, windowNumber: view.semanticGhostPanel?.windowNumber ?? window.windowNumber, context: nil, subtype: NSEvent.EventSubtype.windowMoved.rawValue, data1: 0, data2: 0))
+            #if DEBUG
+            priorWindowMoveTimestamp = moved.timestamp
+            #endif
+            NSApp.postEvent(moved, atStart: false)
+            NSApp.postEvent(event, atStart: false)
         }
         let popupItem: LSPJSON = .object(["text": .string("Goodbye"), "range": try CopilotInline.rangeJSON(popupWord, in: popupSource)])
         try JSONEncoder().encode(LSPJSON.object(["source": .string(popupSource), "edit": popupItem])).write(to: fixture)
@@ -418,6 +437,9 @@ import Testing
         print("NES_NATIVE ESC after attempts=\(popupObservation.attempts) shown=\(popupObservation.shown)")
         #if DEBUG
         #expect(completionInvocationEvents == [96])
+        #expect(completionCommandEvents == ["priorWindowMove", "F5"])
+        #expect(finalCompletionEvents.count == 1)
+        #expect(finalCompletionEvents.last?.hasPrefix("insertCompletion final=true movement=\(NSCancelTextMovement) ") == true)
         #endif
         popupTimer.invalidate()
         #if DEBUG
@@ -425,6 +447,7 @@ import Testing
         #endif
         #expect(popupObservation.shown)
         #expect(!popupObservation.tabConsumed && !popupObservation.escapeConsumed)
+        #expect(view.string == popupSource)
         #expect(!view.string.contains("Goodbye"))
         #expect(!view.isNativeCompletionVisible)
         view.breakUndoCoalescing(); view.undoManager?.removeAllActions()
@@ -455,6 +478,9 @@ import Testing
         print("NES_NATIVE TAB after attempts=\(tabObservation.attempts) shown=\(tabObservation.shown)")
         #if DEBUG
         #expect(completionInvocationEvents == [96, 96])
+        #expect(completionCommandEvents == ["priorWindowMove", "F5", "priorWindowMove", "F5"])
+        #expect(finalCompletionEvents.count == 2)
+        #expect(finalCompletionEvents.last?.hasPrefix("insertCompletion final=true movement=\(NSTabTextMovement) ") == true)
         #endif
         tabTimer.invalidate()
         #if DEBUG
