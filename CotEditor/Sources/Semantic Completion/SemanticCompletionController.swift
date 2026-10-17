@@ -548,7 +548,7 @@ import LineEnding
         invalidateAutomatic(notifyCopilot: false)
     }
     func isFocusedHoverVisible(in view: EditorTextView) -> Bool {
-        hoverView === view && hoverPanel?.isVisible == true && hoverPanel?.firstResponder !== hoverPanel
+        hoverView === view && hoverPanel?.isVisible == true && hoverPanel?.isKeyWindow == true
     }
     func isSuggestionListVisible(in view: EditorTextView) -> Bool { targetView === view && automaticPanel?.isVisible == true }
     func selectedSuggestion(in view: EditorTextView) -> LSPText.Edit? {

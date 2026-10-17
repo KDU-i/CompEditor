@@ -90,6 +90,7 @@ try:
             if options.no_nes:persist_synthetic_session()
             if options.no_nes or text=='NO_NES': send({'jsonrpc':'2.0','id':msg['id'],'error':{'code':-32601,'message':'Synthetic missing public method'}})
             elif options.nes_fixture:
+                persist_synthetic_session()
                 fixture=json.loads(pathlib.Path(options.nes_fixture).read_text())
                 edits=[]
                 if text == fixture['source']:

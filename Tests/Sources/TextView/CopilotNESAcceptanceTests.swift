@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import AppKit
+import LineEnding
 import Testing
 @testable import CotEditor
 
@@ -73,8 +74,8 @@ import Testing
         try await waitUntil("focused editor", limit: 750) {
             // The test host can finish opening its initial empty window after auth.
             _ = NSApp.setActivationPolicy(.regular)
-        NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-        NSApp.activate(ignoringOtherApps: true)
+            NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+            NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
             window.makeKey()
             window.makeMain()
@@ -136,10 +137,11 @@ import Testing
         let directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let fixture = directory.appendingPathComponent("fixture.json")
+        let sessionState = directory.appendingPathComponent("rpc-counts.json")
         let executable = directory.appendingPathComponent("copilot-language-server")
         let mock = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("SemanticTests/copilot_mock.py")
         func literal(_ value: String) throws -> String { let encoder = JSONEncoder(); encoder.outputFormatting = .withoutEscapingSlashes; return String(data: try encoder.encode(value), encoding: .utf8)! }
-        let script = "#!/usr/bin/python3\nimport sys\nsys.argv=[\(try literal(mock.path)), '--preauthenticated', '--nes-fixture', \(try literal(fixture.path))]\nexec(compile(open(sys.argv[0]).read(), sys.argv[0], 'exec'))\n"
+        let script = "#!/usr/bin/python3\nimport sys\nsys.argv=[\(try literal(mock.path)), '--preauthenticated', '--nes-fixture', \(try literal(fixture.path)), '--session-state', \(try literal(sessionState.path))]\nexec(compile(open(sys.argv[0]).read(), sys.argv[0], 'exec'))\n"
         try script.write(to: executable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
         let suite = "NES031-" + UUID().uuidString
@@ -152,12 +154,19 @@ import Testing
         let controller = EditorTextViewController(document: document)
         controller.loadView()
         let view = controller.textView
+        view.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 800, height: 400), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.tabbingMode = .disallowed; window.contentViewController = controller
+        window.setContentSize(NSSize(width: 800, height: 400))
+        if let scroll = view.enclosingScrollView {
+            scroll.hasVerticalRuler = true
+            scroll.verticalRulerView = LineNumberView(textView: view, scrollView: scroll, orientation: .verticalRuler)
+            scroll.rulersVisible = true
+        }
         func focus() {
             _ = NSApp.setActivationPolicy(.regular)
-        NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-        NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil); window.makeKey(); window.makeMain(); window.makeFirstResponder(view)
+            NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+            NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil); window.makeKey(); window.makeMain(); window.makeFirstResponder(view)
             for _ in 0..<50 { guard let event = NSApp.nextEvent(matching: .any, until: Date(), inMode: .default, dequeue: true) else { break }; NSApp.sendEvent(event) }
         }
         func waitFor(_ label: String, _ condition: () -> Bool) async throws {
@@ -188,7 +197,7 @@ import Testing
         for language in ["Python", "Java"] {
             for newline in ["\n", "\r\n"] {
                 for (replacement, insertion) in [("Goodbye😀", false), ("", false), ("one\n\ttwo", false), (" + added😀", true)] {
-                    let source = ["# 😀", "first()", "second()", "third()", "value = Hello", "tail()"].joined(separator: newline)
+                    let source = (["# 😀", "first()", "second()", "third()", "value = Hello"] + (0..<30).map { "tail\($0)()" }).joined(separator: newline)
                     view.lineEnding = newline == "\r\n" ? .crlf : .lf
                     view.string = source; view.semanticDocumentContext = { (nil, language) }
                     view.selectedRange = NSRange(location: 2, length: 0)
@@ -201,12 +210,12 @@ import Testing
                     try await waitFor("display \(language) \(replacement)") { view.semanticGhost?.nextEdit == true && copilot.hasVisibleSuggestion(in: view) }
                     #expect(view.string == source)
                     let imageName = "\(language)-\(newline.utf16.count)-\(insertion)-\(replacement.utf16.count)"
-                    try capture(view, name: imageName + "-editor")
+                    try capture(view.enclosingScrollView ?? view, name: imageName + "-editor")
                     if let preview = view.semanticGhostPanel?.contentView { try capture(preview, name: imageName + "-preview-wide") }
                     let undoBefore = view.undoManager?.canUndo
                     window.setContentSize(NSSize(width: 360, height: 300))
                     NotificationCenter.default.post(name: NSWindow.didResizeNotification, object: window)
-                    view.enclosingScrollView?.contentView.scroll(to: NSPoint(x: 0, y: 16))
+                    view.enclosingScrollView?.contentView.scroll(to: NSPoint(x: 0, y: 500))
                     NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: view.enclosingScrollView!.contentView)
                     #expect(copilot.hasSuggestions(in: view))
                     if let preview = view.semanticGhostPanel?.contentView { try capture(preview, name: imageName + "-preview-narrow") }
@@ -240,6 +249,36 @@ import Testing
         }
         view.lineEnding = .lf
         view.string = source; view.semanticDocumentContext = { (nil, "Python") }
+        view.selectedRange = NSRange(location: 0, length: 0)
+        try setFixture(source: source, text: "Goodbye")
+        _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+        try await waitFor("indent precedence") { view.semanticGhost?.text == "Goodbye" }
+        #expect(!copilot.handleKey(try key(48), in: view))
+        #expect(view.string == source)
+        view.selectedRange = NSRange(location: range.location + 1, length: 0)
+        NotificationCenter.default.post(name: NSTextView.didChangeSelectionNotification, object: view)
+        #expect(copilot.handleKey(try key(48), in: view))
+        #expect(view.string == "first()\nvalue = Goodbye")
+        #expect(!copilot.handleKey(try key(48), in: view))
+        view.undoManager?.undo()
+        _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
+        view.selectedRange = NSRange(location: range.location + 1, length: 0)
+        _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+        try await waitFor("automatic Undo candidate") { view.semanticGhost?.text == "Goodbye" }
+        #expect(copilot.handleKey(try key(48), in: view))
+        try await Task.sleep(for: .milliseconds(250))
+        func rpcCount() -> Int {
+            guard let data = try? Data(contentsOf: sessionState), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let methods = json["methods"] as? [String: Int] else { return -1 }
+            return methods["textDocument/copilotInlineEdit"] ?? 0
+        }
+        let beforeUndoRPCs = rpcCount()
+        #expect(beforeUndoRPCs > 0)
+        view.undoManager?.undo()
+        try await Task.sleep(for: .milliseconds(350))
+        #expect(view.string == source)
+        #expect(view.semanticGhost == nil)
+        #expect(rpcCount() == beforeUndoRPCs)
+        _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
         view.selectedRange = NSRange(location: range.location, length: 0)
         try setFixture(source: source, text: "Goodbye")
         _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))

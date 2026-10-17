@@ -1,3 +1,4 @@
+// Modified for CompEditor NES navigation; see FORK_CHANGES.md.
 //
 //  LineNumberView.swift
 //
@@ -142,11 +143,20 @@ final class LineNumberView: NSRulerView {
         }
         
         self.drawNumbers(in: rect)
-        
+        if let indicator = nextEditIndicatorRect {
+            NSAttributedString(string: "➜", attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .bold), .foregroundColor: NSColor.systemBlue]).draw(in: indicator)
+        }
         NSGraphicsContext.restoreGraphicsState()
     }
     
     
+    private var nextEditIndicatorRect: NSRect? {
+        guard let editor = textView as? EditorTextView, let anchor = editor.nextEditNavigationRect else { return nil }
+        var rect = convert(anchor, from: editor)
+        rect.origin.x = bounds.minX + 2
+        return rect
+    }
+
     // MARK: Private Methods
     
     /// The client text view.
@@ -380,7 +390,10 @@ extension LineNumberView {
     
     /// Starts selecting correspondent lines in text view with a dragging / clicking event.
     override func mouseDown(with event: NSEvent) {
-        
+        if let editor = textView as? EditorTextView, nextEditIndicatorRect?.contains(convert(event.locationInWindow, from: nil)) == true {
+            CopilotCompletionController.shared.jumpToNextEdit(in: editor)
+            return
+        }
         guard
             let textView,
             let window

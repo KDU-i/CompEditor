@@ -39,7 +39,7 @@ extension EditorTextView {
             layout?.semanticGhostGap = .init(caret: ghost.nextEdit ? (ghost.replacementRange?.location ?? ghost.caret) : ghost.caret, lines: min(200, count))
         } else { layout?.semanticGhostGap = nil }
         if let layoutManager, let textContainer { layoutManager.ensureLayout(for: textContainer) }
-        updateSemanticGhostPanel(); needsDisplay = true
+        updateSemanticGhostPanel(); enclosingScrollView?.verticalRulerView?.needsDisplay = true; needsDisplay = true
     }
     func updateSemanticGhostPanel() {
         if let panel = semanticGhostPanel { panel.orderOut(nil); panel.parent?.removeChildWindow(panel); semanticGhostPanel = nil }
@@ -64,7 +64,7 @@ extension EditorTextView {
         }
         let difference = ghost.nextEdit && multiline ? SemanticNextEditPreview(before: ghost.replacedText ?? "", after: ghost.text, width: width, font: previewFont) : nil
         let height = min(difference?.fullHeight ?? surface.fullHeight, available.height * 0.5)
-        let localAnchor = semanticGhostRect.isEmpty ? NSRect(x: visibleRect.minX + 24, y: visibleRect.minY, width: 1, height: 20) : semanticGhostRect
+        let localAnchor = semanticGhostRect.isEmpty ? (nextEditNavigationRect ?? NSRect(x: visibleRect.minX + 24, y: visibleRect.minY, width: 1, height: 20)) : semanticGhostRect
         let anchor = window.convertToScreen(convert(localAnchor, to: nil))
         let x = min(max(anchor.minX, available.minX), available.maxX - width)
         let below = anchor.minY - height - 4
@@ -149,10 +149,9 @@ extension EditorTextView {
     private func drawNextEditIndicator(in dirtyRect: NSRect) {
         guard let ghost = semanticGhost, let range = ghost.replacementRange else { return }
         let anchor = semanticGhostRect
-        let height = (layoutManager as? LayoutManager)?.lineHeight ?? 18
-        let y = anchor.isEmpty ? (range.location < selectedRange().location ? visibleRect.minY : visibleRect.maxY - height) : anchor.minY
-        let indicator = NSRect(x: visibleRect.minX + 2, y: y, width: 20, height: height)
-        NSAttributedString(string: anchor.isEmpty ? "↪" : "➜", attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .bold), .foregroundColor: NSColor.systemBlue]).draw(in: indicator)
+        if enclosingScrollView?.rulersVisible != true, let indicator = nextEditNavigationRect {
+            NSAttributedString(string: anchor.isEmpty ? "↪" : "➜", attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .bold), .foregroundColor: NSColor.systemBlue]).draw(in: indicator)
+        }
         guard range.length > 0, let layoutManager, let textContainer else { return }
         let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
         NSGraphicsContext.saveGraphicsState(); defer { NSGraphicsContext.restoreGraphicsState() }
@@ -166,10 +165,18 @@ extension EditorTextView {
             }
         }
     }
+    var nextEditNavigationRect: NSRect? {
+        guard let ghost = semanticGhost, ghost.nextEdit, semanticGhostIsCurrent, let range = ghost.replacementRange else { return nil }
+        guard let window else { return nil }
+        var actual = NSRange(location: range.location, length: 0)
+        let screen = firstRect(forCharacterRange: actual, actualRange: &actual)
+        let target = convert(window.convertFromScreen(screen), from: nil)
+        let height = max(16, (layoutManager as? LayoutManager)?.lineHeight ?? 18)
+        let y = min(max(target.minY, visibleRect.minY), visibleRect.maxY - height)
+        return NSRect(x: visibleRect.maxX - 20, y: y, width: 18, height: height)
+    }
     func nextEditIndicatorHit(at point: NSPoint) -> Bool {
-        guard semanticGhost?.nextEdit == true, semanticGhostIsCurrent else { return false }
-        let anchor = semanticGhostRect
-        return point.x <= visibleRect.minX + 24 && (anchor.isEmpty || abs(point.y - anchor.midY) < 16)
+        enclosingScrollView?.rulersVisible != true && nextEditNavigationRect?.contains(point) == true
     }
     /// Hit testing is mapped to original characters before removing a virtual preview gap.
     func semanticGhostMouseOffset(at point: NSPoint) -> Int? {
