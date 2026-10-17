@@ -255,10 +255,11 @@ import Testing
         try await waitFor("indent precedence") { view.semanticGhost?.text == "Goodbye" }
         #expect(!copilot.handleKey(try key(48), in: view))
         #expect(view.string == source)
-        view.selectedRange = NSRange(location: range.location + 1, length: 0)
+        view.selectedRange = NSRange(location: 1, length: 0)
         NotificationCenter.default.post(name: NSTextView.didChangeSelectionNotification, object: view)
         #expect(copilot.handleKey(try key(48), in: view))
         #expect(view.string == "first()\nvalue = Goodbye")
+        #expect(view.selectedRange() == NSRange(location: range.location + "Goodbye".utf16.count, length: 0))
         #expect(!copilot.handleKey(try key(48), in: view))
         view.undoManager?.undo()
         _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
@@ -305,6 +306,21 @@ import Testing
         try await Task.sleep(for: .milliseconds(1100))
         #expect(view.semanticGhost?.text == "NEW")
         #expect(view.semanticGhost?.snapshot == newer)
+        // A remote whole-line edit starts at column zero. Its second Tab must
+        // adopt, not insert indentation after the navigation stage.
+        let lineSource = "first()\na()\nb()\nc()\nHello"
+        view.string = lineSource; view.selectedRange = NSRange(location: 1, length: 0)
+        try setFixture(source: lineSource, text: "Goodbye")
+        _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+        try await waitFor("line-start jump") { view.semanticGhost?.snapshot == lineSource && view.semanticGhost?.text == "Goodbye" }
+        #expect(copilot.handleKey(try key(48), in: view))
+        #expect(view.string == lineSource)
+        #expect(copilot.handleKey(try key(48), in: view))
+        #expect(view.string == "first()\na()\nb()\nc()\nGoodbye")
+        view.string = newer; view.selectedRange = NSRange(location: 1, length: 0)
+        try setFixture(source: newer, text: "NEW")
+        _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+        try await waitFor("foreign document baseline") { view.semanticGhost?.text == "NEW" }
         view.semanticDocumentContext = { (URL(fileURLWithPath: "/synthetic/other.py"), "Python") }
         #expect(!copilot.hasSuggestions(in: view))
         #expect(!copilot.handleKey(try key(48), in: view))

@@ -827,7 +827,7 @@ enum CopilotBundledServer {
             state.caret = editor.selectedRange().location; state.jumped = true; suggestions = state; present(in: editor); return true
         }
         invalidate(); applying = true
-        let accepted = SemanticActionApplication.apply([candidate.edit], title: candidate.nextEdit ? "Accept Copilot Next Edit" : "Accept Copilot Suggestion", to: editor)
+        let accepted = SemanticActionApplication.apply([candidate.edit], title: candidate.nextEdit ? "Accept Copilot Next Edit" : "Accept Copilot Suggestion", to: editor, caretAtPrimaryEnd: candidate.nextEdit)
         applying = false
         if accepted {
             ForkUsageMetrics.shared.record(.copilotCompletionAccepted)
@@ -890,7 +890,7 @@ enum CopilotBundledServer {
             let source = editor.string as NSString
             let line = source.lineRange(for: editor.selectedRange())
             let prefix = source.substring(with: NSRange(location: line.location, length: editor.selectedRange().location - line.location))
-            if !continuingAcceptance, prefix.allSatisfy({ $0 == " " || $0 == "\t" }) { return false }
+            if !continuingAcceptance, suggestions?.jumped != true, prefix.allSatisfy({ $0 == " " || $0 == "\t" }) { return false }
         }
         SemanticCompletionController.shared.dismissSuggestionsForCopilot(in: editor)
         return accept(in: editor)
