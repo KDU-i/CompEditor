@@ -49,6 +49,17 @@ extension NotificationCenter.MessageIdentifier where Self == NotificationCenter.
 // MARK: -
 
 final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEditing {
+    /// Session-wide keyboard navigation mode; independent of AI connection and
+    /// macOS Full Keyboard Access. Marked text always remains with the IME.
+    static var tabMovesFocus = false
+
+    @objc func toggleTabFocusMode(_ sender: Any?) {
+        Self.tabMovesFocus.toggle()
+        NSAccessibility.post(element: self, notification: .announcementRequested, userInfo: [
+            .announcement: Self.tabMovesFocus ? "Tab moves keyboard focus" : "Tab inserts indentation",
+            .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+        ])
+    }
     
     @MainActor protocol Delegate: AnyObject {
         
@@ -88,8 +99,25 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     // The controller supplies live identity after Save As and syntax changes.
     var semanticDocumentContext: (() -> (url: URL?, syntax: String))?
     private var semanticTrackingArea: NSTrackingArea?
-    let semanticBufferID = UUID()
-    var semanticRevision = 0
+    private final class SemanticBufferState {
+        let id = UUID()
+        var revision = 0
+    }
+    private static let semanticBuffers = NSMapTable<NSTextStorage, SemanticBufferState>.weakToStrongObjects()
+    private let detachedSemanticBuffer = SemanticBufferState()
+    private var semanticBuffer: SemanticBufferState {
+        guard let storage = self.textStorage else { return detachedSemanticBuffer }
+        if let state = Self.semanticBuffers.object(forKey: storage) { return state }
+        let state = SemanticBufferState(); Self.semanticBuffers.setObject(state, forKey: storage)
+        return state
+    }
+    var semanticBufferID: UUID { semanticBuffer.id }
+    var semanticRevision: Int {
+        get { semanticBuffer.revision }
+        set { semanticBuffer.revision = newValue }
+    }
+    // One owner for both actual AppKit events and completion/viewport callbacks.
+    lazy var copilotController: CopilotCompletionController = .shared
     var semanticDiagnostics: SemanticDiagnostics? { didSet { needsDisplay = true; SemanticCompletionController.shared.cancelHover() } }
     var semanticGhostPanel: SemanticCandidatePanel?
     var semanticGhost: SemanticGhostPreview? { didSet { updateSemanticGhostPresentation() } }
@@ -175,6 +203,11 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     private var instanceHighlightTask: Task<Void, any Error>?
     
     private var isShowingCompletion = false
+    var isNativeCompletionVisible: Bool { isShowingCompletion }
+    #if DEBUG
+    /// Test-owned observer only; nil by default, absent from release builds.
+    var nativeCompletionTrace: ((String) -> Void)?
+    #endif
     private var partialCompletionWord: String?
     private lazy var completionDebouncer = Debouncer { [weak self] in self?.performCompletion() }
     
@@ -448,8 +481,11 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     }
 
     override func mouseDown(with event: NSEvent) {
+        if nextEditIndicatorHit(at: convert(event.locationInWindow, from: nil)) {
+            copilotController.jumpToNextEdit(in: self); return
+        }
         let mappedOffset = semanticGhostMouseOffset(at: convert(event.locationInWindow, from: nil))
-        CopilotCompletionController.shared.dismissForInteraction(in: self)
+        copilotController.dismissForInteraction(in: self)
         SemanticCompletionController.shared.cancelHover()
         
         self.mouseDownPoint = self.convert(event.locationInWindow, from: nil)
@@ -519,19 +555,29 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     
     
     override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if Self.tabMovesFocus, !hasMarkedText(), event.keyCode == 48, modifiers.isEmpty || modifiers == .shift {
+            if modifiers == .shift { window?.selectPreviousKeyView(self) }
+            else { window?.selectNextKeyView(self) }
+            return
+        }
         let semantic = SemanticCompletionController.shared
-        if CopilotCompletionController.shared.handleKey(event, in: self) { return }
+        if copilotController.handleKey(event, in: self) { return }
         if semantic.handleAutomaticKey(event, in: self) { return }
         let previous = self.string
         super.keyDown(with: event)
         semantic.typed(event, in: self, previousText: previous)
-        CopilotCompletionController.shared.typed(in: self, previous: previous)
+        if !(event.modifierFlags.contains(.command) && event.keyCode == 6) {
+            copilotController.typed(in: self, previous: previous)
+        }
     }
 
     override func didChangeText() {
         
-        super.didChangeText()
+        // AppKit posts didChangeNotification synchronously from super. Observers
+        // must see the revision of the text they are rebasing against.
         semanticRevision += 1
+        super.didChangeText()
         SemanticCompletionController.shared.track(self)
         
         self.invalidateNonContiguousLayout()
@@ -1215,6 +1261,9 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
         
         switch item.action {
+            case #selector(toggleTabFocusMode(_:)):
+                (item as? NSMenuItem)?.state = Self.tabMovesFocus ? .on : .off
+                return true
             case #selector(pasteAsIs):
                 return self.isEditable && NSPasteboard.general.canReadObject(forClasses: [NSString.self], options: nil)
             
@@ -1833,8 +1882,11 @@ extension EditorTextView {
     
     override func completions(forPartialWordRange charRange: NSRange, indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String]? {
         
+        #if DEBUG
+        nativeCompletionTrace?("candidates request range=\(charRange) selected=\(selectedRange()) marked=\(hasMarkedText()) exclusiveInline=\(hasExclusiveCopilotInlineGhost)")
+        #endif
         guard
-            !self.hasVisibleCopilotGhost, !charRange.isEmpty,
+            !self.hasExclusiveCopilotInlineGhost, !charRange.isEmpty,
             !self.completionWordTypes.isEmpty
         else { return nil }
         
@@ -1878,6 +1930,9 @@ extension EditorTextView {
             return []
         }
         
+        #if DEBUG
+        nativeCompletionTrace?("candidates result count=\(candidateWords.count)")
+        #endif
         return candidateWords
     }
     
@@ -1885,7 +1940,12 @@ extension EditorTextView {
     override func insertCompletion(_ word: String, forPartialWordRange charRange: NSRange, movement: Int, isFinal flag: Bool) {
         
         self.completionDebouncer.cancel()
-        
+        #if DEBUG
+        nativeCompletionTrace?("insertCompletion final=\(flag) movement=\(movement) range=\(charRange) event=\(nativeCompletionEventSummary(NSApp.currentEvent)) windowEvent=\(nativeCompletionEventSummary(window?.currentEvent)) active=\(NSApp.isActive) key=\(NSApp.keyWindow === window) responder=\(window?.firstResponder === self) selected=\(selectedRange()) viewport=\(visibleRect.origin)")
+        if flag, movement == 0, let trace = nativeCompletionTrace {
+            trace("final-zero stack=" + Thread.callStackSymbols.prefix(32).joined(separator: " | "))
+        }
+        #endif
         self.isShowingCompletion = !flag
         
         // store original string
@@ -1943,7 +2003,7 @@ extension EditorTextView {
     private func performCompletion() {
         
         guard
-            !self.hasVisibleCopilotGhost, !self.hasMarkedText(),
+            !self.hasExclusiveCopilotInlineGhost, !self.hasMarkedText(),
             self.selectedRange.isEmpty,
             self.rangeForUserCompletion.length >= self.minimumAutomaticCompletionLength,
             self.string.character(before: self.selectedRange)
@@ -1954,7 +2014,7 @@ extension EditorTextView {
         
         // Automatic word completion may coexist with an AI request still loading.
         // Only the explicit normal-completion command cancels that request.
-        super.complete(self)
+        presentNativeCompletion(self)
     }
 
     func suppressWordCompletionForCopilot() {
@@ -1968,8 +2028,37 @@ extension EditorTextView {
     }
 
     override func complete(_ sender: Any?) {
+        #if DEBUG
+        nativeCompletionTrace?("complete called selected=\(selectedRange()) marked=\(hasMarkedText()) active=\(NSApp.isActive) key=\(NSApp.keyWindow === window) responder=\(window?.firstResponder === self)")
+        #endif
         guard !hasMarkedText() else { return }
-        CopilotCompletionController.shared.dismissForInteraction(in: self)
+        copilotController.dismissForInteraction(in: self)
+        presentNativeCompletion(sender)
+    }
+
+    #if DEBUG
+    private func nativeCompletionEventSummary(_ event: NSEvent?) -> String {
+        guard let event else { return "nil" }
+        let key = [.keyDown, .keyUp, .flagsChanged].contains(event.type) ? Int(event.keyCode) : -1
+        let subtype = [.appKitDefined, .applicationDefined, .systemDefined].contains(event.type) ? Int(event.subtype.rawValue) : -1
+        return "type=\(event.type.rawValue),subtype=\(subtype),key=\(key),window=\(event.windowNumber),time=\(event.timestamp)"
+    }
+    #endif
+
+    private func presentNativeCompletion(_ sender: Any?) {
+        // AppKit tracks this UI synchronously, including an initially unselected
+        // popup that never calls insertCompletion until a candidate is chosen.
+        // Own Tab/Esc throughout that lifetime, not only after preview insertion.
+        isShowingCompletion = true
+        #if DEBUG
+        nativeCompletionTrace?("AppKit enter range=\(rangeForUserCompletion) selected=\(selectedRange()) event=\(nativeCompletionEventSummary(NSApp.currentEvent)) viewport=\(visibleRect.origin)")
+        #endif
+        defer {
+            isShowingCompletion = false
+            #if DEBUG
+            nativeCompletionTrace?("AppKit returned selected=\(selectedRange())")
+            #endif
+        }
         super.complete(sender)
     }
 }

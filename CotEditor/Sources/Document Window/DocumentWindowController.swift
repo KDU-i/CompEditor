@@ -1,3 +1,4 @@
+// Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
 //
 //  DocumentWindowController.swift
 //
@@ -40,6 +41,9 @@ enum SyntaxMenuTag: Int {
 
 
 final class DocumentWindowController: NSWindowController, NSWindowDelegate {
+    /// Only an explicitly opened folder supplies project authority. Never infer
+    /// an AI project by walking ancestors of an ordinary standalone document.
+    var semanticProjectDocument: DirectoryDocument? { self.directoryDocument }
     
     // MARK: Public Properties
     

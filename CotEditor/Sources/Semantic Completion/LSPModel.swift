@@ -1,6 +1,7 @@
 // Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
 // SPDX-License-Identifier: Apache-2.0
 import Foundation
+import Darwin
 
 /// A Sendable JSON value keeps protocol data out of AppKit and across actor boundaries.
 enum LSPJSON: Codable, Sendable, Equatable {
@@ -83,6 +84,12 @@ enum LSPError: Error, LocalizedError {
 enum LSPText {
     /// Preserve the actual edit window for Copilot's recent-edit history.
     /// Boundaries never split a UTF-16 surrogate pair or CRLF sequence.
+    /// Protocol ranges address UTF-16 code units. Swift's canonical String
+    /// equality can hide a normalization edit and leave server offsets stale.
+    static func sameText(_ snapshot: String?, _ text: String) -> Bool {
+        snapshot?.utf16.elementsEqual(text.utf16) == true
+    }
+
     static func incrementalChange(from previous: String, to current: String) throws -> LSPJSON {
         let old = Array(previous.utf16), new = Array(current.utf16)
         var start = 0
@@ -378,7 +385,7 @@ struct LSPHoverStamp: Sendable {
     let fileURL: URL?
     let symbol: NSRange
     func matches(epoch: Int, generation: Int, snapshot: String, fileURL: URL?, symbol: NSRange?) -> Bool {
-        self.epoch == epoch && self.generation == generation && self.snapshot == snapshot && self.fileURL == fileURL && self.symbol == symbol
+        self.epoch == epoch && self.generation == generation && LSPText.sameText(self.snapshot, snapshot) && self.fileURL == fileURL && self.symbol == symbol
     }
 }
 
@@ -613,7 +620,7 @@ enum CopilotInline {
         guard let value = item["insertText"].string ?? item["text"].string, value.utf16.count <= 100_000 else { throw LSPError.unsupportedEdit }
         let range = try LSPText.range(item["range"], in: text)
         let normalized = normalize(value, in: text)
-        guard (text as NSString).substring(with: range) != normalized else { throw LSPError.unsupportedEdit }
+        guard !(text as NSString).substring(with: range).utf16.elementsEqual(normalized.utf16) else { throw LSPError.unsupportedEdit }
         return LSPText.Edit(range: range, text: normalized, primary: true)
     }
     static func partialLength(_ text: String, line: Bool) -> Int {
@@ -657,5 +664,574 @@ enum CopilotInline {
     static func command(_ value: LSPJSON, name: String) -> LSPJSON? {
         guard value["command"].string == name, value["arguments"].array != nil else { return nil }
         return .object(["command": .string(name), "arguments": value["arguments"]])
+    }
+}
+
+/// Host-side NES policy. Original implementation; VS Code is a behavioral reference only.
+/// On-demand navigation authority from an explicitly opened project. This never
+/// enumerates the project or gives its root to the provider. Only the named
+/// normal source can be opened, then requested as the foreground document.
+enum CopilotProjectTargetPolicy {
+    struct Snapshot: Sendable { let uri: URL; let text: String }
+    private static let sourceExtensions = Set(["py", "java", "ts", "tsx", "js", "jsx", "swift", "c", "h", "cpp", "hpp", "cc", "cs", "go", "rs", "rb", "php", "kt", "kts", "scala", "m", "mm", "lua", "pl", "r", "dart", "vue", "svelte", "ex", "exs", "erl", "clj", "cljs", "fs", "fsx"])
+    static func target(_ uri: URL, root: URL, otherLanguages: Bool = false) throws -> URL {
+        guard uri.isFileURL, uri.host == nil || uri.host == "localhost", uri.query == nil, uri.fragment == nil,
+              root.isFileURL, uri.standardizedFileURL.path == uri.path else { throw LSPError.unsupportedEdit }
+        let original = root.standardizedFileURL, canonical = original.resolvingSymlinksInPath()
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+        let broad = ["/", home.path] + ["Desktop", "Documents", "Downloads", "Library"].map { home.appendingPathComponent($0).path }
+        guard !broad.contains(canonical.path), !canonical.pathComponents.contains(where: { $0.hasPrefix(".") }) else { throw LSPError.unsupportedEdit }
+        let prefix = uri.path.hasPrefix(original.path + "/") ? original : canonical
+        guard uri.path.hasPrefix(prefix.path + "/") else { throw LSPError.unsupportedEdit }
+        let parts = String(uri.path.dropFirst(prefix.path.count + 1)).split(separator: "/").map(String.init)
+        let excluded = Set(["node_modules", "vendor", "venv", "__pycache__", "build", "dist", "target", "out", "coverage", "Pods", "Carthage", "DerivedData"])
+        guard !parts.isEmpty, !parts.contains(where: { $0.hasPrefix(".") || excluded.contains($0) }),
+              !parts.contains(where: { $0.range(of: #"(?i)(^|[_\-.])(secrets?|credentials?|passwords?|tokens?|private[_-]?keys?)([_\-.]|$)"#, options: .regularExpression) != nil }) else { throw LSPError.unsupportedEdit }
+        let url = parts.reduce(canonical) { $0.appendingPathComponent($1) }
+        let language = CopilotLanguage.resolve(url: url, syntax: "")
+        guard sourceExtensions.contains(url.pathExtension.lowercased()), otherLanguages || language == "python" || language == "java" else { throw LSPError.unsupportedEdit }
+        // Check only exact ancestor metadata, never list directory contents.
+        for depth in 1...parts.count {
+            let item = parts.prefix(depth).reduce(canonical) { $0.appendingPathComponent($1) }
+            let values = try item.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey, .isRegularFileKey])
+            guard values.isSymbolicLink != true, depth == parts.count ? values.isRegularFile == true : values.isDirectory == true else { throw LSPError.unsupportedEdit }
+        }
+        var exclusions = try GitExclusions(root: canonical, home: FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath())
+        defer { exclusions.cleanup() }
+        guard try exclusions.permits(parts) else { throw LSPError.unsupportedEdit }
+        return url
+    }
+    static func snapshot(_ uri: URL, root: URL, otherLanguages: Bool = false) throws -> Snapshot {
+        let url = try target(uri, root: root, otherLanguages: otherLanguages)
+        let canonical = root.standardizedFileURL.resolvingSymlinksInPath()
+        let parts = String(url.path.dropFirst(canonical.path.count + 1)).split(separator: "/").map(String.init)
+        guard let data = try read(parts, root: canonical, limit: 4_000_000), let text = String(data: data, encoding: .utf8),
+              !text.contains("\0"), !containsSecret(text) else { throw LSPError.unsupportedEdit }
+        return Snapshot(uri: url, text: text)
+    }
+    static func containsSecret(_ text: String) -> Bool {
+        text.range(of: #"(?m)BEGIN [A-Z ]*PRIVATE KEY|AKIA[A-Z0-9]{16}|(?i:(?:api[_-]?key|secret|password|access[_-]?token)\s*[:=]\s*["'][^"'\s]{8,}["'])"#, options: .regularExpression) != nil
+    }
+    /// Descriptor-relative reads reject symlinked ancestors, nonregular files,
+    /// oversized metadata/source, and changes during the read.
+    private static func read(_ parts: [String], root: URL, limit: Int) throws -> Data? {
+        var fd = Darwin.open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { throw LSPError.unsupportedEdit }
+        defer { Darwin.close(fd) }
+        for part in parts.dropLast() {
+            let next = openat(fd, part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            if next < 0, errno == ENOENT { return nil }
+            guard next >= 0 else { throw LSPError.unsupportedEdit }
+            Darwin.close(fd); fd = next
+        }
+        let file = openat(fd, parts.last!, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        if file < 0, errno == ENOENT { return nil }
+        guard file >= 0 else { throw LSPError.unsupportedEdit }
+        let handle = FileHandle(fileDescriptor: file, closeOnDealloc: true)
+        var before = stat(), after = stat()
+        guard fstat(file, &before) == 0, before.st_mode & S_IFMT == S_IFREG, before.st_size <= limit else { throw LSPError.unsupportedEdit }
+        let data = try handle.read(upToCount: limit + 1) ?? Data()
+        guard data.count == before.st_size, data.count <= limit, fstat(file, &after) == 0, before.st_ino == after.st_ino, before.st_size == after.st_size,
+              before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec, before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec else { throw LSPError.unsupportedEdit }
+        return data
+    }
+    /// Git owns pattern semantics. Only exclusion metadata is copied to a
+    /// private shadow repository; Git never opens the user's repository/code.
+    private struct GitExclusions {
+        let root: URL
+        var repositoryRoot: URL
+        let home: URL
+        let shadow: URL
+        let userConfigDirectory: URL
+        var admin: URL?
+        var common: URL?
+        var aliases: [String] = []
+        var branch: String?
+        var ignoreCase = false
+        var precomposeUnicode = false
+        var worktreeConfig = false
+        var excludesFile: URL?
+        var allowedRoots: [URL]
+        var exactFiles: [URL]
+        var activeConfigs = Set<URL>()
+        var metadataBytes = 0
+        private let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+
+        init(root: URL, home: URL) throws {
+            self.root = root; self.repositoryRoot = root; self.home = home
+            let environment = ProcessInfo.processInfo.environment
+            if let configuredHome = environment["HOME"] {
+                guard URL(fileURLWithPath: configuredHome).standardizedFileURL == home.standardizedFileURL else { throw LSPError.unsupportedEdit }
+            }
+            guard environment["GIT_CONFIG_PARAMETERS"].map({ $0.isEmpty }) ?? true,
+                  environment["GIT_CONFIG_COUNT"].map({ $0 == "0" }) ?? true else { throw LSPError.unsupportedEdit }
+            if let directory = environment["XDG_CONFIG_HOME"] {
+                guard directory.hasPrefix("/"), !directory.contains("\n"), !directory.contains("\0") else { throw LSPError.unsupportedEdit }
+                self.userConfigDirectory = URL(fileURLWithPath: directory, isDirectory: true).appendingPathComponent("git").standardizedFileURL
+            } else { self.userConfigDirectory = home.appendingPathComponent(".config/git") }
+            self.shadow = URL.temporaryDirectory.appendingPathComponent("compeditor-ignore-" + UUID().uuidString)
+            self.allowedRoots = [root, userConfigDirectory, home.appendingPathComponent(".config/git"), home.appendingPathComponent(".gitconfig.d"), URL(fileURLWithPath: "/etc/gitconfig.d").resolvingSymlinksInPath()]
+            self.exactFiles = [home.appendingPathComponent(".gitconfig"), URL(fileURLWithPath: "/etc/gitconfig").resolvingSymlinksInPath()]
+            do {
+                try FileManager.default.createDirectory(at: shadow, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+                try FileManager.default.createDirectory(at: shadow.appendingPathComponent(".git/objects"), withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(at: shadow.appendingPathComponent(".git/refs"), withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(at: shadow.appendingPathComponent(".git/info"), withIntermediateDirectories: true)
+                try Data("ref: refs/heads/policy\n".utf8).write(to: shadow.appendingPathComponent(".git/HEAD"))
+                try configure(caseSensitive: true)
+            } catch { try? FileManager.default.removeItem(at: shadow); throw error }
+        }
+        func cleanup() { try? FileManager.default.removeItem(at: shadow) }
+        private func configure(caseSensitive: Bool) throws {
+            // Never carry hooks, helpers, remotes, fsmonitor, includes, attributes
+            // or user environment/config into the Git process.
+            let config = "[core]\nrepositoryformatversion = 0\nbare = false\nignorecase = \(caseSensitive ? "false" : "true")\nprecomposeunicode = \(precomposeUnicode ? "true" : "false")\nexcludesfile = \(quoted(shadow.appendingPathComponent("global-exclude").path))\n"
+            try Data(config.utf8).write(to: shadow.appendingPathComponent(".git/config"))
+        }
+        private mutating func metadata(_ url: URL, required: Bool = false) throws -> Data? {
+            let url = url.standardizedFileURL
+            guard ContinuousClock.now < deadline else { throw LSPError.unsupportedEdit }
+            guard !url.path.contains("\0"), !url.path.contains("\n"),
+                  !url.pathComponents.contains(where: { [".env", ".aws", ".ssh", ".gnupg", "credentials", "passwords"].contains($0.lowercased()) }) else { throw LSPError.unsupportedEdit }
+            let homeName = url.deletingLastPathComponent() == home && (url.lastPathComponent.hasPrefix(".gitconfig.") || url.lastPathComponent.hasPrefix(".gitconfig-") || url.lastPathComponent == ".gitignore" || url.lastPathComponent == ".gitignore_global")
+            if homeName, !exactFiles.contains(url) { exactFiles.append(url) }
+            let container = allowedRoots.filter { url.path.hasPrefix($0.path + "/") }.max { $0.path.count < $1.path.count }
+            guard let base = container ?? (exactFiles.contains(url) ? url.deletingLastPathComponent() : nil) else { throw LSPError.unsupportedEdit }
+            let parts = String(url.path.dropFirst(base.path.count + 1)).split(separator: "/").map(String.init)
+            guard !parts.isEmpty,
+                  !CopilotProjectTargetPolicy.sourceExtensions.contains(url.pathExtension.lowercased()),
+                  !["pem", "key", "p12", "pfx", "p8", "der", "crt", "cer", "sqlite", "db", "keychain", "keychain-db", "kdbx", "json", "yaml", "yml", "xml", "toml"].contains(url.pathExtension.lowercased()) else { throw LSPError.unsupportedEdit }
+            if base == admin || base == common {
+                guard !parts.contains(where: { ["objects", "refs", "logs", "hooks", "modules", "worktrees"].contains($0) }),
+                      !["index", "packed-refs", "FETCH_HEAD", "ORIG_HEAD", "COMMIT_EDITMSG", "MERGE_MSG"].contains(parts.last!) else { throw LSPError.unsupportedEdit }
+            }
+            var status = stat()
+            if lstat(url.path, &status) != 0 {
+                guard errno == ENOENT, !required else { throw LSPError.unsupportedEdit }
+                return nil
+            }
+            let readRoot = container == nil ? base.resolvingSymlinksInPath() : base
+            let data = try CopilotProjectTargetPolicy.read(parts, root: readRoot, limit: 65_536)
+            if required, data == nil { throw LSPError.unsupportedEdit }
+            if let data {
+                metadataBytes += data.count
+                guard metadataBytes <= 1_048_576, let text = String(data: data, encoding: .utf8), !data.contains(0), !CopilotProjectTargetPolicy.containsSecret(text) else { throw LSPError.unsupportedEdit }
+            }
+            return data
+        }
+        private func path(_ value: String, relativeTo directory: URL) throws -> URL {
+            guard !value.isEmpty, !value.contains("\0"), !value.contains("\n"), !value.contains("%("),
+                  !value.hasPrefix("~") || value.hasPrefix("~/") else { throw LSPError.unsupportedEdit }
+            if value.hasPrefix("~/") { return home.appendingPathComponent(String(value.dropFirst(2))).standardizedFileURL }
+            return URL(fileURLWithPath: value, relativeTo: URL(fileURLWithPath: directory.path, isDirectory: true)).standardizedFileURL
+        }
+        private func realPath(_ url: URL) throws -> String {
+            guard let result = Darwin.realpath(url.path, nil) else { throw LSPError.unsupportedEdit }
+            defer { free(result) }
+            return String(cString: result)
+        }
+        private func directory(_ url: URL) throws -> Bool {
+            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            return values.isDirectory == true && values.isSymbolicLink != true
+        }
+        mutating func discover() throws {
+            // Opening a subfolder must still honor its enclosing repository.
+            // Probe fixed ancestor markers only; never enumerate parent contents.
+            var marker: URL
+            while true {
+                guard ContinuousClock.now < deadline else { throw LSPError.unsupportedEdit }
+                marker = repositoryRoot.appendingPathComponent(".git")
+                var markerStatus = stat()
+                if lstat(marker.path, &markerStatus) == 0 { break }
+                guard errno == ENOENT else { throw LSPError.unsupportedEdit }
+                let parent = repositoryRoot.deletingLastPathComponent()
+                if repositoryRoot.path == "/" || parent.path.isEmpty || parent.path == repositoryRoot.path { repositoryRoot = root; return }
+                repositoryRoot = parent
+            }
+            exactFiles.append(marker.standardizedFileURL)
+            let values = try marker.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey])
+            guard values.isSymbolicLink != true else { throw LSPError.unsupportedEdit }
+            var selected = marker
+            if values.isDirectory != true {
+                guard values.isRegularFile == true, let bytes = try metadata(marker, required: true),
+                      let text = String(data: bytes, encoding: .utf8), text.hasPrefix("gitdir: ") else { throw LSPError.unsupportedEdit }
+                let pointer = text.dropFirst(8).trimmingCharacters(in: CharacterSet(charactersIn: "\r\n"))
+                selected = try path(pointer, relativeTo: repositoryRoot)
+            }
+            // Auto-discovery uses getcwd/realpath, as Git -C does. A lexical
+            // /var alias must not spuriously activate a different include.
+            aliases = [try realPath(selected)]
+            selected = selected.resolvingSymlinksInPath()
+            guard try directory(selected) else { throw LSPError.unsupportedEdit }
+            admin = selected
+            // A linked worktree must have a reciprocal registration and the
+            // conventional common-dir relation. Do not follow arbitrary pointers.
+            if selected.deletingLastPathComponent().lastPathComponent == "worktrees" {
+                let shared = selected.deletingLastPathComponent().deletingLastPathComponent()
+                guard try directory(shared.appendingPathComponent("objects")),
+                      FileManager.default.fileExists(atPath: shared.appendingPathComponent("HEAD").path) else { throw LSPError.unsupportedEdit }
+                allowedRoots += [selected, shared]
+                guard let registration = try metadata(selected.appendingPathComponent("gitdir"), required: true),
+                      let registrationText = String(data: registration, encoding: .utf8),
+                      try path(registrationText.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")), relativeTo: selected).resolvingSymlinksInPath() == marker.resolvingSymlinksInPath(),
+                      let relation = try metadata(selected.appendingPathComponent("commondir"), required: true),
+                      let relationText = String(data: relation, encoding: .utf8),
+                      try path(relationText.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")), relativeTo: selected).resolvingSymlinksInPath() == shared else { throw LSPError.unsupportedEdit }
+                common = shared
+            } else {
+                // Normal and --separate-git-dir repositories have their own
+                // objects/HEAD. Only these fixed metadata names are inspected.
+                guard try directory(selected.appendingPathComponent("objects")),
+                      FileManager.default.fileExists(atPath: selected.appendingPathComponent("HEAD").path),
+                      !FileManager.default.fileExists(atPath: selected.appendingPathComponent("commondir").path) else { throw LSPError.unsupportedEdit }
+                allowedRoots.append(selected); common = selected
+            }
+            // Explicit config/rule references may live in the enclosing working
+            // tree or conventional main worktree. These are metadata scopes
+            // only: target() still returns source solely within the opened root.
+            let related = [repositoryRoot] + (common?.lastPathComponent == ".git" ? [common!.deletingLastPathComponent()] : [])
+            let broad = ["/", home.path, URL.temporaryDirectory.standardizedFileURL.path] + ["Desktop", "Documents", "Downloads", "Library"].map { home.appendingPathComponent($0).path }
+            for directory in related where directory.pathComponents.count > 2 && !broad.contains(directory.path) {
+                if !allowedRoots.contains(directory) { allowedRoots.append(directory) }
+            }
+            guard let bytes = try metadata(selected.appendingPathComponent("HEAD"), required: true), let head = String(data: bytes, encoding: .utf8) else { throw LSPError.unsupportedEdit }
+            if head.hasPrefix("ref: refs/heads/") {
+                let name = String(head.dropFirst(5)).trimmingCharacters(in: CharacterSet(charactersIn: "\r\n"))
+                guard try git(["check-ref-format", name]).0 == 0 else { throw LSPError.unsupportedEdit }
+                branch = String(name.dropFirst(11))
+            }
+            else { guard head.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")).range(of: #"^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"#, options: .regularExpression) != nil else { throw LSPError.unsupportedEdit } }
+        }
+        private func boolean(_ value: String?) throws -> Bool {
+            guard let value else { return true }
+            let text = "[value]\nflag = \(quoted(value))\n"
+            let result = try git(["config", "--file", "-", "--no-includes", "--type=bool", "--get", "value.flag"], input: Data(text.utf8))
+            guard result.0 == 0 else { throw LSPError.unsupportedEdit }
+            return result.1 == Data("true\n".utf8)
+        }
+        private func quoted(_ value: String) -> String {
+            "\"" + value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: "\\n").replacingOccurrences(of: "\t", with: "\\t") + "\""
+        }
+        private func matches(_ pattern: String, candidate: String, folded: Bool) throws -> Bool {
+            guard !pattern.contains("\n"), !pattern.contains("\0"), !pattern.hasSuffix("\\") else { throw LSPError.unsupportedEdit }
+            try configure(caseSensitive: !folded)
+            // An anchored ignore rule uses Git's native wildmatch. Explicitly
+            // unignore every proper parent so a parent match cannot stand in
+            // for an exact includeIf match; keep ** at its original boundary.
+            let pieces = candidate.split(separator: "/", omittingEmptySubsequences: false)
+            var rules = "/" + pattern + "\n"
+            for count in 1..<pieces.count {
+                var prefix = pieces.prefix(count).joined(separator: "/")
+                for character in ["\\", "*", "?", "[", "]"] { prefix = prefix.replacingOccurrences(of: character, with: "\\" + character) }
+                rules += "!/" + prefix + "/\n"
+            }
+            try Data(rules.utf8).write(to: shadow.appendingPathComponent(".gitignore"))
+            let result = try git(["check-ignore", "--no-index", "--quiet", "--", candidate])
+            guard result.0 == 0 || result.0 == 1 else { throw LSPError.unsupportedEdit }
+            return result.0 == 0
+        }
+        private func includeMatches(_ condition: String, source: URL) throws -> Bool {
+            if condition.hasPrefix("gitdir:") || condition.hasPrefix("gitdir/i:") {
+                let folded = condition.hasPrefix("gitdir/i:")
+                var pattern = String(condition.dropFirst(folded ? 9 : 7))
+                if pattern.hasPrefix("~/") { pattern = home.path + "/" + pattern.dropFirst(2) }
+                else if pattern.hasPrefix("./") { pattern = try realPath(source.deletingLastPathComponent()) + "/" + pattern.dropFirst(2) }
+                else if !pattern.hasPrefix("/") { pattern = "**/" + pattern }
+                if pattern.hasSuffix("/") { pattern += "**" }
+                if pattern.hasPrefix("/") { pattern.removeFirst() }
+                for candidate in aliases {
+                    if try matches(pattern, candidate: String(candidate.dropFirst()), folded: folded) { return true }
+                }
+                return false
+            }
+            if condition.hasPrefix("onbranch:") {
+                guard let branch, let common else { return false }
+                // Do not guess through indirect/symlinked branch references.
+                // A normal loose ref is a short hash; missing refs can be packed
+                // or unborn. No object or packed-ref database is read.
+                if let bytes = try CopilotProjectTargetPolicy.read(["refs", "heads"] + branch.split(separator: "/").map(String.init), root: common, limit: 256) {
+                    guard let text = String(data: bytes, encoding: .utf8),
+                          text.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")).range(of: #"^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"#, options: .regularExpression) != nil else { throw LSPError.unsupportedEdit }
+                }
+                var pattern = String(condition.dropFirst(9)); if pattern.hasSuffix("/") { pattern += "**" }
+                return try matches(pattern, candidate: branch, folded: false)
+            }
+            // Unknown conditional semantics must never omit a possible exclusion.
+            throw LSPError.unsupportedEdit
+        }
+        mutating func configuration(_ url: URL, required: Bool = false) throws {
+            guard !activeConfigs.contains(url), activeConfigs.count < 11 else { throw LSPError.unsupportedEdit }
+            guard let bytes = try metadata(url, required: required) else { return }
+            activeConfigs.insert(url); defer { activeConfigs.remove(url) }
+            let result = try git(["config", "--file", "-", "--no-includes", "--null", "--get-regexp", #"^(core.ignorecase|core.precomposeunicode|core.excludesfile|extensions.worktreeconfig|include.path|includeif\..*\.path)$"#], input: bytes)
+            guard result.0 == 0 || result.0 == 1, let text = String(data: result.1, encoding: .utf8) else { throw LSPError.unsupportedEdit }
+            for entry in text.split(separator: "\0") {
+                let fields = entry.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+                let key = String(fields[0]), value = fields.count == 2 ? String(fields[1]) : nil
+                switch key {
+                    case "core.ignorecase": ignoreCase = try boolean(value)
+                    case "core.precomposeunicode": precomposeUnicode = try boolean(value)
+                    case "extensions.worktreeconfig": worktreeConfig = try boolean(value)
+                    case "core.excludesfile":
+                        guard let value else { throw LSPError.unsupportedEdit }
+                        excludesFile = value.isEmpty ? nil : try path(value, relativeTo: repositoryRoot)
+                    case "include.path":
+                        guard let value else { throw LSPError.unsupportedEdit }
+                        try configuration(path(value, relativeTo: url.deletingLastPathComponent()))
+                    default:
+                        guard key.hasPrefix("includeif."), key.hasSuffix(".path"), let value else { throw LSPError.unsupportedEdit }
+                        let condition = String(key.dropFirst(10).dropLast(5))
+                        if try includeMatches(condition, source: url) { try configuration(path(value, relativeTo: url.deletingLastPathComponent())) }
+                }
+            }
+        }
+        mutating func permits(_ parts: [String]) throws -> Bool {
+            try discover()
+            let environment = ProcessInfo.processInfo.environment
+            for (name, expected) in [("GIT_DIR", admin), ("GIT_COMMON_DIR", common), ("GIT_WORK_TREE", Optional(repositoryRoot))] {
+                if let value = environment[name] {
+                    guard let expected, try path(value, relativeTo: root).resolvingSymlinksInPath() == expected else { throw LSPError.unsupportedEdit }
+                }
+            }
+            excludesFile = userConfigDirectory.appendingPathComponent("ignore")
+            if let value = environment["GIT_CONFIG_SYSTEM"] {
+                if value != "/dev/null" { try configuration(path(value, relativeTo: root)) }
+            } else if environment["GIT_CONFIG_NOSYSTEM"] == nil { try configuration(exactFiles[1]) }
+            else if try !boolean(environment["GIT_CONFIG_NOSYSTEM"]) { try configuration(exactFiles[1]) }
+            // Git reads XDG before ~/.gitconfig (which has the higher precedence).
+            if let value = environment["GIT_CONFIG_GLOBAL"] {
+                if value != "/dev/null" { try configuration(path(value, relativeTo: root)) }
+            } else {
+                try configuration(userConfigDirectory.appendingPathComponent("config"))
+                try configuration(home.appendingPathComponent(".gitconfig"))
+            }
+            if let common { try configuration(common.appendingPathComponent("config"), required: true) }
+            if worktreeConfig, let admin { try configuration(admin.appendingPathComponent("config.worktree")) }
+            try configure(caseSensitive: !ignoreCase)
+            try? FileManager.default.removeItem(at: shadow.appendingPathComponent(".gitignore"))
+            if let excludesFile, excludesFile.path != "/dev/null", let bytes = try metadata(excludesFile) { try bytes.write(to: shadow.appendingPathComponent("global-exclude")) }
+            if let common, let bytes = try metadata(common.appendingPathComponent("info/exclude")) { try bytes.write(to: shadow.appendingPathComponent(".git/info/exclude")) }
+            let prefix: [String]
+            if repositoryRoot.path == root.path { prefix = [] }
+            else {
+                guard root.path.hasPrefix(repositoryRoot.path + "/") else { throw LSPError.unsupportedEdit }
+                prefix = String(root.path.dropFirst(repositoryRoot.path.count + 1)).split(separator: "/").map(String.init)
+            }
+            let repositoryParts = prefix + parts
+            // Git exclusions cannot be undone by a different .ignore layer.
+            for kind in [".gitignore", ".ignore", ".copilotignore"] {
+                for depth in 0..<repositoryParts.count {
+                    let prefix = Array(repositoryParts.prefix(depth)), directory = prefix.reduce(shadow) { $0.appendingPathComponent($1) }
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    let destination = directory.appendingPathComponent(".gitignore")
+                    let original = (prefix + [kind]).reduce(repositoryRoot) { $0.appendingPathComponent($1) }.standardizedFileURL
+                    if depth < repositoryParts.count - parts.count { exactFiles.append(original) }
+                    if let bytes = try metadata(original) { try bytes.write(to: destination) }
+                    else { try? FileManager.default.removeItem(at: destination) }
+                }
+                let result = try git(["check-ignore", "--no-index", "--quiet", "--", repositoryParts.joined(separator: "/")])
+                guard result.0 == 0 || result.0 == 1 else { throw LSPError.unsupportedEdit }
+                if result.0 == 0 { return false }
+                // The subsequent independent layers do not inherit Git rules.
+                try? FileManager.default.removeItem(at: shadow.appendingPathComponent("global-exclude"))
+                try? FileManager.default.removeItem(at: shadow.appendingPathComponent(".git/info/exclude"))
+            }
+            return true
+        }
+        private final class Output: @unchecked Sendable {
+            let lock = NSLock()
+            var data = Data()
+            var exceeded = false
+        }
+        private func git(_ arguments: [String], input: Data? = nil) throws -> (Int32, Data) {
+            guard ContinuousClock.now < deadline else { throw LSPError.unsupportedEdit }
+            let process = Process(), stdout = Pipe(), stdin = Pipe(), output = Output(), done = DispatchGroup()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["--no-optional-locks"] + arguments
+            process.currentDirectoryURL = shadow
+            process.environment = ["PATH": "/usr/bin:/bin", "TMPDIR": URL.temporaryDirectory.path, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_SYSTEM": "/dev/null", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0", "GIT_ATTR_NOSYSTEM": "1", "LC_ALL": "C"]
+            process.standardOutput = stdout; process.standardError = FileHandle.nullDevice
+            process.standardInput = input == nil ? FileHandle.nullDevice : stdin
+            if input != nil { guard fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else { throw LSPError.unsupportedEdit } }
+            try process.run()
+            try? stdout.fileHandleForWriting.close()
+            if input != nil { try? stdin.fileHandleForReading.close() }
+            let timeout = DispatchWorkItem { if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) } }
+            let remaining = ContinuousClock.now.duration(to: deadline).components
+            let seconds = max(0, min(3, Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18))
+            DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: timeout)
+            done.enter()
+            DispatchQueue.global().async {
+                defer { done.leave() }
+                while let data = try? stdout.fileHandleForReading.read(upToCount: 65_536), !data.isEmpty {
+                    output.lock.lock()
+                    if output.data.count + data.count > 262_144 { output.exceeded = true; output.lock.unlock(); if process.isRunning { process.terminate() }; return }
+                    output.data.append(data); output.lock.unlock()
+                }
+            }
+            if let input {
+                done.enter()
+                DispatchQueue.global().async { defer { try? stdin.fileHandleForWriting.close(); done.leave() }; try? stdin.fileHandleForWriting.write(contentsOf: input) }
+            }
+            process.waitUntilExit(); timeout.cancel()
+            guard done.wait(timeout: .now() + 1) == .success, process.terminationReason == .exit else { throw LSPError.unsupportedEdit }
+            output.lock.lock(); defer { output.lock.unlock() }
+            guard !output.exceeded else { throw LSPError.unsupportedEdit }
+            return (process.terminationStatus, output.data)
+        }
+    }
+
+}
+
+enum CopilotNextEditPolicy {
+    /// Derive independent changes from the public API's single outer range.
+    /// Tokens compare exact UTF-16 (Swift Character equality normalizes accents).
+    /// Like the reference editor, bound actual diff exploration by time rather
+    /// than declaring long, otherwise simple edits unsupported by their size.
+    static func hunks(_ edit: LSPText.Edit, in snapshot: String, budget: Duration = .milliseconds(50)) -> [LSPText.Edit] {
+        let edit = minimized(edit, in: snapshot)
+        guard edit.range.length > 0 || !edit.text.isEmpty else { return [] }
+        guard edit.range.length > 0, !edit.text.isEmpty else { return [edit] }
+        guard budget > .zero else { return [edit] }
+        let old = (snapshot as NSString).substring(with: edit.range)
+        let a = old.map { Array(String($0).utf16) }, b = edit.text.map { Array(String($0).utf16) }
+        // A complete rewrite has no unchanged island to preserve.
+        guard !Set(a).isDisjoint(with: Set(b)) else { return [edit] }
+        guard let (removed, inserted) = diffChanges(a, b, budget: budget) else { return [edit] }
+        let units = Array(edit.text.utf16)
+        var result: [LSPText.Edit] = [], i = 0, j = 0, oldOffset = 0, newOffset = 0
+        while i < a.count || j < b.count {
+            let start = oldOffset, replacementStart = newOffset
+            while i < a.count, removed.contains(i) { oldOffset += a[i].count; i += 1 }
+            while j < b.count, inserted.contains(j) { newOffset += b[j].count; j += 1 }
+            if start != oldOffset || replacementStart != newOffset {
+                result.append(.init(range: NSRange(location: edit.range.location + start, length: oldOffset - start),
+                                    text: String(decoding: units[replacementStart..<newOffset], as: UTF16.self), primary: false))
+            } else if i < a.count, j < b.count {
+                oldOffset += a[i].count; newOffset += b[j].count; i += 1; j += 1
+            } else { return [edit] }
+        }
+        // Keep small word replacements readable; an unchanged letter inside a
+        // word must not split Hello→Goodbye into several tiny colored fragments.
+        var grouped: [LSPText.Edit] = []
+        for next in result {
+            if let previous = grouped.last {
+                let gap = (snapshot as NSString).substring(with: NSRange(location: NSMaxRange(previous.range), length: next.range.location - NSMaxRange(previous.range)))
+                if gap.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || $0 == "_" }) {
+                    grouped.removeLast()
+                    grouped.append(.init(range: NSRange(location: previous.range.location, length: NSMaxRange(next.range) - previous.range.location), text: previous.text + gap + next.text, primary: false))
+                    continue
+                }
+            }
+            grouped.append(next)
+        }
+        if let last = grouped.popLast() { grouped.append(.init(range: last.range, text: last.text, primary: edit.primary)) }
+        return grouped
+    }
+    /// Myers' shortest edit path. Sparse changes cost O((N+M)D), allowing long
+    /// unchanged islands without an N*M matrix. The frontier trace stores only
+    /// explored diagonals and time is checked during both exploration and snakes.
+    private static func diffChanges(_ a: [[UInt16]], _ b: [[UInt16]], budget: Duration) -> (Set<Int>, Set<Int>)? {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: budget)
+        var frontier = [1: 0], trace: [[Int: Int]] = []
+        for distance in 0...(a.count + b.count) {
+            guard clock.now < deadline else { return nil }
+            trace.append(frontier)
+            for diagonal in stride(from: -distance, through: distance, by: 2) {
+                if diagonal.isMultiple(of: 32), clock.now >= deadline { return nil }
+                let down = diagonal == -distance || (diagonal != distance && frontier[diagonal - 1, default: -1] < frontier[diagonal + 1, default: -1])
+                var x = down ? frontier[diagonal + 1, default: 0] : frontier[diagonal - 1, default: 0] + 1
+                var y = x - diagonal
+                while x < a.count, y < b.count, a[x] == b[y] {
+                    x += 1; y += 1
+                    if x.isMultiple(of: 256), clock.now >= deadline { return nil }
+                }
+                frontier[diagonal] = x
+                guard x == a.count, y == b.count else { continue }
+                var removed = Set<Int>(), inserted = Set<Int>()
+                for step in stride(from: distance, through: 0, by: -1) {
+                    let previous = trace[step], k = x - y
+                    let cameDown = k == -step || (k != step && previous[k - 1, default: -1] < previous[k + 1, default: -1])
+                    let previousK = cameDown ? k + 1 : k - 1
+                    let previousX = previous[previousK, default: 0], previousY = previousX - previousK
+                    while x > previousX, y > previousY { x -= 1; y -= 1 }
+                    if step > 0 {
+                        if x == previousX { y -= 1; inserted.insert(y) }
+                        else { x -= 1; removed.insert(x) }
+                    }
+                }
+                return (removed, inserted)
+            }
+        }
+        return nil
+    }
+    static func combined(_ edits: [LSPText.Edit], in snapshot: String) -> LSPText.Edit? {
+        guard let first = edits.first, let last = edits.last else { return nil }
+        let range = NSRange(location: first.range.location, length: NSMaxRange(last.range) - first.range.location)
+        var replacement = (snapshot as NSString).substring(with: range)
+        for edit in edits.reversed() {
+            replacement = (replacement as NSString).replacingCharacters(in: NSRange(location: edit.range.location - range.location, length: edit.range.length), with: edit.text)
+        }
+        return .init(range: range, text: replacement, primary: true)
+    }
+    static func rebasedHunks(_ edits: [LSPText.Edit], from before: String, to after: String) -> [LSPText.Edit]? {
+        var result = edits, intermediate = before
+        let observed = hunks(.init(range: NSRange(location: 0, length: before.utf16.count), text: after, primary: true), in: before)
+        // Apply an observed multi-range transaction from the end so its original
+        // offsets remain valid. Unrelated changes must not become one artificial
+        // overlapping range around an otherwise unchanged proposed hunk.
+        for change in observed.reversed() {
+            let updated = (intermediate as NSString).replacingCharacters(in: change.range, with: change.text)
+            var remaining: [LSPText.Edit] = []
+            for edit in result {
+                if let rebased = rebase(edit, from: intermediate, to: updated) { remaining.append(rebased) }
+                else if !LSPText.sameText((intermediate as NSString).replacingCharacters(in: edit.range, with: edit.text), updated) { return nil }
+            }
+            result = remaining; intermediate = updated
+        }
+        guard !result.isEmpty, LSPText.sameText(intermediate, after) else { return nil }
+        return result.enumerated().map { index, edit in .init(range: edit.range, text: edit.text, primary: index == result.count - 1) }
+    }
+    static func minimized(_ edit: LSPText.Edit, in snapshot: String) -> LSPText.Edit {
+        let old = (snapshot as NSString).substring(with: edit.range)
+        var a = old.startIndex, b = edit.text.startIndex, aEnd = old.endIndex, bEnd = edit.text.endIndex
+        while a < aEnd, b < bEnd, String(old[a]).utf16.elementsEqual(String(edit.text[b]).utf16) {
+            old.formIndex(after: &a); edit.text.formIndex(after: &b)
+        }
+        while a < aEnd, b < bEnd {
+            let previousA = old.index(before: aEnd), previousB = edit.text.index(before: bEnd)
+            guard String(old[previousA]).utf16.elementsEqual(String(edit.text[previousB]).utf16) else { break }
+            aEnd = previousA; bEnd = previousB
+        }
+        let removedPrefix = old[..<a].utf16.count, removedSuffix = old[aEnd...].utf16.count
+        return .init(range: NSRange(location: edit.range.location + removedPrefix, length: edit.range.length - removedPrefix - removedSuffix),
+                     text: String(edit.text[b..<bEnd]), primary: edit.primary)
+    }
+    static func directAccept(snapshot: String, caret: Int, range: NSRange, continuing: Bool, visible: Bool) -> Bool {
+        let source = snapshot as NSString
+        guard caret >= 0, range.location >= 0, range.length >= 0, caret <= source.length, NSMaxRange(range) <= source.length else { return false }
+        let caretLine = (try? LSPText.position(caret, in: snapshot)["line"].int) ?? 0
+        let startLine = (try? LSPText.position(range.location, in: snapshot)["line"].int) ?? 0
+        let endLine = (try? LSPText.position(NSMaxRange(range), in: snapshot)["line"].int) ?? 0
+        return (caretLine >= startLine - 1 && caretLine <= endLine + 1) || (continuing && visible)
+    }
+    /// Rebase one contiguous user edit. Overlapping conflicts are rejected; matching typed
+    /// prefixes consume the proposal. Never interprets an old server response as a new one.
+    static func rebase(_ edit: LSPText.Edit, from before: String, to after: String) -> LSPText.Edit? {
+        guard !before.utf16.elementsEqual(after.utf16) else { return edit }
+        let change = minimized(.init(range: NSRange(location: 0, length: before.utf16.count), text: after, primary: true), in: before)
+        let delta = change.text.utf16.count - change.range.length
+        if NSMaxRange(change.range) <= edit.range.location, !(change.range.length == 0 && change.range.location == edit.range.location) {
+            return .init(range: NSRange(location: edit.range.location + delta, length: edit.range.length), text: edit.text, primary: edit.primary)
+        }
+        if change.range.location >= NSMaxRange(edit.range), !(change.range.length == 0 && change.range.location == edit.range.location) { return edit }
+        if change.range.location == edit.range.location, change.range.length <= edit.range.length, edit.text.utf16.starts(with: change.text.utf16), !change.text.isEmpty {
+            let text = (edit.text as NSString).substring(from: change.text.utf16.count)
+            let range = NSRange(location: edit.range.location + change.text.utf16.count, length: edit.range.length - change.range.length)
+            guard range.length > 0 || !text.isEmpty else { return nil }
+            return .init(range: range, text: text, primary: edit.primary)
+        }
+        return nil
     }
 }

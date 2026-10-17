@@ -78,6 +78,19 @@ actor LSPClient {
     private var openClose = true
     private var workspace: URL?
     private var nextEditHistory: Set<String> = []
+    struct CopilotDocument: Sendable {
+        let version: Int
+        let text: String
+        let languageId: String
+    }
+    func copilotDocuments() -> [String: CopilotDocument] {
+        guard copilotMode else { return [:] }
+        return opened.reduce(into: [:]) { result, entry in
+            if let text = snapshots[entry.key], let language = openedLanguages[entry.key] {
+                result[entry.key] = CopilotDocument(version: entry.value, text: text, languageId: language)
+            }
+        }
+    }
     private var copilotMode = false
     private var settings: LSPJSON = .null
     private var streamContinuation: AsyncStream<Data>.Continuation?
@@ -187,7 +200,7 @@ actor LSPClient {
         nextEditHistory.insert(uri.absoluteString)
         // If the provider was not observing yet, replay the real observed edit
         // from its pre-edit baseline. Closing discards the unobserved latest copy.
-        if let current = snapshots[uri.absoluteString], current != previous { close(uri) }
+        if let current = snapshots[uri.absoluteString], !LSPText.sameText(current, previous) { close(uri) }
         let baseline = previous
         let offset = min(caret, baseline.utf16.count)
         do { return try await nextEdit(uri: uri, languageId: languageId, text: baseline,
@@ -199,8 +212,15 @@ actor LSPClient {
         nextEditHistory.insert(uri.absoluteString)
         return result
     }
+    /// Start the independent NES provider beside inline completion. Preserve its
+    /// error until arbitration actually needs NES; an unavailable speculative
+    /// provider must not hide a usable ordinary completion.
+    func speculativeNextEdit(enabled: Bool, uri: URL, languageId: String, text: String, caret: Int, tabSize: Int, insertSpaces: Bool) async -> Result<LSPJSON, any Error>? {
+        guard enabled else { return nil }
+        do { return .success(try await nextEdit(uri: uri, languageId: languageId, text: text, caret: caret, tabSize: tabSize, insertSpaces: insertSpaces)) }
+        catch { return .failure(error) }
+    }
     private func copilotRequest(_ method: String, uri: URL, languageId: String, text: String, caret: Int, context: LSPJSON?, tabSize: Int, insertSpaces: Bool) async throws -> LSPJSON {
-        for key in Array(opened.keys) where key != uri.absoluteString { if let old = URL(string: key) { close(old) } }
         try synchronize(uri: uri, languageId: languageId, text: text)
         try notify("textDocument/didFocus", .object(["textDocument": .object(["uri": .string(uri.absoluteString)])]))
         let version = opened[uri.absoluteString]!
@@ -211,11 +231,12 @@ actor LSPClient {
         if let context { params["context"] = context }
         let result = try await request(method, .object(params))
         try Task.checkCancellation()
-        guard opened[uri.absoluteString] == version, snapshots[uri.absoluteString] == text,
+        guard opened[uri.absoluteString] == version, LSPText.sameText(snapshots[uri.absoluteString], text),
               openedLanguages[uri.absoluteString] == languageId else { throw CancellationError() }
         return result
     }
     func openCopilotDocument() -> URL? { opened.keys.first.flatMap { URL(string: $0) } }
+    func closeCopilotDocuments() { for key in Array(opened.keys) { if let uri = URL(string: key) { close(uri) } } }
     func version(of uri: URL) -> Int? { opened[uri.absoluteString] }
     func diagnostics(for uri: URL) -> LSPDiagnosticBatch? { diagnosticsByURI[uri.absoluteString] }
     func definition(uri: URL, language: LSPLanguage, text: String, offset: Int) async throws -> LSPJSON {
@@ -231,12 +252,12 @@ actor LSPClient {
         let wantedVersion = opened[uri.absoluteString]
         for _ in 0..<30 {
             try Task.checkCancellation()
-            guard snapshots[uri.absoluteString] == text, opened[uri.absoluteString] == wantedVersion else { throw CancellationError() }
+            guard LSPText.sameText(snapshots[uri.absoluteString], text), opened[uri.absoluteString] == wantedVersion else { throw CancellationError() }
             if diagnosticsByURI[uri.absoluteString]?.version == wantedVersion { break }
             try await Task.sleep(for: .milliseconds(100))
         }
         let current = diagnosticsByURI[uri.absoluteString]
-        let diagnostics = current?.snapshot == text && current?.version == opened[uri.absoluteString] ? current!.items : []
+        let diagnostics = LSPText.sameText(current?.snapshot, text) && current?.version == opened[uri.absoluteString] ? current!.items : []
         let result = try await request("textDocument/codeAction", .object([
             "textDocument": .object(["uri": .string(uri.absoluteString)]),
             "range": .object(["start": try LSPText.position(range.location, in: text), "end": try LSPText.position(NSMaxRange(range), in: text)]),
@@ -260,7 +281,7 @@ actor LSPClient {
         guard ready, !stopped else { throw LSPError.stopped }
         let key = uri.absoluteString
         if let previous = openedLanguages[key], previous != languageId { close(uri) }
-        if let version = opened[key], snapshots[key] != text {
+        if let version = opened[key], !LSPText.sameText(snapshots[key], text) {
             let next = version + 1
             var change: [String: LSPJSON] = ["text": .string(text)]
             if copilotMode, syncKind == 2 {
@@ -281,7 +302,7 @@ actor LSPClient {
             ])]))
             opened[key] = 1; openedLanguages[key] = languageId
         }
-        if snapshots[key] != text { inspectionPending.insert(key); diagnosticsByURI.removeValue(forKey: key) }
+        if !LSPText.sameText(snapshots[key], text) { inspectionPending.insert(key); diagnosticsByURI.removeValue(forKey: key) }
         snapshots[key] = text
     }
 
@@ -307,7 +328,7 @@ actor LSPClient {
                 "textDocument": .object(["uri": .string(key)]), "position": try LSPText.position(offset, in: text)
             ]))
             try Task.checkCancellation()
-            if snapshots[key] == text { inspectionPending.remove(key) }
+            if LSPText.sameText(snapshots[key], text) { inspectionPending.remove(key) }
         }
     }
     func hover(uri: URL, language: LSPLanguage, text: String, offset: Int) async throws -> LSPJSON {

@@ -23,6 +23,7 @@ Java/Python LSP features, isolated settings, private build compatibility and rel
 - CotEditor/Sources/Document Window/Sidebar/File Browser/FileBrowserViewController.swift
 - CotEditor/Sources/Document Window/Sidebar/Folder Find/FolderFindFileScopeView.swift
 - CotEditor/Sources/Document Window/Sidebar/Folder Find/FolderFinder.swift
+- CotEditor/Sources/Document Window/DocumentWindowController.swift
 - CotEditor/Sources/Document Window/Text View/EditorTextView.swift
 - CotEditor/Sources/Document Window/Text View/NSTextView+LineNumber.swift
 - CotEditor/Sources/Document/DirectoryDocument.swift
