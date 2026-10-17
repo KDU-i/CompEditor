@@ -133,6 +133,11 @@ import Darwin
   try Data(contentsOf: worktree.appendingPathComponent(".git")).write(to: spoof.appendingPathComponent(".git"))
   try "print('unregistered')".write(to: spoof.appendingPathComponent("normal.py"), atomically: true, encoding: .utf8)
   do { _ = try CopilotProjectTargetPolicy.snapshot(spoof.appendingPathComponent("normal.py"), root: spoof); preconditionFailure("unregistered worktree pointer followed") } catch { print("PASS: worktree pointer requires reciprocal registration") }
+  try "[core]\nexcludesFile = branch-rules\n".write(to: administration.appendingPathComponent("branch.conf"), atomically: true, encoding: .utf8)
+  try "normal.py\n".write(to: separate.appendingPathComponent("branch-rules"), atomically: true, encoding: .utf8)
+  try check(git(["config", "includeIf.onbranch:*.path", "branch.conf"], at: separate) == 0, "unborn branch conditional fixture")
+  try check(git(["check-ignore", "--no-index", "--quiet", "--", "normal.py"], at: separate) == 0, "native Git honors unborn branch condition")
+  do { _ = try CopilotProjectTargetPolicy.snapshot(separateSource, root: separate); preconditionFailure("unborn branch condition bypass") } catch { print("PASS: unborn branch exclusion honored") }
   // A registered admin config can include another config within its trusted
   // common directory. An arbitrary outside include must still fail closed.
   _ = try write(".git/allowed-config", "[core]\n ignoreCase = true\n")
@@ -172,6 +177,10 @@ import Darwin
   _ = try write(".gitignore", "workspace/\n!workspace/subfolder/normal.py\n")
   do { _ = try CopilotProjectTargetPolicy.snapshot(nested.appendingPathComponent("normal.py"), root: nested); preconditionFailure("ancestor parent negation bypass") } catch { print("PASS: ignored enclosing folder cannot be unignored from within") }
   _ = try write(".gitignore", "")
+  let originalHead = try Data(contentsOf: root.appendingPathComponent(".git/HEAD"))
+  _ = try write(".git/HEAD", "ref: refs/heads/invalid..name\n")
+  refused(ordinary, "malformed Git HEAD fails closed before config interpretation")
+  try originalHead.write(to: root.appendingPathComponent(".git/HEAD"), options: .atomic)
   let safeConfiguration = try Data(contentsOf: root.appendingPathComponent(".git/config"))
   _ = try write(".git/objects/not-a-config", "[core]\nignoreCase=true\n")
   try check(git(["config", "include.path", "objects/not-a-config"]) == 0, "object pointer fixture configured")

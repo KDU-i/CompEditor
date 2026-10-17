@@ -855,7 +855,7 @@ enum CopilotProjectTargetPolicy {
             if values.isDirectory != true {
                 guard values.isRegularFile == true, let bytes = try metadata(marker, required: true),
                       let text = String(data: bytes, encoding: .utf8), text.hasPrefix("gitdir: ") else { throw LSPError.unsupportedEdit }
-                let pointer = text.dropFirst(8).trimmingCharacters(in: .newlines)
+                let pointer = text.dropFirst(8).trimmingCharacters(in: CharacterSet(charactersIn: "\r\n"))
                 selected = try path(pointer, relativeTo: repositoryRoot)
             }
             // Auto-discovery uses getcwd/realpath, as Git -C does. A lexical
@@ -873,10 +873,10 @@ enum CopilotProjectTargetPolicy {
                 allowedRoots += [selected, shared]
                 guard let registration = try metadata(selected.appendingPathComponent("gitdir"), required: true),
                       let registrationText = String(data: registration, encoding: .utf8),
-                      try path(registrationText.trimmingCharacters(in: .newlines), relativeTo: selected).resolvingSymlinksInPath() == marker.resolvingSymlinksInPath(),
+                      try path(registrationText.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")), relativeTo: selected).resolvingSymlinksInPath() == marker.resolvingSymlinksInPath(),
                       let relation = try metadata(selected.appendingPathComponent("commondir"), required: true),
                       let relationText = String(data: relation, encoding: .utf8),
-                      try path(relationText.trimmingCharacters(in: .newlines), relativeTo: selected).resolvingSymlinksInPath() == shared else { throw LSPError.unsupportedEdit }
+                      try path(relationText.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")), relativeTo: selected).resolvingSymlinksInPath() == shared else { throw LSPError.unsupportedEdit }
                 common = shared
             } else {
                 // Normal and --separate-git-dir repositories have their own
@@ -895,8 +895,12 @@ enum CopilotProjectTargetPolicy {
                 if !allowedRoots.contains(directory) { allowedRoots.append(directory) }
             }
             guard let bytes = try metadata(selected.appendingPathComponent("HEAD"), required: true), let head = String(data: bytes, encoding: .utf8) else { throw LSPError.unsupportedEdit }
-            if head.hasPrefix("ref: refs/heads/") { branch = String(head.dropFirst(16)).trimmingCharacters(in: .newlines) }
-            else { guard head.trimmingCharacters(in: .newlines).range(of: #"^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"#, options: .regularExpression) != nil else { throw LSPError.unsupportedEdit } }
+            if head.hasPrefix("ref: refs/heads/") {
+                let name = String(head.dropFirst(5)).trimmingCharacters(in: CharacterSet(charactersIn: "\r\n"))
+                guard try git(["check-ref-format", name]).0 == 0 else { throw LSPError.unsupportedEdit }
+                branch = String(name.dropFirst(11))
+            }
+            else { guard head.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")).range(of: #"^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"#, options: .regularExpression) != nil else { throw LSPError.unsupportedEdit } }
         }
         private func boolean(_ value: String?) throws -> Bool {
             guard let value else { return true }
@@ -941,7 +945,14 @@ enum CopilotProjectTargetPolicy {
                 return false
             }
             if condition.hasPrefix("onbranch:") {
-                guard let branch else { return false }
+                guard let branch, let common else { return false }
+                // Do not guess through indirect/symlinked branch references.
+                // A normal loose ref is a short hash; missing refs can be packed
+                // or unborn. No object or packed-ref database is read.
+                if let bytes = try CopilotProjectTargetPolicy.read(["refs", "heads"] + branch.split(separator: "/").map(String.init), root: common, limit: 256) {
+                    guard let text = String(data: bytes, encoding: .utf8),
+                          text.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")).range(of: #"^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"#, options: .regularExpression) != nil else { throw LSPError.unsupportedEdit }
+                }
                 var pattern = String(condition.dropFirst(9)); if pattern.hasSuffix("/") { pattern += "**" }
                 return try matches(pattern, candidate: branch, folded: false)
             }
