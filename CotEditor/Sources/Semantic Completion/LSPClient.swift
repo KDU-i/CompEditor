@@ -222,14 +222,6 @@ actor LSPClient {
         catch { return .failure(error) }
     }
     private func copilotRequest(_ method: String, uri: URL, languageId: String, text: String, caret: Int, context: LSPJSON?, tabSize: Int, insertSpaces: Bool) async throws -> LSPJSON {
-        // Retain only already-requested documents, never enumerate/read other
-        // workspace files. The provider can use real edits across focus changes.
-        copilotDocumentOrder.removeAll { $0 == uri.absoluteString }
-        copilotDocumentOrder.append(uri.absoluteString)
-        while copilotDocumentOrder.count > 8 {
-            if let old = URL(string: copilotDocumentOrder[0]) { close(old) }
-            else { copilotDocumentOrder.removeFirst() }
-        }
         try synchronize(uri: uri, languageId: languageId, text: text)
         try notify("textDocument/didFocus", .object(["textDocument": .object(["uri": .string(uri.absoluteString)])]))
         let version = opened[uri.absoluteString]!
@@ -290,6 +282,16 @@ actor LSPClient {
         guard ready, !stopped else { throw LSPError.stopped }
         let key = uri.absoluteString
         if let previous = openedLanguages[key], previous != languageId { close(uri) }
+        if copilotMode {
+            // Every synchronization entry point shares the same lifecycle,
+            // including observed edits/Undo and initial history seeding.
+            copilotDocumentOrder.removeAll { $0 == key }
+            copilotDocumentOrder.append(key)
+            while copilotDocumentOrder.count > 8 {
+                if let old = URL(string: copilotDocumentOrder[0]) { close(old) }
+                else { copilotDocumentOrder.removeFirst() }
+            }
+        }
         if let version = opened[key], !LSPText.sameText(snapshots[key], text) {
             let next = version + 1
             var change: [String: LSPJSON] = ["text": .string(text)]

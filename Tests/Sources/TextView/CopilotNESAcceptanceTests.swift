@@ -802,6 +802,74 @@ import Testing
         focus()
         print("NES_FOCUS_PASS tabMovesFocus=true focusedControlOwnsKeys=true documentUnchanged=true")
         do {
+            // Earlier cases deliberately dismiss NES. Let its public five-second
+            // rejection cooldown expire before creating this fresh edit history.
+            try await Task.sleep(for: .milliseconds(5100))
+            let returningDocument = Document()
+            returningDocument.makeWindowControllers()
+            let returningWindow = try #require(returningDocument.windowControllers.first?.window)
+            let returningView = try #require(returningDocument.textViews.first as? EditorTextView)
+            returningView.copilotController = copilot
+            returningView.semanticDocumentContext = { (nil, "Python") }
+            returningWindow.tabbingMode = .disallowed
+            returningView.string = "Hello\none()\ntwo()\nthree()\n"
+            defer { returningWindow.orderOut(nil); returningDocument.close() }
+            try settleEditorWindow(returningWindow, editor: returningView)
+            returningView.insertText("!", replacementRange: NSRange(location: returningView.string.utf16.count, length: 0))
+            let returningSource = returningView.string
+            try setFixture(source: returningSource, text: "Bye")
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            func waitReturning(_ label: String, _ condition: () -> Bool) async throws {
+                for _ in 0..<200 {
+                    focusWindow(returningWindow, editor: returningView)
+                    if condition() { return }
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+                Issue.record("Returning document checkpoint: \(label); RPC=\(rpcCount())")
+                throw CancellationError()
+            }
+            try await waitReturning("B requested") { copilot.hasVisibleSuggestion(in: returningView) }
+            try settleEditorWindow(window, editor: view)
+            view.insertText("!", replacementRange: NSRange(location: view.string.utf16.count, length: 0))
+            try setFixture(source: view.string, text: "Bye")
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            try await waitFor("A requested after B") { copilot.hasVisibleSuggestion(in: view) }
+            try setFixture(source: returningSource, text: "Bye")
+            try settleEditorWindow(returningWindow, editor: returningView)
+            _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
+            let beforeReturn = rpcCount()
+            returningView.selectedRange = NSRange(location: (returningSource as NSString).range(of: "two").location, length: 0)
+            try await waitReturning("B selection requests after A (before=\(beforeReturn))") { rpcCount() == beforeReturn + 1 && copilot.hasVisibleSuggestion(in: returningView) }
+            NotificationCenter.default.post(name: NSTextView.didChangeSelectionNotification, object: view)
+            #expect(copilot.hasVisibleSuggestion(in: returningView))
+            #expect(rpcCount() == beforeReturn + 1)
+            // Hide without explicit rejection, preserving the same-line policy.
+            _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
+            _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
+            let beforeCooldown = rpcCount()
+            returningView.selectedRange = NSRange(location: returningView.selectedRange().location + 1, length: 0)
+            try await Task.sleep(for: .milliseconds(150))
+            #expect(rpcCount() == beforeCooldown && returningView.semanticGhost == nil)
+            _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
+            let untouchedDocument = Document()
+            untouchedDocument.makeWindowControllers()
+            let untouchedWindow = try #require(untouchedDocument.windowControllers.first?.window)
+            let untouchedView = try #require(untouchedDocument.textViews.first as? EditorTextView)
+            untouchedView.copilotController = copilot
+            untouchedView.string = "Hello\nneverEdited()\n"
+            untouchedView.semanticDocumentContext = { (nil, "Python") }
+            defer { untouchedWindow.orderOut(nil); untouchedDocument.close() }
+            try settleEditorWindow(untouchedWindow, editor: untouchedView)
+            _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
+            let beforeUntouched = rpcCount()
+            untouchedView.selectedRange = NSRange(location: 7, length: 0)
+            try await Task.sleep(for: .milliseconds(150))
+            #expect(rpcCount() == beforeUntouched && untouchedView.semanticGhost == nil)
+            _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
+            print("NES_RETURN_PASS BtoAtoB=true recentHistoryRequests=true backgroundIgnored=true sameLineCooldown=true noHistorySilent=true")
+        }
+        focus()
+        do {
             let targetDocument = Document()
             targetDocument.makeWindowControllers()
             let targetWindow = try #require(targetDocument.windowControllers.first?.window)

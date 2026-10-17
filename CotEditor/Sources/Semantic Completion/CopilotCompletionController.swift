@@ -219,7 +219,11 @@ enum CopilotBundledServer {
                         return
                     }
                     if note.name == NSTextView.didChangeSelectionNotification {
-                        guard let editor, editor === self.view else { return }
+                        // Process the focused notification document, including
+                        // returning to a recently edited different document.
+                        // Background selection changes must not cancel its work.
+                        guard let editor, NSApp.isActive, editor.window?.firstResponder === editor,
+                              (NSApp.keyWindow ?? NSApp.mainWindow) === editor.window else { return }
                     } else if note.name == NSView.boundsDidChangeNotification {
                         guard let clip = note.object as? NSClipView, clip === self.view?.enclosingScrollView?.contentView else { return }
                         guard self.viewportOrigin != clip.bounds.origin else { return }
@@ -239,7 +243,7 @@ enum CopilotBundledServer {
                             editor.updateSemanticGhostPresentation(); return
                         }
                     }
-                    if reason == .selectionChanged, let editor, var state = self.suggestions,
+                    if reason == .selectionChanged, let editor, editor === self.view, var state = self.suggestions,
                        state.candidates[state.index].nextEdit, self.eligible(editor) == state.languageId,
                        editor.semanticDocumentContext?().url == state.file {
                         if !editor.string.utf16.elementsEqual(state.snapshot.utf16) { return } // text notification rebases it
