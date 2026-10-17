@@ -336,10 +336,37 @@ import Testing
         }
         defer { view.nativeCompletionTrace = nil }
         #endif
+        #if DEBUG
+        var observingNativeCommand = false
+        let eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .any) { event in
+            if observingNativeCommand {
+                let key = [.keyDown, .keyUp, .flagsChanged].contains(event.type) ? Int(event.keyCode) : -1
+                let subtype = [.appKitDefined, .applicationDefined, .systemDefined].contains(event.type) ? Int(event.subtype.rawValue) : -1
+                print("NES_EVENT type=\(event.type.rawValue) subtype=\(subtype) key=\(key) window=\(event.windowNumber) time=\(event.timestamp)")
+            }
+            return event
+        }
+        defer { if let eventMonitor { NSEvent.removeMonitor(eventMonitor) } }
+        let notificationObservers = [NSWindow.didResignKeyNotification, NSWindow.didBecomeKeyNotification, NSWindow.didResizeNotification, NSWindow.didMoveNotification, NSApplication.didResignActiveNotification, NSView.boundsDidChangeNotification, NSTextView.didChangeSelectionNotification].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
+                let rawName = note.name.rawValue
+                let own = (note.object as? NSWindow) === window
+                MainActor.assumeIsolated {
+                    if observingNativeCommand {
+                        print("NES_NOTE \(rawName) ownWindow=\(own) active=\(NSApp.isActive) key=\(NSApp.keyWindow === window) responder=\(window.firstResponder === view) native=\(view.isNativeCompletionVisible) selected=\(view.selectedRange()) viewport=\(view.visibleRect.origin)")
+                    }
+                }
+            }
+        }
+        defer { notificationObservers.forEach(NotificationCenter.default.removeObserver) }
+        #endif
         func requestWordCompletion() throws {
             // F5 is AppKit's standard complete: binding. Deliver it through the
             // application event queue, as a user command, instead of calling a
             // modal native action from an unrelated Swift task/current event.
+            #if DEBUG
+            observingNativeCommand = true
+            #endif
             let character = String(UnicodeScalar(NSF5FunctionKey)!)
             let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.function], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: 96))
             NSApp.postEvent(event, atStart: true)
@@ -393,6 +420,9 @@ import Testing
         #expect(completionInvocationEvents == [96])
         #endif
         popupTimer.invalidate()
+        #if DEBUG
+        observingNativeCommand = false
+        #endif
         #expect(popupObservation.shown)
         #expect(!popupObservation.tabConsumed && !popupObservation.escapeConsumed)
         #expect(!view.string.contains("Goodbye"))
@@ -427,6 +457,9 @@ import Testing
         #expect(completionInvocationEvents == [96, 96])
         #endif
         tabTimer.invalidate()
+        #if DEBUG
+        observingNativeCommand = false
+        #endif
         #expect(tabObservation.shown && !tabObservation.tabConsumed)
         let ordinaryResults = ["HelloWorld", "HelloUniverse"].map { (popupSource as NSString).replacingCharacters(in: popupWord, with: $0) }
         #expect(ordinaryResults.contains(view.string))

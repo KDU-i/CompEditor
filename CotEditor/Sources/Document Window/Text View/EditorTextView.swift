@@ -1906,7 +1906,10 @@ extension EditorTextView {
         
         self.completionDebouncer.cancel()
         #if DEBUG
-        nativeCompletionTrace?("insertCompletion final=\(flag) movement=\(movement) range=\(charRange)")
+        nativeCompletionTrace?("insertCompletion final=\(flag) movement=\(movement) range=\(charRange) event=\(nativeCompletionEventSummary(NSApp.currentEvent)) windowEvent=\(nativeCompletionEventSummary(window?.currentEvent)) active=\(NSApp.isActive) key=\(NSApp.keyWindow === window) responder=\(window?.firstResponder === self) selected=\(selectedRange()) viewport=\(visibleRect.origin)")
+        if flag, movement == 0, let trace = nativeCompletionTrace {
+            trace("final-zero stack=" + Thread.callStackSymbols.prefix(32).joined(separator: " | "))
+        }
         #endif
         self.isShowingCompletion = !flag
         
@@ -1998,13 +2001,22 @@ extension EditorTextView {
         presentNativeCompletion(sender)
     }
 
+    #if DEBUG
+    private func nativeCompletionEventSummary(_ event: NSEvent?) -> String {
+        guard let event else { return "nil" }
+        let key = [.keyDown, .keyUp, .flagsChanged].contains(event.type) ? Int(event.keyCode) : -1
+        let subtype = [.appKitDefined, .applicationDefined, .systemDefined].contains(event.type) ? Int(event.subtype.rawValue) : -1
+        return "type=\(event.type.rawValue),subtype=\(subtype),key=\(key),window=\(event.windowNumber),time=\(event.timestamp)"
+    }
+    #endif
+
     private func presentNativeCompletion(_ sender: Any?) {
         // AppKit tracks this UI synchronously, including an initially unselected
         // popup that never calls insertCompletion until a candidate is chosen.
         // Own Tab/Esc throughout that lifetime, not only after preview insertion.
         isShowingCompletion = true
         #if DEBUG
-        nativeCompletionTrace?("AppKit enter range=\(rangeForUserCompletion) selected=\(selectedRange())")
+        nativeCompletionTrace?("AppKit enter range=\(rangeForUserCompletion) selected=\(selectedRange()) event=\(nativeCompletionEventSummary(NSApp.currentEvent)) viewport=\(visibleRect.origin)")
         #endif
         defer {
             isShowingCompletion = false
