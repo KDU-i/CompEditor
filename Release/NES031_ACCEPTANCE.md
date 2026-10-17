@@ -32,34 +32,13 @@ Offline checks include the existing ten suites plus `Scripts/test-copilot-text-i
 
 The earlier foreground blocker is resolved by using normal Document windows, an isolated QA app name/identity and current AppKit activation. Earlier blocked/failed runs are retained but not counted as passes. A previous CI run passed NES acceptance but failed an unrelated URLDetector timing assertion while other suites ran beside the modal popup. CI now executes the NES suite in an exclusive second invocation, preserving every test and the normal unit invocation.
 
-Real-service probes must return valid current-document candidates in both synthetic Python and Java cases; zero candidates are not acceptance. These probes verify the protocol/provider path separately from UI acceptance. An explicit QA-only additive fixture (production files unchanged) verifies nonzero real-service Python/Java candidates through display, actual Tab adoption, edit-end caret and Undo/Redo; its reproducible patch and newest result are recorded externally. Physical keyboard IME and arbitrary RTL layouts remain unverified.
+Real-service probes must return valid current-document candidates in both synthetic Python and Java cases; zero candidates are not acceptance. These probes verify the protocol/provider path separately from UI acceptance. An explicit QA-only additive fixture (production files unchanged) verifies nonzero real-service Python/Java candidates through display, actual Tab adoption, edit-end caret and Undo/Redo; its reproducible patch and newest result are recorded externally. Actual NSTextInputClient kana/kanji composition is now exercised; physical keyboard converter UI and arbitrary RTL layouts remain unverified.
 
 ## Twenty-item disposition
 
-PASS is scoped to the stated host behavior and evidence. Missing host features are residuals, not private-model differences. Do not claim every VS Code feature, setting or prediction is identical.
+The current twenty-item mapping, primary-source line references, corrections to earlier residual labels and API feasibility are in [NES031_SCOPE_AUDIT.md](NES031_SCOPE_AUDIT.md). Its mapping supersedes this document's former statements that joint scheduling was unavailable, fixed NES debounce/current-document-only history were provider limitations, NES word/line partial adoption was missing, or multi-hunk/cross-file batches were the upstream acceptance model.
 
-|No.|Outcome|Implementation / remaining difference|
-|---|---|---|
-|01|Provider difference|Inline-first/fallback and one active provider; standalone API does not expose VS Code joint-provider scheduling.|
-|02|Provider difference|Existing cancellable 50ms debounce and duplicate suppression; provider latency/cache policy is not mirrored.|
-|03|Provider difference; host corrected|Observed pre-edit/current-document history, exact UTF-16 replay and synchronization; no workspace-wide/cross-file history collection.|
-|04|PASS|Empty single-caret moves/clicks retain compatible NES; selected text/marked text/multiple carets refuse.|
-|05|PASS|Target anchor/navigation and exact current URI/version/text validation; foreign-document refusal. No cross-file adoption.|
-|06|PASS, visual review required|Shape-specific compact green/red surfaces, deletion strike, responsive multiline layout and overflow fallback; actual reference images inspected.|
-|07|PASS|Fitting inline green insertion moves the original suffix; overflow surface makes full text accessible; preview leaves source/Undo unchanged.|
-|08|PASS, visual review required|Red old word and small green replacement immediately below, matched font/line height/baseline, minimal padding/border.|
-|09|PASS|16 payload variants plus real-client normalization regression; single primary range only. Arbitrary multi-hunk/cross-file transactions remain unsupported host features.|
-|10|PASS|Actual editor-key route plus near/direct, far/jump, line-start second Tab, consecutive-visible and indentation precedence tests.|
-|11|PASS within host|Ordinary generation and actual native Tab/Esc ownership/adoption plus a second document window tested. Focusable hover and VS Code's Tab-focus setting are absent host features, not model differences.|
-|12|PASS|Actual Esc dismissal; caret moves do not automatically regenerate until fresh input/explicit request. Ordinary popup Esc retains ownership.|
-|13|PASS|Non-key notification rebase uses the new revision; before/after/matching/conflicting edits and normalization have regression coverage.|
-|14|PASS|Caret ends at final minimized difference, including deletion/common suffix; no selected replacement.|
-|15|PASS within fixture scope|Default-manager payload Undo/Redo and automatic RPC suppression; fresh private-event-manager normalization fixture distinguishes preceding edit from adoption. Production grouping is unchanged.|
-|16|Provider/host residual|Post-accept request and continuing-visible Tab policy preserved. Provider prefetch/cache and NES word/line partial adoption are not implemented.|
-|17|PASS within synthetic scope|Marked-text and auxiliary/multiple-caret refusal; physical IME conversion remains unverified.|
-|18|PASS within tested layouts|Scroll/resize/offscreen retention, panel reuse/close lifetime, two-document native UI, clipped gutter, responsive surfaces and long narrow wrapped insertion; arbitrary wrap/RTL remains unverified.|
-|19|PASS|Independent persistence/policy and native unsupported-server toggle/reprobe; authentication unchanged.|
-|20|PASS|Exact UTF-16 protocol sync/response guards, delayed canonical-change response rejection, reversed A/B replies, URI/version/epoch/cancellation and error distinctions.|
+The expanded candidate adds parallel arbitration and agreeing-NES grace, public-default selection windows, bounded requested-document history, known open cross-file navigation/transplant, derived hunks/unchanged-island rebase/last-hunk caret, and session Tab-focus navigation. Native tests additionally exercise actual Japanese marked text and focused input ownership. Exact current pass/fail results must be recorded in the external packet; the old 86f32b passes do not accept these later changes.
 
 ## Distribution and publication gate
 

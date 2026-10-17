@@ -21,6 +21,41 @@ import Foundation
   let broad = LSPText.Edit(range: NSRange(location: 0, length: source.utf16.count), text: applying(edit, to: source), primary: true)
   let minimal = CopilotNextEditPolicy.minimized(broad, in: source)
   check(minimal.range == range && minimal.text == "number", "wide primary edit minimized for final caret")
+  func applying(_ edits: [LSPText.Edit], to text: String) -> String {
+   edits.reversed().reduce(text) { applying($1, to: $0) }
+  }
+  let multiSource = "old + middle + old"
+  let multi = LSPText.Edit(range: NSRange(location: 0, length: multiSource.utf16.count), text: "new + middle + new", primary: true)
+  let hunks = CopilotNextEditPolicy.hunks(multi, in: multiSource)
+  check(hunks.count == 2 && hunks.last?.primary == true && hunks.first?.primary == false, "one outer API edit derives two independent hunks")
+  check(LSPText.sameText(applying(hunks, to: multiSource), multi.text), "derived hunks exactly reconstruct provider result")
+  let island = "old + updated😀 + old"
+  let rebasedHunks = CopilotNextEditPolicy.rebasedHunks(hunks, from: multiSource, to: island)!
+  check(LSPText.sameText(applying(rebasedHunks, to: island), "new + updated😀 + new"), "editing unchanged island preserves both surrounding changes")
+  let combinedHunks = CopilotNextEditPolicy.combined(rebasedHunks, in: island)!
+  check(LSPText.sameText(applying(combinedHunks, to: island), "new + updated😀 + new"), "combined preview preserves user edit in unchanged island")
+  let firstTyped = "new + middle + old"
+  let remainingHunks = CopilotNextEditPolicy.rebasedHunks(hunks, from: multiSource, to: firstTyped)!
+  check(remainingHunks.count == 1 && LSPText.sameText(applying(remainingHunks, to: firstTyped), multi.text), "fully typed first hunk leaves later hunk available")
+  check(CopilotNextEditPolicy.rebasedHunks(hunks, from: multiSource, to: "bad + middle + old") == nil, "conflict in one hunk rejects the proposal")
+  let surrounding = "start old end"
+  let center = CopilotNextEditPolicy.hunks(.init(range: NSRange(location: 6, length: 3), text: "new", primary: true), in: surrounding)
+  let userTransaction = "START old END"
+  let preserved = CopilotNextEditPolicy.rebasedHunks(center, from: surrounding, to: userTransaction)!
+  check(LSPText.sameText(applying(preserved, to: userTransaction), "START new END"), "two unrelated user changes do not create artificial overlap")
+  check(CopilotNextEditPolicy.hunks(.init(range: NSRange(location: 0, length: 5), text: "Goodbye", primary: true), in: "Hello").count == 1, "small word replacement stays one readable hunk")
+  var seed: UInt64 = 31
+  let tokens = ["a", "b", " ", "+", "\r\n", "😀", "é", "e\u{301}"]
+  func sample() -> String {
+   (0..<12).map { _ in seed = seed &* 6364136223846793005 &+ 1; return tokens[Int((seed >> 32) % UInt64(tokens.count))] }.joined()
+  }
+  for _ in 0..<100 {
+   let before = sample(), after = sample()
+   let edit = LSPText.Edit(range: NSRange(location: 0, length: before.utf16.count), text: after, primary: true)
+   check(LSPText.sameText(applying(CopilotNextEditPolicy.hunks(edit, in: before), to: before), after), "deterministic Unicode hunk roundtrip")
+  }
+  let large = String(repeating: "x", count: 3000)
+  check(CopilotNextEditPolicy.hunks(.init(range: NSRange(location: 0, length: 3000), text: String(repeating: "y", count: 3000), primary: true), in: large).count == 1, "large diff has bounded contiguous fallback")
   let unicode = CopilotNextEditPolicy.minimized(.init(range: NSRange(location: 0, length: 4), text: "😀ab", primary: true), in: "😀ac")
   check(unicode.range == NSRange(location: 3, length: 1) && unicode.text == "b", "Unicode boundaries preserved")
   for newline in ["\n", "\r\n", "\r"] {

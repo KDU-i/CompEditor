@@ -1,0 +1,70 @@
+# NES scope re-audit for 0.3.1
+
+This re-audit supersedes the residual classifications in the 86f32b review packet. That candidate passed its tests and independent review but did not yet exhaust the original comparison scope. The changes below are not a publication approval. New CI, signed artifacts and independent review remain required.
+
+## Fixed primary sources
+
+VS Code commit `9a59550fc841805ebb44cfd5a09b92beed591d15`:
+
+- [Model](https://github.com/microsoft/vscode/blob/9a59550fc841805ebb44cfd5a09b92beed591d15/src/vs/editor/contrib/inlineCompletions/browser/model/inlineCompletionsModel.ts) (V1)
+- [Commands](https://github.com/microsoft/vscode/blob/9a59550fc841805ebb44cfd5a09b92beed591d15/src/vs/editor/contrib/inlineCompletions/browser/controller/commands.ts) (V2)
+- [Inline edit views](https://github.com/microsoft/vscode/blob/9a59550fc841805ebb44cfd5a09b92beed591d15/src/vs/editor/contrib/inlineCompletions/browser/view/inlineEdits/inlineEditsView.ts) (V3)
+- [Suggestion rebasing and derived diff](https://github.com/microsoft/vscode/blob/9a59550fc841805ebb44cfd5a09b92beed591d15/src/vs/editor/contrib/inlineCompletions/browser/model/inlineSuggestionItem.ts) (V7)
+- [General Tab focus mode](https://github.com/microsoft/vscode/blob/9a59550fc841805ebb44cfd5a09b92beed591d15/src/vs/editor/contrib/toggleTabFocusMode/browser/toggleTabFocusMode.ts) (VT)
+
+Copilot Chat commit `5863f5a7088958050792b5dccbe8b46c6e13eccc`:
+
+- [Joint provider](https://github.com/microsoft/vscode-copilot-chat/blob/5863f5a7088958050792b5dccbe8b46c6e13eccc/src/extension/inlineEdits/vscode-node/jointInlineCompletionProvider.ts) (V6)
+- [Selection triggers](https://github.com/microsoft/vscode-copilot-chat/blob/5863f5a7088958050792b5dccbe8b46c6e13eccc/src/extension/inlineEdits/vscode-node/inlineEditTriggerer.ts) (V5)
+- [Configuration defaults](https://github.com/microsoft/vscode-copilot-chat/blob/5863f5a7088958050792b5dccbe8b46c6e13eccc/src/platform/configuration/common/configurationService.ts) (VC)
+
+Official installed server is `@github/copilot-language-server` 1.552.0. Its exact npm package README and public types were extracted read-only for this audit; no package was executed or installed. Package metadata, tarball SHA256, source URLs and byte hashes are retained in the task evidence directory `nes031-scope-audit/`. The pinned README, not a moving main-branch README, is the API evidence below (S1).
+
+## Original twenty items: scope and verification
+
+| # | Required behavior and source distinction | Host response / verification |
+|---|---|---|
+| 01 | V6:518–526 starts both providers, initially yields to usable inline. V6:530–560 gives a previously shown agreeing NES 10 ms before invoking inline. | Parallel independent requests; parse inline displayability before fallback; 10 ms exact projected-document agreement. Native delayed-inline RPC test and agreeing-NES/no-new-inline test. |
+| 02 | V6:243 registers zero debounce. V5:270–288 uses no selection debounce unless an experiment configures one; VC defaults are undefined. | Removed unconditional 50 ms for joint/NES, and 250 ms caret wait. Retained 50 ms only for ordinary inline when NES is disabled. Selection requests yield one actor turn to coalesce synchronous notifications, without a fixed timer. Pure timing-window tests plus native suite. |
+| 03 | V5 keeps per-document edit state; recent edit/request <10 s, same-line cooldown <5 s, rejection cooldown <5 s. S1 supports multiple didOpen/didChange/didFocus documents. | Per-buffer trigger state, bounded 32 entries; server retains at most eight already-requested documents, with actual versions/incremental edits. No workspace enumeration or arbitrary file reads. Offline real-client retention/eviction/version/close-all tests. Private model history equivalence remains unclaimed. |
+| 04 | V1 distinguishes target/jump state from caret movement; empty single selection is distinct from selected text/multiple carets. | Existing valid NES follows single caret moves; invalid selection/IME/multiple carets reject it. Native real-controller caret/selection tests. |
+| 05 | V1:937–948 navigates to target and transplants an edit, rather than atomically editing two files. S1 supplies URI/version/range/text, not the original text of an unknown document. | Gutter navigation and cross-document transfer for already-requested open targets whose server snapshot/version and local text/revision match. First Tab only navigates; second adopts. Unknown/unsynchronized targets are excluded. Native two-document source-unchanged/target-Undo test. |
+| 06 | V3:454–600 chooses compact/inline/multiline/deletion views by edit shape. | Green inline insertion, compact green replacement under red original, multiline/side-by-side, deletion, wrapping/scrolling and offscreen navigation. Existing native matrix plus actual AppKit captures; hunk gaps remain neutral. |
+| 07 | User insertion reference: green addition at the edit and gutter arrow, while caret may remain elsewhere. | Actual green insertion and target gutter arrow. Python/Java LF/CRLF, Unicode, narrow/wide and remote-target native tests and captures. Other-language opt-in remains a separate permission. |
+| 08 | User word replacement reference: red old word and small green replacement directly below it. | Editor-font/baseline compact replacement with minimal padding/thin border. Word-internal matching letters are grouped to keep the word readable. Actual light/dark AppKit captures and native word replacement. |
+| 09 | V7:414–447 derives multiple hunks from one action range/text; `additionalTextEdits` for the inline edit is empty. This is not twenty edits adopted as a batch. | Derive independent UTF-16-exact hunks from one outer API edit, apply them as one native operation, bounded fallback for large diffs. Offline Unicode reconstruction/property cases; native two-hunk adoption. |
+| 10 | V1:790–867,1156–1199: proximity ±1 line, continuation, visible target and jump state. | Existing line-proximity/continuation policy and explicit navigation before remote adoption. Native actual Tab, line-start/indentation and offscreen cases. |
+| 11 | V2:200–223,272–299 excludes ordinary suggestion UI, focused hover and Tab-focus mode. VT is a general editor navigation feature, not an NES partial-accept feature. | Native and semantic completion retain Tab/Esc ownership. Indentation wins before adoption flow. Added session-wide Tab/Shift-Tab focus mode with Control-Shift-M/menu/accessibility announcement. Focused native control owns keyboard input. A new keyboard-focusable hover product UI is not required to enforce the NES guard: this editor's hover never takes keyboard focus, and existing first-responder/key-window eligibility excludes any actually focused other control. |
+| 12 | V2 hide command participates in ordinary UI priority. | Esc cancels pending work and hides visible NES; ordinary completion/IME retain their keys; explicit dismissal suppresses regeneration until a real edit. Native actual Esc and delayed-response tests. |
+| 13 | V7:499–552 rebases compatible observed changes; independent hunk gaps matter. | Compatible offset shifts/prefix consumption retained. Derived hunks also survive edits in unchanged islands; a conflict in any changed hunk rejects the proposal. Exact UTF-16/NFC↔NFD and real non-key text notification tests. |
+| 14 | V1:910–1019 folds the caret at the final actual edit, without selecting inserted text. | Final primary hunk caret includes preceding hunk deltas, deletion folds to its start. Native two-hunk/Unicode/LF/CRLF caret assertions. |
+| 15 | V1:200–277,398–434 separates Undo and suppresses immediate post-Undo regeneration. | One native replacement call for all hunks, separate user edit and AI Undo boundaries, Redo, Undo/Redo regeneration suppression. Native explicit independent Undo groups. |
+| 16 | V2:124–168 word/line commands require `inlineSuggestionVisible`; V1:710–729/1059 reads ghost-text `inlineCompletionState`, excluding inline edits. V6 uses provider cache and continuation. | NES word/line partial adoption is correctly disabled; ordinary inline partial adoption remains. Alternative candidate cycling and post-adopt next request retained. No missing NES partial-accept feature is claimed. Agreeing-provider grace and compatible retained proposals avoid unnecessary replacement. See cache feasibility below. |
+| 17 | V1:710–729 has a ghost-text composition guard; NES state is separate. Do not claim physical IME behavior from that alone. | Preserve conservative IME safety at request/display/keys/apply. Native actual NSTextInputClient marked text (kana→kanji), Tab/Esc ownership, no RPC during composition, delayed reply rejection, and fresh candidate after commit. System-wide input source/physical conversion UI was not switched; arbitrary input layouts are not claimed. |
+| 18 | V3 manages viewport-dependent target rendering; no blanket scroll invalidation. | Keep/reposition NES on scroll/move/resize; reused single panel, retired panels closed, narrow overflow and screen-edge gutter hint. App/window deactivation invalidates stale interaction safely. Native viewport/panel lifecycle/two-window tests. |
+| 19 | NES setting and general provider connection are separate. | Connection off stops owned server without sign-out; independent inline/NES auto flags and explicit manual NES remain. Permission narrowing closes all retained documents. Offline and native unsupported/reconnect/menu state tests. |
+| 20 | Empty, missing method, cancellation, timeout, stopped process and bad candidate are distinct. | Existing diagnostics/capability latch/reprobe, immutable response guards and validated range/URI/version maintained. Known cross-file targets add local snapshot/revision checks; unknown foreign targets still fail closed. Offline mock fault cases and native stale/unsupported tests. A real-service zero candidate is never acceptance. |
+
+## Corrections to earlier residual descriptions
+
+- **NES word/line partial adoption:** not missing at the pinned VS Code commit. Those commands operate on ghost text, not inline edits.
+- **Multi-file batch acceptance:** not the referenced upstream behavior. The actual difference was navigation/transplant, now implemented for synchronized known targets.
+- **Multiple hunks:** the public API already permits a wide single range containing several changes. The missing pieces were derived hunk boundaries, preserving edits in unchanged islands, precise coloring, and last-change caret; these are now addressed with bounded independent host logic.
+- **Inline-first:** source-compatible default priority. Sequential provider startup was the difference and is replaced by parallel work.
+- **Fixed 50 ms:** removed for joint and NES. Ordinary inline-only debounce is outside the fixed NES-delay claim.
+- **Current-document-only history:** no longer a blanket host restriction; only already-requested documents are retained, bounded and closed when their document window closes or language permission narrows. This does not grant general workspace context.
+- **Focusable hover:** general editor UI capability, not evidence that NES can steal keys from a focused control. The relevant eligibility/ownership guard is tested with a real focused native input control.
+
+## Provider/API feasibility and remaining boundaries
+
+S1:173–178 documents incremental synchronization and didFocus. S1:325–387 exposes NES requests, alternatives, per-item URI/version/range/text, show and accept feedback. These support parallel requests, real edit history, known cross-file transfer and host-derived hunks; none is classified as an unavoidable API limitation.
+
+S1:392–422 additionally exposes `cacheTelemetryContext` and `textDocument/reportCachedInlineEdit`. The earlier broad assertion that cache support is absent was incorrect. This API reports a **client cache serve** and its lifecycle; it does not supply a model/prefetch operation or the original source snapshot of an unknown target. This implementation retains/rebases the currently displayed opportunity and requests fresh provider results; it does not create new cache opportunity IDs or replay a disposed cached result as a new display. Thus ordinary provider feedback remains appropriate. If a new independent client cache is added later, this reporting protocol is available and must be used with unchanged opaque context and unique occurrence IDs.
+
+Private prediction/model selection, experiment assignments, provider-internal cache/prefetch behavior and exclusion/context policies cannot be established from the public host plus the packaged LSP contract. We do not assert that they are impossible to implement, or that an empty response proves provider parity. No undocumented request, fabricated future edit, credential extraction, or alternate unofficial model is used to claim equivalence.
+
+An unknown foreign target lacks a locally owned matching original snapshot/version under this app's current-document consent contract. Blindly opening a server-provided path would not establish that baseline. Supporting arbitrary unopened workspace files would require an explicit workspace-context design and baseline ownership, beyond the observed NES interaction fixes; currently such candidates are rejected and are not claimed as supported.
+
+The diff algorithm is independent host code and intentionally bounded (2048 grapheme tokens per side / two million token product). Larger candidates use the existing validated outer edit; no exact equivalence to VS Code's 50 ms line/subword diff heuristics or all experimental render modes is claimed. All standard edit shapes and derived-hunk cases are covered by the acceptance matrix.
+
+No upstream implementation was copied; referenced MIT licenses were inspected. Existing Apache-2.0 project attribution remains unchanged.

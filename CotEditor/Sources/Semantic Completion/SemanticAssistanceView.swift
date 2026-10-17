@@ -54,9 +54,14 @@ enum SemanticActionApplication {
         guard view.isEditable, !view.hasMarkedText(), view.selectedRanges.count == 1, view.insertionLocations.allSatisfy({ $0 == view.selectedRange().location }), !edits.isEmpty else { return false }
         let original = view.selectedRange().location
         let normalized = edits.map { LSPText.Edit(range: $0.range, text: $0.text.replacingLineEndings(with: view.lineEnding), primary: $0.primary) }
-        let caret = caretAtPrimaryEnd && normalized.count == 1 && normalized[0].primary
-            ? normalized[0].range.location + normalized[0].text.utf16.count
-            : LSPAssistance.caret(after: normalized, original: original, textLength: (view.string as NSString).length)
+        let primary = normalized.first(where: \.primary)
+        let caret: Int
+        if caretAtPrimaryEnd, let primary {
+            let precedingDelta = normalized.filter { !$0.primary && NSMaxRange($0.range) <= primary.range.location }.reduce(0) { $0 + $1.text.utf16.count - $1.range.length }
+            caret = primary.range.location + primary.text.utf16.count + precedingDelta
+        } else {
+            caret = LSPAssistance.caret(after: normalized, original: original, textLength: (view.string as NSString).length)
+        }
         view.breakUndoCoalescing()
         let result = view.replace(with: normalized.map(\.text), ranges: normalized.map(\.range), selectedRanges: [NSRange(location: caret, length: 0)], actionName: title)
         view.breakUndoCoalescing()

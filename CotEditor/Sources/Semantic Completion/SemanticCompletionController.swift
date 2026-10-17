@@ -95,6 +95,10 @@ import LineEnding
         add("Show Parameter Hints", #selector(showParameterHints))
         add("Quick Fix / Add Import…", #selector(quickFix))
         add("Show Diagnostics…", #selector(showDiagnostics))
+        menu.addItem(.separator())
+        let tabFocus = NSMenuItem(title: "Tab Key Moves Focus", action: #selector(EditorTextView.toggleTabFocusMode(_:)), keyEquivalent: "m")
+        tabFocus.keyEquivalentModifierMask = [.control, .shift]
+        menu.addItem(tabFocus)
         root.submenu = menu
         NSApp.mainMenu?.addItem(root)
         observers.append(NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] notification in

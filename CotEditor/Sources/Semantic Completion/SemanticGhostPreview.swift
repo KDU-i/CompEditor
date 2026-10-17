@@ -15,6 +15,7 @@ struct SemanticGhostPreview {
     var replacementRange: NSRange? = nil
     var replacedText: String? = nil
     var revision: Int? = nil
+    var replacementHunks: [LSPText.Edit] = []
 }
 
 extension EditorTextView {
@@ -211,16 +212,18 @@ extension EditorTextView {
             SemanticNextEditPreview.drawArrow(in: indicator, offscreen: anchor.isEmpty)
         }
         guard range.length > 0, let layoutManager, let textContainer else { return }
-        let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
         NSGraphicsContext.saveGraphicsState(); defer { NSGraphicsContext.restoreGraphicsState() }
         visibleRect.intersection(dirtyRect).clip()
-        layoutManager.enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0), in: textContainer) { rect, _ in
+        for changed in ghost.replacementHunks.isEmpty ? [range] : ghost.replacementHunks.map(\.range) where changed.length > 0 {
+          let glyphs = layoutManager.glyphRange(forCharacterRange: changed, actualCharacterRange: nil)
+          layoutManager.enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0), in: textContainer) { rect, _ in
             let rect = rect.offsetBy(dx: self.textContainerOrigin.x, dy: self.textContainerOrigin.y)
             SemanticNextEditPreview.removedColor(background: self.backgroundColor).setFill(); rect.fill(using: .sourceOver)
             if ghost.text.isEmpty {
                 NSColor.systemRed.setStroke()
                 let strike = NSBezierPath(); strike.move(to: NSPoint(x: rect.minX, y: rect.midY)); strike.line(to: NSPoint(x: rect.maxX, y: rect.midY)); strike.stroke()
             }
+          }
         }
     }
     var nextEditUsesGutter: Bool {
@@ -343,13 +346,22 @@ final class SemanticNextEditPreview: NSView {
         NSColor.white.setStroke(); arrow.stroke()
     }
     init(before: String, after: String, maximumWidth: CGFloat, font: NSFont, lineHeight: CGFloat, baseline: CGFloat, foreground: NSColor, background: NSColor) {
+        let before = before.replacingOccurrences(of: "\r\n", with: "\n")
+        let after = after.replacingOccurrences(of: "\r\n", with: "\n")
+        let hunks = CopilotNextEditPolicy.hunks(.init(range: NSRange(location: 0, length: before.utf16.count), text: after, primary: true), in: before)
+        var delta = 0
+        let insertedRanges = hunks.map { edit -> NSRange in
+            let range = NSRange(location: edit.range.location + delta, length: edit.text.utf16.count)
+            delta += edit.text.utf16.count - edit.range.length
+            return range
+        }
         let multiline = before.contains(where: { $0.isNewline }) || after.contains(where: { $0.isNewline })
         let naturalWidth = max((before as NSString).size(withAttributes: [.font: font]).width, (after as NSString).size(withAttributes: [.font: font]).width)
         let sideBySide = multiline && !before.isEmpty && maximumWidth >= 740
         let width = min(maximumWidth, max(24, naturalWidth + 24) * (sideBySide ? 2 : 1))
         let column = sideBySide ? width / 2 : width
-        let inserted = SemanticNextEditBlock(text: after, width: column, font: font, lineHeight: lineHeight, baseline: baseline, foreground: foreground, background: background, tint: Self.insertedColor(background: background), connector: !multiline)
-        let removed = multiline && !before.isEmpty ? SemanticNextEditBlock(text: before, width: column, font: font, lineHeight: lineHeight, baseline: baseline, foreground: foreground, background: background, tint: Self.removedColor(background: background), connector: false) : nil
+        let inserted = SemanticNextEditBlock(text: after, width: column, font: font, lineHeight: lineHeight, baseline: baseline, foreground: foreground, background: background, tint: Self.insertedColor(background: background), connector: !multiline, tintRanges: hunks.count > 1 ? insertedRanges : nil)
+        let removed = multiline && !before.isEmpty ? SemanticNextEditBlock(text: before, width: column, font: font, lineHeight: lineHeight, baseline: baseline, foreground: foreground, background: background, tint: Self.removedColor(background: background), connector: false, tintRanges: hunks.count > 1 ? hunks.map(\.range) : nil) : nil
         fullHeight = sideBySide ? max(removed?.frame.height ?? 0, inserted.frame.height) : (removed?.frame.height ?? 0) + inserted.frame.height
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: fullHeight))
         if let removed { removed.frame.origin = .zero; addSubview(removed) }
@@ -365,14 +377,15 @@ private final class SemanticNextEditBlock: NSView {
     let fill: NSColor
     let tint: NSColor
     let connector: Bool
-    init(text: String, width: CGFloat, font: NSFont, lineHeight: CGFloat, baseline: CGFloat, foreground: NSColor, background: NSColor, tint: NSColor, connector: Bool) {
-        self.fill = background; self.tint = tint; self.connector = connector
+    init(text: String, width: CGFloat, font: NSFont, lineHeight: CGFloat, baseline: CGFloat, foreground: NSColor, background: NSColor, tint: NSColor, connector: Bool, tintRanges: [NSRange]? = nil) {
+        self.fill = background; self.tint = tintRanges == nil ? tint : .clear; self.connector = connector
         let leading: CGFloat = connector ? 18 : 4
         let contentWidth = max(1, width - leading - 4)
         let paragraph = NSMutableParagraphStyle()
         paragraph.minimumLineHeight = lineHeight; paragraph.maximumLineHeight = lineHeight
         paragraph.lineBreakMode = .byCharWrapping
         let storage = NSTextStorage(string: text.replacingOccurrences(of: "\r\n", with: "\n"), attributes: [.font: font, .foregroundColor: foreground, .paragraphStyle: paragraph])
+        for range in tintRanges ?? [] where range.length > 0 { storage.addAttribute(.backgroundColor, value: tint, range: range) }
         let layout = SemanticPreviewLayoutManager(lineHeight: lineHeight, baseline: baseline), container = NSTextContainer(size: NSSize(width: contentWidth, height: .greatestFiniteMagnitude))
         container.lineFragmentPadding = 0
         storage.addLayoutManager(layout); layout.addTextContainer(container); layout.ensureLayout(for: container)

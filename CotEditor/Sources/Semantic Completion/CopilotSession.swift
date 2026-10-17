@@ -54,3 +54,31 @@ struct CopilotAutomaticPolicy {
         nextEdits && serverAvailable && displayableInlineCount == 0
     }
 }
+
+/// Default selection triggers from the public NES provider. Experiment-specific
+/// debounce and editor-switch settings are deliberately not guessed.
+struct CopilotSelectionTriggerPolicy {
+    private struct Document {
+        var edited: TimeInterval
+        var lines: [Int: TimeInterval] = [:]
+    }
+    private var documents: [UUID: Document] = [:]
+    private var lastRequest: TimeInterval?
+    private var lastRejection: TimeInterval?
+    mutating func edited(_ buffer: UUID, at now: TimeInterval) {
+        documents[buffer] = Document(edited: now)
+        if documents.count > 32, let oldest = documents.min(by: { $0.value.edited < $1.value.edited })?.key { documents.removeValue(forKey: oldest) }
+    }
+    mutating func requested(at now: TimeInterval) { lastRequest = now }
+    mutating func rejected(at now: TimeInterval) { lastRejection = now }
+    mutating func shouldRequest(_ buffer: UUID, line: Int, at now: TimeInterval) -> Bool {
+        if let lastRejection, now - lastRejection < 5 { documents.removeValue(forKey: buffer); return false }
+        guard var document = documents[buffer], now - document.edited < 10,
+              let lastRequest, now - lastRequest < 10 else { return false }
+        if let previous = document.lines[line], now - previous < 5 { return false }
+        document.lines = document.lines.filter { now - $0.value < 10 }
+        document.lines[line] = now
+        documents[buffer] = document
+        return true
+    }
+}

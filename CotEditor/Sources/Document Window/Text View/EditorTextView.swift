@@ -49,6 +49,17 @@ extension NotificationCenter.MessageIdentifier where Self == NotificationCenter.
 // MARK: -
 
 final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEditing {
+    /// Session-wide keyboard navigation mode; independent of AI connection and
+    /// macOS Full Keyboard Access. Marked text always remains with the IME.
+    static var tabMovesFocus = false
+
+    @objc func toggleTabFocusMode(_ sender: Any?) {
+        Self.tabMovesFocus.toggle()
+        NSAccessibility.post(element: self, notification: .announcementRequested, userInfo: [
+            .announcement: Self.tabMovesFocus ? "Tab moves keyboard focus" : "Tab inserts indentation",
+            .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+        ])
+    }
     
     @MainActor protocol Delegate: AnyObject {
         
@@ -529,6 +540,12 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     
     
     override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if Self.tabMovesFocus, !hasMarkedText(), event.keyCode == 48, modifiers.isEmpty || modifiers == .shift {
+            if modifiers == .shift { window?.selectPreviousKeyView(self) }
+            else { window?.selectNextKeyView(self) }
+            return
+        }
         let semantic = SemanticCompletionController.shared
         if copilotController.handleKey(event, in: self) { return }
         if semantic.handleAutomaticKey(event, in: self) { return }
@@ -1229,6 +1246,9 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
     override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
         
         switch item.action {
+            case #selector(toggleTabFocusMode(_:)):
+                (item as? NSMenuItem)?.state = Self.tabMovesFocus ? .on : .off
+                return true
             case #selector(pasteAsIs):
                 return self.isEditable && NSPasteboard.general.canReadObject(forClasses: [NSString.self], options: nil)
             

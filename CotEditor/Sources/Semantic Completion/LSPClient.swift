@@ -78,6 +78,20 @@ actor LSPClient {
     private var openClose = true
     private var workspace: URL?
     private var nextEditHistory: Set<String> = []
+    private var copilotDocumentOrder: [String] = []
+    struct CopilotDocument: Sendable {
+        let version: Int
+        let text: String
+        let languageId: String
+    }
+    func copilotDocuments() -> [String: CopilotDocument] {
+        guard copilotMode else { return [:] }
+        return opened.reduce(into: [:]) { result, entry in
+            if let text = snapshots[entry.key], let language = openedLanguages[entry.key] {
+                result[entry.key] = CopilotDocument(version: entry.value, text: text, languageId: language)
+            }
+        }
+    }
     private var copilotMode = false
     private var settings: LSPJSON = .null
     private var streamContinuation: AsyncStream<Data>.Continuation?
@@ -199,8 +213,23 @@ actor LSPClient {
         nextEditHistory.insert(uri.absoluteString)
         return result
     }
+    /// Start the independent NES provider beside inline completion. Preserve its
+    /// error until arbitration actually needs NES; an unavailable speculative
+    /// provider must not hide a usable ordinary completion.
+    func speculativeNextEdit(enabled: Bool, uri: URL, languageId: String, text: String, caret: Int, tabSize: Int, insertSpaces: Bool) async -> Result<LSPJSON, any Error>? {
+        guard enabled else { return nil }
+        do { return .success(try await nextEdit(uri: uri, languageId: languageId, text: text, caret: caret, tabSize: tabSize, insertSpaces: insertSpaces)) }
+        catch { return .failure(error) }
+    }
     private func copilotRequest(_ method: String, uri: URL, languageId: String, text: String, caret: Int, context: LSPJSON?, tabSize: Int, insertSpaces: Bool) async throws -> LSPJSON {
-        for key in Array(opened.keys) where key != uri.absoluteString { if let old = URL(string: key) { close(old) } }
+        // Retain only already-requested documents, never enumerate/read other
+        // workspace files. The provider can use real edits across focus changes.
+        copilotDocumentOrder.removeAll { $0 == uri.absoluteString }
+        copilotDocumentOrder.append(uri.absoluteString)
+        while copilotDocumentOrder.count > 8 {
+            if let old = URL(string: copilotDocumentOrder[0]) { close(old) }
+            else { copilotDocumentOrder.removeFirst() }
+        }
         try synchronize(uri: uri, languageId: languageId, text: text)
         try notify("textDocument/didFocus", .object(["textDocument": .object(["uri": .string(uri.absoluteString)])]))
         let version = opened[uri.absoluteString]!
@@ -216,6 +245,7 @@ actor LSPClient {
         return result
     }
     func openCopilotDocument() -> URL? { opened.keys.first.flatMap { URL(string: $0) } }
+    func closeCopilotDocuments() { for key in Array(opened.keys) { if let uri = URL(string: key) { close(uri) } } }
     func version(of uri: URL) -> Int? { opened[uri.absoluteString] }
     func diagnostics(for uri: URL) -> LSPDiagnosticBatch? { diagnosticsByURI[uri.absoluteString] }
     func definition(uri: URL, language: LSPLanguage, text: String, offset: Int) async throws -> LSPJSON {
@@ -348,6 +378,7 @@ actor LSPClient {
 
     func close(_ uri: URL) {
         let key = uri.absoluteString
+        copilotDocumentOrder.removeAll { $0 == key }
         nextEditHistory.remove(key)
         openedLanguages.removeValue(forKey: key)
         diagnosticsByURI.removeValue(forKey: key)

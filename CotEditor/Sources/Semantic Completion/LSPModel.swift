@@ -668,6 +668,80 @@ enum CopilotInline {
 
 /// Host-side NES policy. Original implementation; VS Code is a behavioral reference only.
 enum CopilotNextEditPolicy {
+    /// Derive independent changes from the public API's single outer range.
+    /// Tokens compare exact UTF-16 (Swift Character equality normalizes accents).
+    /// Bound diff work; very large edits keep the validated contiguous fallback.
+    static func hunks(_ edit: LSPText.Edit, in snapshot: String) -> [LSPText.Edit] {
+        let edit = minimized(edit, in: snapshot)
+        guard edit.range.length > 0 || !edit.text.isEmpty else { return [] }
+        let old = (snapshot as NSString).substring(with: edit.range)
+        let a = old.map { Array(String($0).utf16) }, b = edit.text.map { Array(String($0).utf16) }
+        guard a.count <= 2048, b.count <= 2048, a.count * b.count <= 2_000_000 else { return [edit] }
+        let changes = b.difference(from: a)
+        var removed = Set<Int>(), inserted = Set<Int>()
+        for change in changes {
+            switch change {
+                case .remove(let offset, _, _): removed.insert(offset)
+                case .insert(let offset, _, _): inserted.insert(offset)
+            }
+        }
+        let units = Array(edit.text.utf16)
+        var result: [LSPText.Edit] = [], i = 0, j = 0, oldOffset = 0, newOffset = 0
+        while i < a.count || j < b.count {
+            let start = oldOffset, replacementStart = newOffset
+            while i < a.count, removed.contains(i) { oldOffset += a[i].count; i += 1 }
+            while j < b.count, inserted.contains(j) { newOffset += b[j].count; j += 1 }
+            if start != oldOffset || replacementStart != newOffset {
+                result.append(.init(range: NSRange(location: edit.range.location + start, length: oldOffset - start),
+                                    text: String(decoding: units[replacementStart..<newOffset], as: UTF16.self), primary: false))
+            } else if i < a.count, j < b.count {
+                oldOffset += a[i].count; newOffset += b[j].count; i += 1; j += 1
+            } else { return [edit] }
+        }
+        // Keep small word replacements readable; an unchanged letter inside a
+        // word must not split Hello→Goodbye into several tiny colored fragments.
+        var grouped: [LSPText.Edit] = []
+        for next in result {
+            if let previous = grouped.last {
+                let gap = (snapshot as NSString).substring(with: NSRange(location: NSMaxRange(previous.range), length: next.range.location - NSMaxRange(previous.range)))
+                if gap.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || $0 == "_" }) {
+                    grouped.removeLast()
+                    grouped.append(.init(range: NSRange(location: previous.range.location, length: NSMaxRange(next.range) - previous.range.location), text: previous.text + gap + next.text, primary: false))
+                    continue
+                }
+            }
+            grouped.append(next)
+        }
+        if let last = grouped.popLast() { grouped.append(.init(range: last.range, text: last.text, primary: edit.primary)) }
+        return grouped
+    }
+    static func combined(_ edits: [LSPText.Edit], in snapshot: String) -> LSPText.Edit? {
+        guard let first = edits.first, let last = edits.last else { return nil }
+        let range = NSRange(location: first.range.location, length: NSMaxRange(last.range) - first.range.location)
+        var replacement = (snapshot as NSString).substring(with: range)
+        for edit in edits.reversed() {
+            replacement = (replacement as NSString).replacingCharacters(in: NSRange(location: edit.range.location - range.location, length: edit.range.length), with: edit.text)
+        }
+        return .init(range: range, text: replacement, primary: true)
+    }
+    static func rebasedHunks(_ edits: [LSPText.Edit], from before: String, to after: String) -> [LSPText.Edit]? {
+        var result = edits, intermediate = before
+        let observed = hunks(.init(range: NSRange(location: 0, length: before.utf16.count), text: after, primary: true), in: before)
+        // Apply an observed multi-range transaction from the end so its original
+        // offsets remain valid. Unrelated changes must not become one artificial
+        // overlapping range around an otherwise unchanged proposed hunk.
+        for change in observed.reversed() {
+            let updated = (intermediate as NSString).replacingCharacters(in: change.range, with: change.text)
+            var remaining: [LSPText.Edit] = []
+            for edit in result {
+                if let rebased = rebase(edit, from: intermediate, to: updated) { remaining.append(rebased) }
+                else if !LSPText.sameText((intermediate as NSString).replacingCharacters(in: edit.range, with: edit.text), updated) { return nil }
+            }
+            result = remaining; intermediate = updated
+        }
+        guard !result.isEmpty, LSPText.sameText(intermediate, after) else { return nil }
+        return result.enumerated().map { index, edit in .init(range: edit.range, text: edit.text, primary: index == result.count - 1) }
+    }
     static func minimized(_ edit: LSPText.Edit, in snapshot: String) -> LSPText.Edit {
         let old = (snapshot as NSString).substring(with: edit.range)
         let a = Array(old), b = Array(edit.text)

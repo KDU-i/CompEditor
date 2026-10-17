@@ -37,7 +37,17 @@ import Foundation
         do { _ = try await cancelled.value; fatalError("cancelled returned") } catch is CancellationError { print("PASS: stale inline request cancellation") }
         _ = try await client.inlineCompletion(uri: root.appendingPathComponent("Other.py"), language: .python, text: "other", caret: 5)
         let state = try await client.request("test/state", .object([:]))
-        check(state["opened"].int == 1 && state["shown"].int == 1 && state["accepted"].int == 1 && state["cancelled"].int! >= 2, "close old document, show/accept notifications, protocol cancellation")
+        check(state["opened"].int == 2 && state["shown"].int == 1 && state["accepted"].int == 1 && state["cancelled"].int! >= 2, "retain requested documents, show/accept notifications, protocol cancellation")
+        _ = try await client.inlineCompletion(uri: uri, language: .python, text: "DELAY plus", caret: 10)
+        check(await client.version(of: uri) == 5, "returning document retains real synchronization version")
+        for index in 0..<9 {
+            _ = try await client.inlineCompletion(uri: root.appendingPathComponent("Bounded\(index).py"), language: .python, text: "bounded", caret: 7)
+        }
+        let bounded = try await client.request("test/state", .object([:]))
+        check(bounded["opened"].int == 8, "provider history is bounded to eight already-requested documents")
+        check(await client.version(of: uri) == nil, "least recently requested document is evicted")
+        await client.closeCopilotDocuments()
+        check((try await client.request("test/state", .object([:])))["opened"].int == 0, "permission narrowing closes all retained documents")
         check(CopilotInline.command(.object(["command": .string("arbitrary.command"), "arguments": .array([])]), name: "github.copilot.didAcceptCompletionItem") == nil, "arbitrary commands rejected")
         do { _ = try CopilotInline.edit(.object(["insertText": .object(["value": .string("snippet")])]),text:"x",caret:1); fatalError("snippet accepted") } catch { print("PASS: unsupported snippet rejected") }
         do { _ = try CopilotInline.edit(.object(["insertText":.string("x")]), text:"😀",caret:1); fatalError("surrogate boundary accepted") } catch { print("PASS: split UTF-16 surrogate boundary rejected") }

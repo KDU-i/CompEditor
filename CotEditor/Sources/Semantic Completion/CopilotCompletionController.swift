@@ -73,9 +73,26 @@ enum CopilotBundledServer {
     private var lastStopReason = "running"
     private var observers: [any NSObjectProtocol] = []
     private weak var view: EditorTextView?
+    private final class RequestedEditor {
+        weak var editor: EditorTextView?
+        init(_ editor: EditorTextView) { self.editor = editor }
+    }
+    private struct ForeignTarget {
+        weak var editor: EditorTextView?
+        let snapshot: String
+        let revision: Int
+        let uri: URL
+        let languageId: String
+    }
+    private var requestedEditors: [String: RequestedEditor] = [:]
+    private final class NextEditResponse {
+        var value: Result<LSPJSON, any Error>?
+    }
     private struct Candidate {
         let reference: Int; let item: LSPJSON; var local: LSPJSON
         var edit: LSPText.Edit; var plan: CopilotInline.Plan?; let nextEdit: Bool
+        var target: ForeignTarget? = nil
+        var hunks: [LSPText.Edit]? = nil
     }
     private struct Suggestions {
         var candidates: [Candidate]; var index = 0; var snapshot: String; var caret: Int; var revision: Int
@@ -96,7 +113,7 @@ enum CopilotBundledServer {
     private var viewportOrigin: NSPoint?
     private var diagnostics = CopilotDiagnostics()
     private var selectionRequest: Task<Void, Never>?
-    private var lastTextEditTime = -Double.infinity
+    private var selectionTriggers = CopilotSelectionTriggerPolicy()
     // One actual pre-edit snapshot, never persisted or logged. No workspace history is read.
     private var recentBefore: (buffer: UUID, revision: Int, text: String)?
     private var automaticPolicy: CopilotAutomaticPolicy { .init(inline: automaticSuggestions, nextEdits: automaticNextEdits && !nextEditsUnavailable) }
@@ -179,12 +196,14 @@ enum CopilotBundledServer {
                     guard !self.applying else { return }
                     if note.name == NSText.didChangeNotification {
                         guard let editor else { return }
-                        self.lastTextEditTime = ProcessInfo.processInfo.systemUptime
                         if editor.undoManager?.isUndoing == true || editor.undoManager?.isRedoing == true {
+                            self.synchronizeObservedText(in: editor)
                             self.undoSuppressedEditor = editor; self.continuingAcceptance = false
                             self.invalidate(reason: .textChanged); return
                         }
+                        self.selectionTriggers.edited(editor.semanticBufferID, at: ProcessInfo.processInfo.systemUptime)
                         self.undoSuppressedEditor = nil; self.dismissedEditor = nil; self.continuingAcceptance = false
+                        self.synchronizeObservedText(in: editor)
                         if editor === self.view, self.rebaseNextEdit(in: editor) { return }
                         if editor === self.view { self.invalidate(reason: .textChanged) }
                         if self.automaticSuggestions || self.automaticNextEdits {
@@ -230,10 +249,12 @@ enum CopilotBundledServer {
                     }
                     self.invalidate(reason: reason)
                     if reason == .selectionChanged, self.automaticPolicy.request(after: .caretMove) == .nextEdit,
-                       ProcessInfo.processInfo.systemUptime - self.lastTextEditTime > 0.25, let editor {
+                       let editor, self.eligible(editor) != nil,
+                       let line = try? LSPText.position(editor.selectedRange().location, in: editor.string)["line"].int,
+                       self.selectionTriggers.shouldRequest(editor.semanticBufferID, line: line, at: ProcessInfo.processInfo.systemUptime) {
                         let revision = editor.semanticRevision, caret = editor.selectedRange()
                         self.selectionRequest = Task { @MainActor [weak self, weak editor] in
-                            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                            await Task.yield()
                             guard let self, let editor, !Task.isCancelled,
                                   editor.semanticRevision == revision, editor.selectedRange() == caret else { return }
                             self.selectionRequest = nil
@@ -246,7 +267,15 @@ enum CopilotBundledServer {
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in MainActor.assumeIsolated { self.shutdownForApplicationExit() } })
         observers.append(NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] note in
             let window = note.object as? NSWindow
-            MainActor.assumeIsolated { if let window, window === self?.view?.window { self?.invalidate() } }
+            MainActor.assumeIsolated {
+                guard let self, let window else { return }
+                if window === self.view?.window { self.invalidate() }
+                let closing = self.requestedEditors.filter { $0.value.editor == nil || $0.value.editor?.window === window }.map(\.key)
+                for key in closing {
+                    self.requestedEditors.removeValue(forKey: key)
+                    if let uri = URL(string: key), let owner = self.client { Task { await owner.close(uri) } }
+                }
+            }
         })
         if enabled, executable != nil { restoreAuthentication() }
         else if !enabled { phase = .off; status = "OFF。保存済みのGitHub認証は削除していません。" }
@@ -560,7 +589,10 @@ enum CopilotBundledServer {
     @objc private func acceptSuggestion() { if let editor = activeEditor() { _ = accept(in: editor) } }
     @objc private func acceptWord() { if let editor = activeEditor() { _ = acceptPartial(in: editor, line: false) } }
     @objc private func acceptLine() { if let editor = activeEditor() { _ = acceptPartial(in: editor, line: true) } }
-    @objc private func dismissSuggestion() { dismissedEditor = view; invalidate() }
+    @objc private func dismissSuggestion() {
+        if suggestions?.candidates[suggestions!.index].nextEdit == true { selectionTriggers.rejected(at: ProcessInfo.processInfo.systemUptime) }
+        dismissedEditor = view; invalidate()
+    }
     @objc private func toggleOtherLanguages() {
         if !otherLanguages {
             let dialog = NSAlert(); dialog.messageText = "Java/Python以外のAI補完を有効にしますか？"
@@ -569,7 +601,7 @@ enum CopilotBundledServer {
             guard dialog.runModal() == .alertFirstButtonReturn else { return }
         }
         otherLanguages.toggle(); invalidate()
-        let old = client; Task { if let uri = await old?.openCopilotDocument() { await old?.close(uri) } }
+        let old = client; Task { await old?.closeCopilotDocuments() }
     }
     @objc private func toggleNextEdits() {
         automaticNextEdits.toggle(); preferences.automaticNextEdits = automaticNextEdits; invalidate()
@@ -595,7 +627,7 @@ enum CopilotBundledServer {
     }
     func typed(in editor: EditorTextView, previous: String) {
         guard !editor.string.utf16.elementsEqual(previous.utf16), !applying else { return }
-        lastTextEditTime = ProcessInfo.processInfo.systemUptime
+        selectionTriggers.edited(editor.semanticBufferID, at: ProcessInfo.processInfo.systemUptime)
         undoSuppressedEditor = nil; dismissedEditor = nil; continuingAcceptance = false
         if rebaseNextEdit(in: editor) { return }
         if eligible(editor) != nil, previous.utf16.count <= 1_000_000 {
@@ -624,12 +656,21 @@ enum CopilotBundledServer {
         let observedPrevious = previous ?? (recentBefore?.buffer == editor.semanticBufferID && recentBefore?.revision == revision ? recentBefore?.text : nil)
         if !explicit, work != nil, let queued = fingerprint,
            queued.0 == editor.semanticBufferID, queued.1.utf16.elementsEqual(snapshot.utf16), queued.2 == caret, queued.3 == languageId { diagnose(ticket, .skipped, reason: .duplicateRequest); return }
+        let previousProjection: String? = {
+            guard view === editor, let state = suggestions else { return nil }
+            let candidate = state.candidates[state.index]
+            guard candidate.nextEdit, candidate.target == nil, state.shown.contains(candidate.reference) else { return nil }
+            return (state.snapshot as NSString).replacingCharacters(in: candidate.edit.range, with: candidate.edit.text)
+        }()
         invalidate(reason: .replacedRequest); diagnosticRequest = ticket
+        selectionTriggers.requested(at: ProcessInfo.processInfo.systemUptime)
         self.view = editor; viewportOrigin = editor.enclosingScrollView?.contentView.bounds.origin
         fingerprint = (editor.semanticBufferID, snapshot, caret, languageId)
         let token = epoch
         let tabSize = editor.tabWidth, insertSpaces = editor.isAutomaticTabExpansionEnabled
         let uri = file ?? URL.temporaryDirectory.appendingPathComponent("compeditor-\(editor.semanticBufferID).\(languageId)")
+        requestedEditors = requestedEditors.filter { $0.value.editor != nil }
+        requestedEditors[uri.absoluteString] = RequestedEditor(editor)
         let selected = SemanticCompletionController.shared.selectedSuggestion(in: editor)
         let selectedContext = selected.flatMap { edit in try? LSPJSON.object(["range": CopilotInline.rangeJSON(edit.range, in: snapshot), "text": .string(edit.text)]) }
         status = explicit ? "AI候補を手動で取得しています…" : "AI候補を取得しています…"
@@ -640,7 +681,9 @@ enum CopilotBundledServer {
             }
             var rpcTicket = ticket
             do {
-                if !explicit { try await Task.sleep(for: .milliseconds(50)) }
+                // The joint provider has no fixed debounce. Keep the existing
+                // inline-only debounce when NES is disabled.
+                if !explicit, !nextEdit, !self.automaticNextEdits { try await Task.sleep(for: .milliseconds(50)) }
                 let client = try await self.prepared()
                 try Task.checkCancellation(); guard self.epoch == token, self.eligible(editor) == languageId else { self.diagnose(ticket, .excluded, reason: .staleResponse); return }
                 guard !nextEdit || !self.nextEditsUnavailable else { self.diagnose(ticket, .skipped, reason: .methodNotFound); return }
@@ -667,11 +710,38 @@ enum CopilotBundledServer {
                     guard self.epoch == token, self.eligible(editor) == languageId else { return }
                 }
                 self.diagnose(ticket, .started)
+                let requestBoth = !nextEdit && self.automaticNextEdits && !self.nextEditsUnavailable
+                let nextResponse = NextEditResponse()
+                let speculativeNextEdit = Task { @MainActor in
+                    let response = await client.speculativeNextEdit(enabled: requestBoth, uri: uri, languageId: languageId,
+                        text: snapshot, caret: caret, tabSize: tabSize, insertSpaces: insertSpaces)
+                    nextResponse.value = response
+                    return response
+                }
+                // This child request is owned by this exact request epoch. All
+                // exits cancel it, including edits/IME/focus changes while inline
+                // completion is pending. LSPClient forwards RPC cancellation.
+                defer { speculativeNextEdit.cancel() }
                 var isNextEdit = nextEdit
                 let result: LSPJSON
                 if nextEdit { result = try await client.nextEdit(uri: uri, languageId: languageId, text: snapshot, caret: caret, tabSize: tabSize, insertSpaces: insertSpaces) }
-                else { result = try await client.inlineCompletion(uri: uri, languageId: languageId, text: snapshot, caret: caret, triggerKind: explicit ? 1 : 2, selectedCompletion: selectedContext, tabSize: tabSize, insertSpaces: insertSpaces) }
-                let field = nextEdit ? "edits" : "items"
+                else {
+                    var agreeing: LSPJSON?
+                    if requestBoth, let previousProjection {
+                        try await Task.sleep(for: .milliseconds(10))
+                        if case .success(let response) = nextResponse.value,
+                           let item = response["edits"].array?.first,
+                           let version = await client.version(of: uri),
+                           CopilotInline.nextEditTarget(item, uri: uri, version: version) == .current,
+                           let edit = try? CopilotInline.nextEdit(item, text: snapshot),
+                           LSPText.sameText((snapshot as NSString).replacingCharacters(in: edit.range, with: edit.text), previousProjection) {
+                            agreeing = response
+                        }
+                    }
+                    if let agreeing { result = agreeing; isNextEdit = true }
+                    else { result = try await client.inlineCompletion(uri: uri, languageId: languageId, text: snapshot, caret: caret, triggerKind: explicit ? 1 : 2, selectedCompletion: selectedContext, tabSize: tabSize, insertSpaces: insertSpaces) }
+                }
+                let field = isNextEdit ? "edits" : "items"
                 var items = result[field].array ?? []
                 self.diagnose(ticket, .response, fieldPresent: result.object?[field] != nil,
                               arrayPresent: result[field].array != nil, count: items.count)
@@ -681,23 +751,40 @@ enum CopilotBundledServer {
                 guard let requestedVersion = await client.version(of: uri) else {
                     self.diagnose(ticket, .excluded, reason: .staleVersion); return
                 }
+                let synchronizedDocuments = await client.copilotDocuments()
                 @MainActor func parse(_ values: [LSPJSON], next: Bool) -> [Candidate] {
                     if values.count > 20 { self.diagnose(rpcTicket, .excluded, reason: .candidateLimit, count: values.count - 20) }
                     var parsed: [Candidate] = []
                     for item in values.prefix(20) {
+                        var target: ForeignTarget?
+                        var candidateSnapshot = snapshot
                         if next {
                             switch CopilotInline.nextEditTarget(item, uri: uri, version: requestedVersion) {
                                 case .current: break
-                                case .foreignDocument: self.diagnose(rpcTicket, .excluded, reason: .foreignDocument); continue
+                                case .foreignDocument:
+                                    guard let key = item["textDocument"]["uri"].string,
+                                          let document = synchronizedDocuments[key], let targetURI = URL(string: key),
+                                          let targetEditor = self.requestedEditors[key]?.editor,
+                                          targetEditor.semanticDocumentContext?().url == targetURI,
+                                          LSPText.sameText(targetEditor.string, document.text),
+                                          CopilotInline.nextEditTarget(item, uri: targetURI, version: document.version) == .current,
+                                          CopilotLanguage.resolve(url: targetURI, syntax: targetEditor.semanticDocumentContext?().syntax ?? "") == document.languageId,
+                                          targetEditor.isEditable, !targetEditor.hasMarkedText() else {
+                                        self.diagnose(rpcTicket, .excluded, reason: .foreignDocument); continue
+                                    }
+                                    candidateSnapshot = document.text
+                                    target = ForeignTarget(editor: targetEditor, snapshot: document.text, revision: targetEditor.semanticRevision,
+                                                           uri: targetURI, languageId: document.languageId)
                                 case .staleVersion: self.diagnose(rpcTicket, .excluded, reason: .staleVersion); continue
                             }
                         }
                         let plan = next ? nil : try? CopilotInline.plan(item, text: snapshot, caret: caret)
-                        guard let parsedEdit = next ? try? CopilotInline.nextEdit(item, text: snapshot) : plan?.edit else { self.diagnose(rpcTicket, .excluded, reason: .invalidEdit); continue }
-                        let edit = next ? CopilotNextEditPolicy.minimized(parsedEdit, in: snapshot) : parsedEdit
+                        guard let parsedEdit = next ? try? CopilotInline.nextEdit(item, text: candidateSnapshot) : plan?.edit else { self.diagnose(rpcTicket, .excluded, reason: .invalidEdit); continue }
+                        let edit = next ? CopilotNextEditPolicy.minimized(parsedEdit, in: candidateSnapshot) : parsedEdit
                         if !next, plan?.parts.isEmpty != false { self.diagnose(rpcTicket, .excluded, reason: .noInlineParts); continue }
-                        if parsed.contains(where: { $0.edit.range == edit.range && LSPText.sameText($0.edit.text, edit.text) }) { self.diagnose(rpcTicket, .excluded, reason: .duplicateCandidate); continue }
-                        self.reference += 1; parsed.append(Candidate(reference: self.reference, item: item, local: item, edit: edit, plan: plan, nextEdit: next))
+                        if parsed.contains(where: { $0.target?.uri == target?.uri && $0.edit.range == edit.range && LSPText.sameText($0.edit.text, edit.text) }) { self.diagnose(rpcTicket, .excluded, reason: .duplicateCandidate); continue }
+                        self.reference += 1; parsed.append(Candidate(reference: self.reference, item: item, local: item, edit: edit, plan: plan, nextEdit: next, target: target,
+                            hunks: next ? CopilotNextEditPolicy.hunks(edit, in: candidateSnapshot) : nil))
                     }
                     return parsed
                 }
@@ -706,11 +793,14 @@ enum CopilotBundledServer {
                     self.status = "AI候補の応答形式を処理できませんでした。"; return
                 }
                 var candidates = parse(items, next: isNextEdit)
-                if !nextEdit, self.automaticPolicy.needsNextEditFallback(displayableInlineCount: candidates.count, serverAvailable: !self.nextEditsUnavailable) {
+                if !isNextEdit, self.automaticPolicy.needsNextEditFallback(displayableInlineCount: candidates.count, serverAvailable: !self.nextEditsUnavailable) {
                     let fallback = self.diagnostics.ticket(.fallbackNextEdit)
                     rpcTicket = fallback; self.diagnosticRequest = fallback
                     self.diagnose(fallback, .started)
-                    let edits = try await client.nextEdit(uri: uri, languageId: languageId, text: snapshot, caret: caret, tabSize: tabSize, insertSpaces: insertSpaces)
+                    // Both providers started together. Await the already-running
+                    // NES only after filtering inline results for displayability.
+                    guard let response = await speculativeNextEdit.value else { return }
+                    let edits = try response.get()
                     items = edits["edits"].array ?? []; isNextEdit = true
                     self.diagnose(fallback, .response, fieldPresent: edits.object?["edits"] != nil,
                                   arrayPresent: edits["edits"].array != nil, count: items.count)
@@ -770,12 +860,28 @@ enum CopilotBundledServer {
     func ordinarySuggestionChanged(in editor: EditorTextView) {
         if current(in: editor) { present(in: editor) }
     }
+    private func synchronizeObservedText(in editor: EditorTextView) {
+        guard automaticSuggestions || automaticNextEdits, let owner = client,
+              let language = eligible(editor),
+              let key = requestedEditors.first(where: { $0.value.editor === editor })?.key,
+              let uri = URL(string: key) else { return }
+        let snapshot = editor.string, revision = editor.semanticRevision
+        Task { @MainActor [weak self, weak editor] in
+            guard let self, let editor, self.client === owner,
+                  self.automaticSuggestions || self.automaticNextEdits,
+                  self.eligible(editor) == language, editor.semanticRevision == revision,
+                  LSPText.sameText(editor.string, snapshot) else { return }
+            try? await owner.synchronizeDocument(uri: uri, languageId: language, text: snapshot)
+        }
+    }
     @discardableResult private func rebaseNextEdit(in editor: EditorTextView) -> Bool {
         guard var state = suggestions, view === editor, state.candidates[state.index].nextEdit,
               eligible(editor) == state.languageId, editor.semanticDocumentContext?().url == state.file else { return false }
         state.candidates = state.candidates.compactMap { candidate in
-            guard let edit = CopilotNextEditPolicy.rebase(candidate.edit, from: state.snapshot, to: editor.string) else { return nil }
-            var result = candidate; result.edit = edit; return result
+            if candidate.target != nil { return candidate }
+            guard let hunks = CopilotNextEditPolicy.rebasedHunks(candidate.hunks ?? [candidate.edit], from: state.snapshot, to: editor.string),
+                  let edit = CopilotNextEditPolicy.combined(hunks, in: editor.string) else { return nil }
+            var result = candidate; result.edit = edit; result.hunks = hunks; return result
         }
         guard !state.candidates.isEmpty else { return false }
         epoch += 1; work?.cancel(); work = nil; selectionRequest?.cancel(); selectionRequest = nil
@@ -787,9 +893,10 @@ enum CopilotBundledServer {
         guard current(in: editor), var state = suggestions else { return }
         let candidate = state.candidates[state.index]
         let language = LSPLanguage(rawValue: state.languageId) ?? .python
-        let old = candidate.nextEdit ? (state.snapshot as NSString).substring(with: candidate.edit.range) : nil
+        let old = candidate.nextEdit && candidate.target == nil ? (state.snapshot as NSString).substring(with: candidate.edit.range) : nil
+        let targetText = candidate.target.map { "→ \($0.uri.lastPathComponent)\n\(candidate.edit.text)" }
         applying = true
-        editor.semanticGhost = SemanticGhostPreview(text: candidate.plan?.text ?? candidate.edit.text, snapshot: state.snapshot, caret: state.caret, fileURL: state.file, language: language, copilot: true, languageId: state.languageId, parts: candidate.plan?.parts ?? [], nextEdit: candidate.nextEdit, replacementRange: candidate.edit.range, replacedText: old, revision: state.revision)
+        editor.semanticGhost = SemanticGhostPreview(text: targetText ?? candidate.plan?.text ?? candidate.edit.text, snapshot: state.snapshot, caret: state.caret, fileURL: state.file, language: language, copilot: true, languageId: state.languageId, parts: candidate.plan?.parts ?? [], nextEdit: candidate.nextEdit, replacementRange: candidate.target == nil ? candidate.edit.range : NSRange(location: state.caret, length: 0), replacedText: old, revision: state.revision, replacementHunks: candidate.target == nil ? candidate.hunks ?? [] : [])
         applying = false
         guard editor.semanticGhostIsCurrent else {
             if let ticket = diagnosticRequest { diagnose(ticket, .excluded, reason: .ghostNotCurrent) }
@@ -824,6 +931,7 @@ enum CopilotBundledServer {
     }
     func jumpToNextEdit(in editor: EditorTextView) {
         guard current(in: editor), var state = suggestions, state.candidates[state.index].nextEdit else { return }
+        if state.candidates[state.index].target != nil { _ = accept(in: editor); return }
         applying = true
         editor.selectedRange = NSRange(location: state.candidates[state.index].edit.range.location, length: 0)
         editor.scrollRangeToVisible(editor.selectedRange()); applying = false
@@ -833,6 +941,27 @@ enum CopilotBundledServer {
     private func accept(in editor: EditorTextView) -> Bool {
         guard current(in: editor), var state = suggestions, editor.semanticGhost?.copilot == true, editor.semanticGhostIsCurrent else { return false }
         let candidate = state.candidates[state.index]
+        if let target = candidate.target {
+            // The first Tab only focuses an already-requested open document.
+            // Never read/open a server-selected path or apply two files at once.
+            guard let editor = target.editor, let window = editor.window, window.isVisible,
+                  editor.semanticDocumentContext?().url == target.uri,
+                  editor.semanticRevision == target.revision, LSPText.sameText(editor.string, target.snapshot),
+                  editor.isEditable, !editor.hasMarkedText(), editor.selectedRanges.count == 1,
+                  editor.insertionLocations.allSatisfy({ $0 == editor.selectedRange().location }) else { invalidate(); return false }
+            invalidate(); applying = true
+            window.makeKeyAndOrderFront(nil); window.makeFirstResponder(editor)
+            editor.selectedRange = NSRange(location: candidate.edit.range.location, length: 0)
+            editor.scrollRangeToVisible(editor.selectedRange()); applying = false
+            guard eligible(editor) == target.languageId else { return true }
+            var transplanted = candidate; transplanted.target = nil
+            self.view = editor
+            self.suggestions = Suggestions(candidates: [transplanted], snapshot: target.snapshot, caret: editor.selectedRange().location,
+                                           revision: target.revision, file: target.uri, uri: target.uri, languageId: target.languageId,
+                                           client: state.client, shown: state.shown, jumped: true)
+            present(in: editor)
+            return true
+        }
         if candidate.nextEdit, !state.jumped,
            !CopilotNextEditPolicy.directAccept(snapshot: state.snapshot, caret: state.caret, range: candidate.edit.range,
                                              continuing: continuingAcceptance, visible: editor.nextEditTargetIsVisible) {
@@ -841,7 +970,7 @@ enum CopilotBundledServer {
             state.caret = editor.selectedRange().location; state.jumped = true; suggestions = state; present(in: editor); return true
         }
         invalidate(); applying = true
-        let accepted = SemanticActionApplication.apply([candidate.edit], title: candidate.nextEdit ? "Accept Copilot Next Edit" : "Accept Copilot Suggestion", to: editor, caretAtPrimaryEnd: candidate.nextEdit)
+        let accepted = SemanticActionApplication.apply(candidate.hunks ?? [candidate.edit], title: candidate.nextEdit ? "Accept Copilot Next Edit" : "Accept Copilot Suggestion", to: editor, caretAtPrimaryEnd: candidate.nextEdit)
         applying = false
         if accepted {
             ForkUsageMetrics.shared.record(.copilotCompletionAccepted)
@@ -889,6 +1018,7 @@ enum CopilotBundledServer {
     func handleKey(_ event: NSEvent, in editor: EditorTextView) -> Bool {
         guard !editor.hasMarkedText() else { if view === editor { invalidate() }; return false }
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if EditorTextView.tabMovesFocus, event.keyCode == 48, flags.isEmpty || flags == .shift { return false }
         if enabled, flags == .option, event.keyCode == 42 { requestSuggestions(in: editor, explicit: true); return true }
         if current(in: editor), flags == .option, event.keyCode == 30 { cycle(1, in: editor); return true }
         if current(in: editor), flags == .option, event.keyCode == 33 { cycle(-1, in: editor); return true }
@@ -896,7 +1026,13 @@ enum CopilotBundledServer {
             if let state = suggestions, state.candidates[state.index].nextEdit,
                editor.isNativeCompletionVisible || SemanticCompletionController.shared.isSuggestionListVisible(in: editor) { return false }
             let visible = hasVisibleSuggestion(in: editor)
-            if view === editor { if visible { dismissedEditor = editor }; invalidate() }
+            if view === editor {
+                if visible {
+                    dismissedEditor = editor
+                    if suggestions?.candidates[suggestions!.index].nextEdit == true { selectionTriggers.rejected(at: ProcessInfo.processInfo.systemUptime) }
+                }
+                invalidate()
+            }
             return visible
         }
         if flags == .command, event.keyCode == 124 { return acceptPartial(in: editor, line: false) }

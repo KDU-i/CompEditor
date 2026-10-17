@@ -18,7 +18,7 @@ def utf16_offset(value, position):
     return prefix + len(tail)
 last_change = None
 lock = threading.Lock()
-text = ''; version = 0; opened = {}; shown = 0; accepted = 0; cancelled = []; trigger=0; language=''; partials=[]; shown_next=0; formatting={}
+text = ''; version = 0; opened = {}; documents = {}; shown = 0; accepted = 0; cancelled = []; trigger=0; language=''; partials=[]; shown_next=0; formatting={}
 def send(value):
     data = json.dumps(value).encode()
     with lock:
@@ -61,13 +61,18 @@ try:
         elif method=='test/session':reply(msg,{'authenticated':authenticated,'homeHash':hashlib.sha256(os.environ['HOME'].encode()).hexdigest(),'methods':session['methods']})
         elif method=='textDocument/didOpen':
             text=p['textDocument']['text']; version=p['textDocument']['version']; opened[p['textDocument']['uri']]=version; language=p['textDocument']['languageId']
+            documents[p['textDocument']['uri']]={'text':text,'language':language}
         elif method=='textDocument/didChange':
+            text=documents[p['textDocument']['uri']]['text']
             assert 'range' in p['contentChanges'][0]
             last_change=p['contentChanges'][0]
             start=utf16_offset(text,last_change['range']['start']); end=utf16_offset(text,last_change['range']['end'])
             text=text[:start]+last_change['text']+text[end:]
             version=p['textDocument']['version']; opened[p['textDocument']['uri']]=version
-        elif method=='textDocument/didClose': opened.pop(p['textDocument']['uri'],None)
+            documents[p['textDocument']['uri']]['text']=text
+        elif method=='textDocument/didClose': opened.pop(p['textDocument']['uri'],None); documents.pop(p['textDocument']['uri'],None)
+        elif method=='textDocument/didFocus':
+            uri=p['textDocument']['uri']; text=documents[uri]['text']; version=opened[uri]; language=documents[uri]['language']
         elif method=='textDocument/inlineCompletion':
             trigger=p['context']['triggerKind']; assert trigger in [1,2]
             assert p['textDocument']['version']==version
@@ -102,7 +107,7 @@ try:
                 fixture=json.loads(pathlib.Path(options.nes_fixture).read_text())
                 edits=[]
                 if text == fixture['source']:
-                    edits=[dict(fixture['edit'],textDocument=dict(p['textDocument']))]
+                    edits=[dict(fixture['edit'],textDocument=fixture.get('target',dict(p['textDocument'])))]
                 result={'edits':edits}
                 if fixture.get('delay'): threading.Timer(fixture['delay'],reply,args=(msg,result)).start()
                 else:reply(msg,result)

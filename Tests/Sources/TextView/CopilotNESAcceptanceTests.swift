@@ -58,11 +58,11 @@ import Testing
             Issue.record("Synthetic checkpoint failed: \(checkpoint); RPC count=\(rpcCount()); active=\(NSApp.isActive); key=\(NSApp.keyWindow === window); responder=\(window.firstResponder === view); visible=\(window.isVisible); canKey=\(window.canBecomeKey); python=\(view.semanticDocumentContext?().syntax == "Python")")
             throw CancellationError()
         }
-        func rpcCount() -> Int {
+        func rpcCount(_ method: String = "textDocument/copilotInlineEdit") -> Int {
             guard let data = try? Data(contentsOf: state),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let methods = json["methods"] as? [String: Int] else { return 0 }
-            return methods["textDocument/copilotInlineEdit"] ?? 0
+            return methods[method] ?? 0
         }
         try await waitUntil("authentication") { copilot.connectionPresentation.phase == .authenticated }
         _ = NSApp.setActivationPolicy(.regular)
@@ -538,6 +538,7 @@ import Testing
         view.selectedRange = NSRange(location: NSMaxRange(popupWord), length: 0)
         view.scrollRangeToVisible(view.selectedRange()); view.layoutSubtreeIfNeeded(); window.displayIfNeeded()
         try #require(view.rangeForUserCompletion == popupWord)
+        try settleEditorWindow(window, editor: view)
         _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
         try await waitFor("native Tab NES baseline") { copilot.hasVisibleSuggestion(in: view) }
         let tabObservation = PopupObservation()
@@ -686,9 +687,9 @@ import Testing
         try await waitFor("automatic Undo candidate") { view.semanticGhost?.text == "Goodbye" }
         #expect(copilot.handleKey(try key(48), in: view))
         try await Task.sleep(for: .milliseconds(250))
-        func rpcCount() -> Int {
+        func rpcCount(_ method: String = "textDocument/copilotInlineEdit") -> Int {
             guard let data = try? Data(contentsOf: sessionState), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let methods = json["methods"] as? [String: Int] else { return -1 }
-            return methods["textDocument/copilotInlineEdit"] ?? 0
+            return methods[method] ?? 0
         }
         let beforeUndoRPCs = rpcCount()
         #expect(beforeUndoRPCs > 0)
@@ -726,6 +727,139 @@ import Testing
         try await Task.sleep(for: .milliseconds(1100))
         #expect(view.semanticGhost?.text == "NEW")
         #expect(view.semanticGhost?.snapshot == newer)
+        // NSTextInputClient's real marked-text state, rather than an overridden
+        // hasMarkedText flag, owns Japanese composition and its Tab/Esc keys.
+        view.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        try #require(view.hasMarkedText() && view.markedRange().length == 2)
+        let composing = view.string
+        #expect(!copilot.hasVisibleSuggestion(in: view))
+        #expect(!copilot.handleKey(try key(48), in: view))
+        #expect(!copilot.handleKey(try key(53), in: view))
+        let composingRPCs = rpcCount()
+        _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(rpcCount() == composingRPCs && LSPText.sameText(view.string, composing))
+        view.insertText("仮名", replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(!view.hasMarkedText() && view.string.contains("仮名"))
+        view.string = newer; view.selectedRange = NSRange(location: 1, length: 0)
+        try setFixture(source: newer, text: "LATE_IME", delay: 1)
+        _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+        try await Task.sleep(for: .milliseconds(100))
+        view.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        try #require(view.hasMarkedText())
+        let lateComposition = view.string
+        try await Task.sleep(for: .milliseconds(1100))
+        #expect(view.semanticGhost == nil && LSPText.sameText(view.string, lateComposition))
+        view.insertText("日本", replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(!view.hasMarkedText() && view.string.contains("日本"))
+        try setFixture(source: view.string, text: "AFTER_IME")
+        _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+        try await waitFor("fresh NES after Japanese composition") { view.semanticGhost?.text == "AFTER_IME" }
+        print("NES_IME_PASS actualMarkedText=true kanaCommit=true lateResponseRejected=true freshRequest=true")
+
+        // The ordinary provider deliberately takes 500 ms. NES must reach the
+        // peer during that wait, while the eventual usable inline result wins.
+        let jointSource = "# NORMAL_FIRST\nHello"
+        view.string = jointSource; view.selectedRange = NSRange(location: 3, length: 0)
+        try setFixture(source: jointSource, text: "JOINT_NES")
+        let jointBefore = rpcCount()
+        _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
+        _ = copilot.perform(NSSelectorFromString("triggerInline"))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(rpcCount() > jointBefore)
+        #expect(view.semanticGhost == nil)
+        try await waitFor("joint provider inline priority") { copilot.hasVisibleSuggestion(in: view) && view.semanticGhost?.nextEdit == false }
+        #expect(view.string == jointSource)
+        _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+        try await waitFor("joint previous shown NES") { view.semanticGhost?.text == "JOINT_NES" }
+        let beforeAgreeingInline = rpcCount("textDocument/inlineCompletion")
+        _ = copilot.perform(NSSelectorFromString("triggerInline"))
+        try await waitFor("joint agreeing fast NES") { view.semanticGhost?.text == "JOINT_NES" && copilot.hasVisibleSuggestion(in: view) }
+        #expect(rpcCount("textDocument/inlineCompletion") == beforeAgreeingInline)
+        _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
+        print("NES_JOINT_PASS concurrentRequest=true usableInlineWins=true agreeingNESGrace=true")
+        do {
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            try await waitFor("Tab focus candidate") { view.semanticGhost?.nextEdit == true && copilot.hasVisibleSuggestion(in: view) }
+            let field = NSTextField(frame: NSRect(x: 10, y: 10, width: 160, height: 24))
+            window.contentView?.addSubview(field)
+            let savedNext = view.nextKeyView
+            defer { EditorTextView.tabMovesFocus = false; view.nextKeyView = savedNext; field.removeFromSuperview() }
+            view.nextKeyView = field
+            try #require(!EditorTextView.tabMovesFocus)
+            view.toggleTabFocusMode(nil)
+            #expect(EditorTextView.tabMovesFocus)
+            #expect(!copilot.handleKey(try key(48), in: view))
+            window.sendEvent(try key(48))
+            #expect(window.firstResponder === field.currentEditor())
+            #expect(window.firstResponder !== view && view.string == jointSource)
+            // A focused native control owns its keyboard interaction even when
+            // the proposal existed before focus left the editor.
+            #expect(!copilot.handleKey(try key(48), in: view))
+            view.toggleTabFocusMode(nil)
+            #expect(!EditorTextView.tabMovesFocus)
+        }
+        focus()
+        print("NES_FOCUS_PASS tabMovesFocus=true focusedControlOwnsKeys=true documentUnchanged=true")
+        do {
+            let targetDocument = Document()
+            targetDocument.makeWindowControllers()
+            let targetWindow = try #require(targetDocument.windowControllers.first?.window)
+            let targetView = try #require(targetDocument.textViews.first as? EditorTextView)
+            let targetURI = directory.appendingPathComponent("target.py")
+            let targetSource = "Hello target"
+            targetView.copilotController = copilot
+            targetView.string = targetSource
+            targetView.semanticDocumentContext = { (targetURI, "Python") }
+            targetView.selectedRange = NSRange(location: 1, length: 0)
+            targetWindow.tabbingMode = .disallowed
+            defer { targetWindow.orderOut(nil); targetDocument.close() }
+            try settleEditorWindow(targetWindow, editor: targetView)
+            try setFixture(source: targetSource, text: "Bye")
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            for _ in 0..<200 {
+                focusWindow(targetWindow, editor: targetView)
+                if copilot.hasVisibleSuggestion(in: targetView) { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try #require(copilot.hasVisibleSuggestion(in: targetView))
+            let source = "Hello source"
+            view.string = source; view.selectedRange = NSRange(location: 1, length: 0)
+            try settleEditorWindow(window, editor: view)
+            let item: LSPJSON = .object(["text": .string("Bye"), "range": try CopilotInline.rangeJSON(NSRange(location: 0, length: 5), in: targetSource)])
+            let payload: LSPJSON = .object(["source": .string(source), "edit": item,
+                "target": .object(["uri": .string(targetURI.absoluteString), "version": .number(1)])])
+            try JSONEncoder().encode(payload).write(to: fixture)
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            try await waitFor("cross-file navigation hint") { view.semanticGhost?.text.contains("target.py") == true && copilot.hasVisibleSuggestion(in: view) }
+            window.sendEvent(try key(48))
+            #expect(NSApp.keyWindow === targetWindow && targetWindow.firstResponder === targetView)
+            #expect(view.string == source && targetView.string == targetSource)
+            try #require(copilot.hasVisibleSuggestion(in: targetView))
+            let acceptKey = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: targetWindow.windowNumber, context: nil, characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48))
+            targetWindow.sendEvent(acceptKey)
+            #expect(targetView.string == "Bye target" && view.string == source)
+            #expect(targetView.selectedRange() == NSRange(location: 3, length: 0))
+            targetView.undoManager?.undo()
+            #expect(targetView.string == targetSource && view.string == source)
+            try settleEditorWindow(window, editor: view)
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            try await waitFor("cross-file stale target baseline") { view.semanticGhost?.text.contains("target.py") == true && copilot.hasVisibleSuggestion(in: view) }
+            targetView.string = targetSource + "!"
+            #expect(!copilot.handleKey(try key(48), in: view))
+            #expect(view.string == source && targetView.string == targetSource + "!")
+            let unknown = directory.appendingPathComponent("never-requested.py")
+            let unknownPayload: LSPJSON = .object(["source": .string(source), "edit": item,
+                "target": .object(["uri": .string(unknown.absoluteString), "version": .number(1)])])
+            try JSONEncoder().encode(unknownPayload).write(to: fixture)
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            try await waitFor("unknown cross-file target rejected") { copilot.connectionPresentation.detail.contains("表示できるAI候補") }
+            #expect(view.semanticGhost == nil && view.string == source)
+            #expect(!FileManager.default.fileExists(atPath: unknown.path))
+            print("NES_CROSS_FILE_PASS knownOpenTarget=true firstTabNavigationOnly=true secondTabAccept=true sourceUnchanged=true targetUndo=true staleTargetRejected=true unknownTargetRejected=true")
+        }
+        focus()
         // Use a fresh synthetic document and a private event-group manager.
         // XCTest dispatches multiple synthetic user events in one task, while
         // real NSApplication closes each event's group. Never close a document's
@@ -744,7 +878,7 @@ import Testing
             }
             func waitForNormalization(_ label: String, _ condition: () -> Bool) async throws {
                 for _ in 0..<200 { focusNormalization(); if condition() { return }; try await Task.sleep(for: .milliseconds(20)) }
-                Issue.record("Normalization checkpoint: \(label); active=\(NSApp.isActive); key=\(NSApp.keyWindow === window); responder=\(window.firstResponder === view); phase=\(copilot.connectionPresentation.phase); detail=\(copilot.connectionPresentation.detail)"); throw CancellationError()
+                Issue.record("Normalization checkpoint: \(label); active=\(NSApp.isActive); key=\(NSApp.keyWindow === window); responder=\(window.firstResponder === view); selected=\(view.selectedRange()); revision=\(view.semanticRevision); ghostRevision=\(view.semanticGhost?.revision ?? -1); ghostCaret=\(view.semanticGhost?.caret ?? -1); ghostCurrent=\(view.semanticGhostIsCurrent); snapshotSame=\(view.semanticGhost.map { LSPText.sameText($0.snapshot, view.string) } ?? false); marked=\(view.hasMarkedText()); phase=\(copilot.connectionPresentation.phase); detail=\(copilot.connectionPresentation.detail)"); throw CancellationError()
             }
             func key(_ code: UInt16) throws -> NSEvent {
                 try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: code == 48 ? "\t" : "\u{1b}", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code))
@@ -758,6 +892,7 @@ import Testing
             let decomposed = "e\u{301} Hello!"
             view.string = decomposed; view.selectedRange = NSRange(location: 3, length: 0)
             try setFixture(source: decomposed, text: "Bye")
+            try settleEditorWindow(window, editor: view)
             _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
             try await waitForNormalization("normalization original") { copilot.hasVisibleSuggestion(in: view) }
             undo.beginUndoGrouping()
@@ -796,6 +931,37 @@ import Testing
             undo.endUndoGrouping()
             try await waitForNormalization("new edit resumes after dismissal") { rpcCount() > dismissedRPCs && copilot.hasVisibleSuggestion(in: view) }
             _ = copilot.perform(NSSelectorFromString("toggleNextEdits"))
+            let hunkSource = "old + middle + old"
+            view.string = hunkSource; view.selectedRange = NSRange(location: 0, length: 0)
+            let hunkPayload: LSPJSON = .object(["source": .string(hunkSource), "edit": .object([
+                "text": .string("new + middle + new"), "range": try CopilotInline.rangeJSON(NSRange(location: 0, length: hunkSource.utf16.count), in: hunkSource)])])
+            try JSONEncoder().encode(hunkPayload).write(to: fixture)
+            _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+            try await waitForNormalization("derived two-hunk proposal") { copilot.hasVisibleSuggestion(in: view) }
+            #expect(view.semanticGhost?.replacementHunks.count == 2)
+            undo.beginUndoGrouping()
+            view.insertText("updated😀", replacementRange: (view.string as NSString).range(of: "middle"))
+            undo.endUndoGrouping()
+            #expect(copilot.hasVisibleSuggestion(in: view) && view.semanticGhost?.replacementHunks.count == 2)
+            let editedIsland = "old + updated😀 + old"
+            #expect(LSPText.sameText(view.string, editedIsland))
+            // Column zero intentionally gives Tab to indentation. Exercise
+            // adoption from inside the affected word instead.
+            view.selectedRange = NSRange(location: 1, length: 0)
+            try #require(copilot.hasVisibleSuggestion(in: view))
+            undo.beginUndoGrouping()
+            window.sendEvent(try key(48))
+            undo.endUndoGrouping()
+            let acceptedHunks = "new + updated😀 + new"
+            try #require(LSPText.sameText(view.string, acceptedHunks))
+            #expect(view.selectedRange() == NSRange(location: acceptedHunks.utf16.count, length: 0))
+            undo.undo()
+            #expect(LSPText.sameText(view.string, editedIsland))
+            undo.undo()
+            #expect(LSPText.sameText(view.string, hunkSource))
+            undo.redo(); undo.redo()
+            #expect(LSPText.sameText(view.string, acceptedHunks))
+            print("NES_HUNKS_PASS twoDerivedHunks=true unchangedIslandRebase=true lastActualCaret=true separateUndo=true redo=true")
         }
         focus()
         // A remote whole-line edit starts at column zero. Its second Tab must
