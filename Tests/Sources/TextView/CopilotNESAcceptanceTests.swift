@@ -307,7 +307,7 @@ import Testing
         window.setContentSize(NSSize(width: 800, height: 400))
         // Exercise native ordinary-completion visibility with NES, retaining the
         // original normal-inline exclusion policy.
-        let popupSource = "HelloWorld\nHelloUniverse\nfirst()\nvalue = Hello"
+        let popupSource = "HelloWorld\nHelloUniverse\nfirst()\nvalue = Hello\n" + (0..<80).map { "tail\($0)()" }.joined(separator: "\n")
         let popupWord = (popupSource as NSString).range(of: "Hello", options: .backwards)
         view.lineEnding = .lf
         view.isAutomaticCompletionEnabled = false
@@ -324,9 +324,26 @@ import Testing
         view.layoutSubtreeIfNeeded(); window.displayIfNeeded()
         try #require(view.rangeForUserCompletion == popupWord)
         #if DEBUG
-        view.nativeCompletionTrace = { print("NES_NATIVE " + $0) }
+        var completionInvocationEvents: [UInt16] = []
+        view.nativeCompletionTrace = { event in
+            MainActor.assumeIsolated {
+                if event.hasPrefix("complete called") {
+                    let current = NSApp.currentEvent
+                    completionInvocationEvents.append(current?.type == .keyDown ? current!.keyCode : UInt16.max)
+                }
+                print("NES_NATIVE " + event)
+            }
+        }
         defer { view.nativeCompletionTrace = nil }
         #endif
+        func requestWordCompletion() throws {
+            // F5 is AppKit's standard complete: binding. Deliver it through the
+            // application event queue, as a user command, instead of calling a
+            // modal native action from an unrelated Swift task/current event.
+            let character = String(UnicodeScalar(NSF5FunctionKey)!)
+            let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.function], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: 96))
+            NSApp.postEvent(event, atStart: true)
+        }
         let popupItem: LSPJSON = .object(["text": .string("Goodbye"), "range": try CopilotInline.rangeJSON(popupWord, in: popupSource)])
         try JSONEncoder().encode(LSPJSON.object(["source": .string(popupSource), "edit": popupItem])).write(to: fixture)
         _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
@@ -363,10 +380,18 @@ import Testing
         }
         RunLoop.main.add(popupTimer, forMode: .common)
         #expect(!view.isNativeCompletionVisible)
+        // Also exercise a real completion command while the retained NES target
+        // is offscreen. AppKit must bring its actual completion into view.
+        view.enclosingScrollView?.contentView.scroll(to: NSPoint(x: 0, y: 500))
+        NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: view.enclosingScrollView!.contentView)
+        #expect(!view.nextEditTargetIsVisible && copilot.hasSuggestions(in: view))
         print("NES_NATIVE ESC before range=\(view.rangeForUserCompletion) selected=\(view.selectedRange()) visibleRect=\(view.visibleRect)")
-        view.complete(nil)
-        print("NES_NATIVE ESC after attempts=\(popupObservation.attempts) shown=\(popupObservation.shown)")
+        try requestWordCompletion()
         try await waitFor("native completion popup observed") { popupObservation.attempts > 0 && !popupTimer.isValid }
+        print("NES_NATIVE ESC after attempts=\(popupObservation.attempts) shown=\(popupObservation.shown)")
+        #if DEBUG
+        #expect(completionInvocationEvents == [96])
+        #endif
         popupTimer.invalidate()
         #expect(popupObservation.shown)
         #expect(!popupObservation.tabConsumed && !popupObservation.escapeConsumed)
@@ -395,9 +420,12 @@ import Testing
         RunLoop.main.add(tabTimer, forMode: .common)
         #expect(!view.isNativeCompletionVisible)
         print("NES_NATIVE TAB before range=\(view.rangeForUserCompletion) selected=\(view.selectedRange())")
-        view.complete(nil)
-        print("NES_NATIVE TAB after attempts=\(tabObservation.attempts) shown=\(tabObservation.shown)")
+        try requestWordCompletion()
         try await waitFor("native Tab applied") { !tabTimer.isValid && !view.isNativeCompletionVisible }
+        print("NES_NATIVE TAB after attempts=\(tabObservation.attempts) shown=\(tabObservation.shown)")
+        #if DEBUG
+        #expect(completionInvocationEvents == [96, 96])
+        #endif
         tabTimer.invalidate()
         #expect(tabObservation.shown && !tabObservation.tabConsumed)
         let ordinaryResults = ["HelloWorld", "HelloUniverse"].map { (popupSource as NSString).replacingCharacters(in: popupWord, with: $0) }
