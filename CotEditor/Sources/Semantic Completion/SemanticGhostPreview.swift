@@ -32,6 +32,9 @@ extension EditorTextView {
         semanticGhost?.nextEdit == true && semanticGhost?.replacementRange?.length == 0 && semanticGhost?.text.contains(where: { $0.isNewline }) == false
     }
     var hasVisibleCopilotGhost: Bool { semanticGhost?.copilot == true && semanticGhostIsCurrent }
+    /// Ordinary completion may coexist with an edit preview, while a normal AI
+    /// insertion still has exclusive ownership of its ghost text.
+    var hasExclusiveCopilotInlineGhost: Bool { hasVisibleCopilotGhost && semanticGhost?.nextEdit != true }
     func updateSemanticGhostPresentation() {
         let layout = layoutManager as? LayoutManager
         if let ghost = semanticGhost, ghost.copilot, (!ghost.nextEdit || nextEditIsInlineInsertion), ghost.snapshot.utf16.elementsEqual(string.utf16) {

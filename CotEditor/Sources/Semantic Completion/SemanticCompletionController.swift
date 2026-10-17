@@ -324,7 +324,7 @@ import LineEnding
         // Menu accessibility actions may run while the app's main document is not key.
         guard let view = (NSApp.keyWindow ?? NSApp.mainWindow)?.firstResponder as? EditorTextView,
               preferences.globallyEnabled, let language = language(for: view), enabled.contains(language),
-              view.isEditable, !view.hasMarkedText(), !view.hasVisibleCopilotGhost,
+              view.isEditable, !view.hasMarkedText(), !view.hasExclusiveCopilotInlineGhost,
               view.selectedRanges.count == 1, view.insertionLocations.count <= 1,
               view.selectedRange().length == 0 else { if !automatic { NSSound.beep() }; return }
         let fileURL = view.semanticDocumentContext?().url
@@ -357,7 +357,7 @@ import LineEnding
                 guard !Task.isCancelled, self.generation == token, view.string == snapshot,
                       view.selectedRange() == selection, !view.hasMarkedText(), view.window?.firstResponder === view,
                       (NSApp.keyWindow ?? NSApp.mainWindow) === view.window,
-                      self.language(for: view) == language, !view.hasVisibleCopilotGhost,
+                      self.language(for: view) == language, !view.hasExclusiveCopilotInlineGhost,
                       view.semanticDocumentContext?().url == fileURL else { return }
                 self.lastProblem.removeValue(forKey: language)
                 self.choices = usable.map { Choice(item: $0.item, ghost: $0.ghost, client: client, snapshot: snapshot, selection: selection, fallback: fallback, generation: token, fileURL: fileURL, language: language) }
@@ -593,7 +593,7 @@ import LineEnding
         defer { if automatic && view.string != previousText && event.modifierFlags.intersection([.command, .control]).isEmpty { scheduleSignature(in: view, delay: 180) } }
         if targetView !== view { invalidateAutomatic(); targetView = view }
         guard preferences.globallyEnabled, automatic, !applyingCompletion, view.string != previousText,
-              !view.hasVisibleCopilotGhost,
+              !view.hasExclusiveCopilotInlineGhost,
               event.modifierFlags.intersection([.command, .control]).isEmpty,
               !view.hasMarkedText(), let language = language(for: view), enabled.contains(language),
               view.selectedRange().length == 0, view.selectedRanges.count == 1,

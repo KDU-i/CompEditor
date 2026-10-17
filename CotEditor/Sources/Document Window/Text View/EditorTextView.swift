@@ -1840,7 +1840,7 @@ extension EditorTextView {
     override func completions(forPartialWordRange charRange: NSRange, indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String]? {
         
         guard
-            !self.hasVisibleCopilotGhost, !charRange.isEmpty,
+            !self.hasExclusiveCopilotInlineGhost, !charRange.isEmpty,
             !self.completionWordTypes.isEmpty
         else { return nil }
         
@@ -1949,7 +1949,7 @@ extension EditorTextView {
     private func performCompletion() {
         
         guard
-            !self.hasVisibleCopilotGhost, !self.hasMarkedText(),
+            !self.hasExclusiveCopilotInlineGhost, !self.hasMarkedText(),
             self.selectedRange.isEmpty,
             self.rangeForUserCompletion.length >= self.minimumAutomaticCompletionLength,
             self.string.character(before: self.selectedRange)

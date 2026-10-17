@@ -243,6 +243,35 @@ import Testing
                 }
             }
         }
+        // Exercise native ordinary-completion visibility with NES, retaining the
+        // original normal-inline exclusion policy.
+        let popupSource = "HelloWorld\nfirst()\nvalue = Hello"
+        let popupWord = (popupSource as NSString).range(of: "Hello", options: .backwards)
+        view.lineEnding = .lf; view.string = popupSource
+        view.semanticDocumentContext = { (nil, "Python") }
+        view.selectedRange = NSRange(location: NSMaxRange(popupWord), length: 0)
+        view.completionWordTypes = .document
+        let popupItem: LSPJSON = .object(["text": .string("Goodbye"), "range": try CopilotInline.rangeJSON(popupWord, in: popupSource)])
+        try JSONEncoder().encode(LSPJSON.object(["source": .string(popupSource), "edit": popupItem])).write(to: fixture)
+        _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
+        try await waitFor("popup NES") { view.semanticGhost?.nextEdit == true && copilot.hasVisibleSuggestion(in: view) }
+        #expect(!view.hasExclusiveCopilotInlineGhost)
+        #expect(view.completions(forPartialWordRange: popupWord, indexOfSelectedItem: nil)?.contains("HelloWorld") == true)
+        let savedPreview = view.semanticGhost
+        var inlinePreview = try #require(savedPreview)
+        inlinePreview.nextEdit = false
+        view.semanticGhost = inlinePreview
+        #expect(view.hasExclusiveCopilotInlineGhost)
+        #expect(view.completions(forPartialWordRange: popupWord, indexOfSelectedItem: nil)?.isEmpty != false)
+        view.semanticGhost = savedPreview
+        view.complete(nil)
+        try await waitFor("native completion popup") { view.isNativeCompletionVisible }
+        #expect(!copilot.handleKey(try key(48), in: view))
+        #expect(!view.string.contains("Goodbye"))
+        view.insertCompletion("Hello", forPartialWordRange: view.rangeForUserCompletion, movement: NSIllegalTextMovement, isFinal: true)
+        #expect(!view.isNativeCompletionVisible)
+        view.string = popupSource
+
         // Rebase a displayed payload through a real text mutation, then reject a
         // late response after a newer request has already displayed.
         let source = "first()\nvalue = Hello"
