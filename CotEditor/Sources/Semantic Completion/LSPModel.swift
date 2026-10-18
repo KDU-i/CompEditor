@@ -761,7 +761,11 @@ enum CopilotProjectTargetPolicy {
             self.root = root; self.repositoryRoot = root; self.home = home
             let environment = ProcessInfo.processInfo.environment
             if let configuredHome = environment["HOME"] {
-                guard URL(fileURLWithPath: configuredHome).standardizedFileURL == home.standardizedFileURL else { throw LSPError.unsupportedEdit }
+                guard LSPText.sameText(configuredHome, home.path) else { throw LSPError.unsupportedEdit }
+            }
+            // Do not guess repository/ref discovery under an unmodeled context.
+            for key in ["GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM"] {
+                guard environment[key] == nil else { throw LSPError.unsupportedEdit }
             }
             guard environment["GIT_CONFIG_PARAMETERS"].map({ $0.isEmpty }) ?? true,
                   environment["GIT_CONFIG_COUNT"].map({ $0 == "0" }) ?? true else { throw LSPError.unsupportedEdit }
@@ -950,6 +954,7 @@ enum CopilotProjectTargetPolicy {
                 let folded = condition.hasPrefix("gitdir/i:")
                 var pattern = String(condition.dropFirst(folded ? 9 : 7))
                 guard !pattern.contains("%("), !pattern.hasPrefix("~") || pattern.hasPrefix("~/") else { throw LSPError.unsupportedEdit }
+                let directoryPattern = pattern.isEmpty || pattern.hasSuffix("/")
                 var literalPrefix: String?
                 if pattern.hasPrefix("~/") { pattern = home.path + "/" + pattern.dropFirst(2) }
                 else if pattern.hasPrefix("./") {
@@ -958,7 +963,7 @@ enum CopilotProjectTargetPolicy {
                     pattern = String(pattern.dropFirst(2))
                 }
                 else if !pattern.hasPrefix("/") { pattern = "**/" + pattern }
-                if pattern.hasSuffix("/") { pattern += "**" }
+                if directoryPattern { pattern += "**" }
                 for original in aliases {
                     var candidate = original
                     if let prefix = literalPrefix {
@@ -986,11 +991,23 @@ enum CopilotProjectTargetPolicy {
             // Unknown conditional semantics must never omit a possible exclusion.
             throw LSPError.unsupportedEdit
         }
-        mutating func configuration(_ url: URL, required: Bool = false) throws {
+        mutating func configuration(_ url: URL, required: Bool = false, repositoryFormat: Bool = false) throws {
             guard !activeConfigs.contains(url), activeConfigs.count < 11 else { throw LSPError.unsupportedEdit }
             guard let bytes = try metadata(url, required: required) else { return }
             activeConfigs.insert(url); defer { activeConfigs.remove(url) }
-            let result = try git(["config", "--file", "-", "--no-includes", "--null", "--get-regexp", #"^(core.ignorecase|core.precomposeunicode|core.excludesfile|extensions.worktreeconfig|include.path|includeif\..*\.path)$"#], input: bytes)
+            if repositoryFormat {
+                // Git determines this feature from the common config directly,
+                // before the normal global/include/worktree config cascade.
+                let version = try git(["config", "--file", "-", "--no-includes", "--type=int", "--get", "core.repositoryformatversion"], input: bytes)
+                let flag = try git(["config", "--file", "-", "--no-includes", "--type=bool", "--get", "extensions.worktreeconfig"], input: bytes)
+                guard (version.0 == 0 || (version.0 == 1 && version.1.isEmpty)),
+                      (flag.0 == 0 || (flag.0 == 1 && flag.1.isEmpty)) else { throw LSPError.unsupportedEdit }
+                if version.0 == 0 {
+                    guard version.1 == Data("0\n".utf8) || version.1 == Data("1\n".utf8) else { throw LSPError.unsupportedEdit }
+                    worktreeConfig = flag.0 == 0 && flag.1 == Data("true\n".utf8)
+                } else { worktreeConfig = false }
+            }
+            let result = try git(["config", "--file", "-", "--no-includes", "--null", "--get-regexp", #"^(core.ignorecase|core.precomposeunicode|core.excludesfile|core.worktree|extensions.worktreeconfig|include.path|includeif\..*\.path)$"#], input: bytes)
             guard result.0 == 0 || result.0 == 1, let text = String(data: result.1, encoding: .utf8) else { throw LSPError.unsupportedEdit }
             for entry in text.split(separator: "\0") {
                 let fields = entry.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
@@ -998,7 +1015,15 @@ enum CopilotProjectTargetPolicy {
                 switch key {
                     case "core.ignorecase": ignoreCase = try boolean(value)
                     case "core.precomposeunicode": precomposeUnicode = try boolean(value)
-                    case "extensions.worktreeconfig": worktreeConfig = try boolean(value)
+                    case "extensions.worktreeconfig": break  // Only repositoryFormat determines this feature.
+                    case "core.worktree":
+                        guard let value, let admin else { throw LSPError.unsupportedEdit }
+                        let configured = try path(value, relativeTo: admin).path
+                        // Never discover/read a different working root through
+                        // config. Accept only the already validated root, without
+                        // following an arbitrary configured external path.
+                        let known = [repositoryRoot.path, try realPath(repositoryRoot)]
+                        guard known.contains(where: { LSPText.sameText(configured, $0) }) else { throw LSPError.unsupportedEdit }
                     case "core.excludesfile":
                         guard let value else { throw LSPError.unsupportedEdit }
                         excludesFile = value.isEmpty ? nil : try path(value, relativeTo: repositoryRoot)
@@ -1017,22 +1042,31 @@ enum CopilotProjectTargetPolicy {
             let environment = ProcessInfo.processInfo.environment
             for (name, expected) in [("GIT_DIR", admin), ("GIT_COMMON_DIR", common), ("GIT_WORK_TREE", Optional(repositoryRoot))] {
                 if let value = environment[name] {
-                    guard let expected, try path(value, relativeTo: root).resolvingSymlinksInPath() == expected else { throw LSPError.unsupportedEdit }
+                    // A differently spelled/symlinked GIT_DIR has a second
+                    // conditional-match identity in Git. Do not silently drop
+                    // that context while using a clean child environment.
+                    guard let expected, value.utf8.elementsEqual((try realPath(expected)).utf8) else { throw LSPError.unsupportedEdit }
                 }
             }
             excludesFile = userConfigDirectory.appendingPathComponent("ignore")
             if let value = environment["GIT_CONFIG_SYSTEM"] {
-                if value != "/dev/null" { try configuration(path(value, relativeTo: root)) }
-            } else if environment["GIT_CONFIG_NOSYSTEM"] == nil { try configuration(exactFiles[1]) }
-            else if try !boolean(environment["GIT_CONFIG_NOSYSTEM"]) { try configuration(exactFiles[1]) }
+                guard value.hasPrefix("/") else { throw LSPError.unsupportedEdit }
+            }
+            let systemEnabled = try environment["GIT_CONFIG_NOSYSTEM"].map { try !boolean($0) } ?? true
+            if systemEnabled {
+                if let value = environment["GIT_CONFIG_SYSTEM"] {
+                    if value != "/dev/null" { try configuration(path(value, relativeTo: root)) }
+                } else { try configuration(exactFiles[1]) }
+            }
             // Git reads XDG before ~/.gitconfig (which has the higher precedence).
             if let value = environment["GIT_CONFIG_GLOBAL"] {
+                guard value.hasPrefix("/") else { throw LSPError.unsupportedEdit }
                 if value != "/dev/null" { try configuration(path(value, relativeTo: root)) }
             } else {
                 try configuration(userConfigDirectory.appendingPathComponent("config"))
                 try configuration(home.appendingPathComponent(".gitconfig"))
             }
-            if let common { try configuration(common.appendingPathComponent("config"), required: true) }
+            if let common { try configuration(common.appendingPathComponent("config"), required: true, repositoryFormat: true) }
             if worktreeConfig, let admin { try configuration(admin.appendingPathComponent("config.worktree")) }
             try configure(caseSensitive: !ignoreCase)
             try? FileManager.default.removeItem(at: shadow.appendingPathComponent(".gitignore"))

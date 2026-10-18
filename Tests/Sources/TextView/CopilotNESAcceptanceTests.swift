@@ -76,9 +76,10 @@ import Testing
         func waitUntil(_ checkpoint: String, limit: Int = 150, _ condition: () -> Bool) async throws {
             for _ in 0..<limit {
                 if condition() { return }
+                if checkpoint == "authentication", copilot.connectionPresentation.phase == .failed { break }
                 try await Task.sleep(for: .milliseconds(20))
             }
-            Issue.record("Synthetic checkpoint failed: \(checkpoint); RPC count=\(rpcCount()); active=\(NSApp.isActive); key=\(NSApp.keyWindow === window); responder=\(window.firstResponder === view); visible=\(window.isVisible); canKey=\(window.canBecomeKey); python=\(view.semanticDocumentContext?().syntax == "Python")")
+            Issue.record("Synthetic checkpoint failed: \(checkpoint); phase=\(copilot.connectionPresentation.phase); detail=\(copilot.connectionPresentation.detail); initialize=\(rpcCount("initialize")); checkStatus=\(rpcCount("checkStatus")); RPC count=\(rpcCount()); active=\(NSApp.isActive); key=\(NSApp.keyWindow === window); responder=\(window.firstResponder === view); visible=\(window.isVisible); canKey=\(window.canBecomeKey); python=\(view.semanticDocumentContext?().syntax == "Python")")
             throw CancellationError()
         }
         func rpcCount(_ method: String = "textDocument/copilotInlineEdit") -> Int {
@@ -87,7 +88,9 @@ import Testing
                   let methods = json["methods"] as? [String: Int] else { return 0 }
             return methods[method] ?? 0
         }
-        try await waitUntil("authentication") { copilot.connectionPresentation.phase == .authenticated }
+        // Cold interpreter/process startup is allowed within the product's
+        // 15-second per-RPC handshake budget; this is not a 3s startup SLA.
+        try await waitUntil("authentication", limit: 1500) { copilot.connectionPresentation.phase == .authenticated }
         _ = NSApp.setActivationPolicy(.regular)
         NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
         NSApp.activate()
@@ -1070,6 +1073,15 @@ import Testing
             var config = try String(contentsOf: configURL, encoding: .utf8)
             config += "[includeIf \"onbranch:nes-native \"]\npath=nonmatching.conf\n[includeIf \"onbranch:nes-native\r\"]\npath=nonmatching.conf\n"
             config += "[includeIf \"gitdir:" + spacedAdmin.path + "\"]\npath=matching.conf\n"
+            // The including file is outside admin but within the validated
+            // main worktree. Its literal ./ directory must retain trailing **.
+            try "[extensions]\nworktreeConfig=true\n[includeIf \"gitdir:./\"]\npath=.git/context-matching.conf\n".write(to: repository.appendingPathComponent("local-conditions.conf"), atomically: true, encoding: .utf8)
+            // Git ignores the feature declaration in this included file. A
+            // host must not load this overriding per-worktree config early.
+            try "[core]\nignoreCase=false\nexcludesFile=\n".write(to: spacedAdmin.appendingPathComponent("config.worktree"), atomically: true, encoding: .utf8)
+            try "[core]\nexcludesFile=worktree-context-excludes\n".write(to: commonAdmin.appendingPathComponent("context-matching.conf"), atomically: true, encoding: .utf8)
+            try "sensitive.py\nconditional-excluded.py\norigin-excluded.py\n".write(to: worktreeRoot.appendingPathComponent("worktree-context-excludes"), atomically: true, encoding: .utf8)
+            config += "[include]\npath=../local-conditions.conf\n"
             try config.write(to: configURL, atomically: true, encoding: .utf8)
             try "sensitive.py\n".write(to: worktreeRoot.appendingPathComponent("worktree-excludes"), atomically: true, encoding: .utf8)
             try "PRIVATE/\n foo.py\n".write(to: worktreeRoot.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
@@ -1099,7 +1111,7 @@ import Testing
             try settleEditorWindow(projectWindow, editor: sourceView)
             let badEdit: LSPJSON = .object(["text": .string("UNVERIFIED"), "range": try CopilotInline.rangeJSON(NSRange(location: 0, length: 5), in: targetText)])
             let freshEdit: LSPJSON = .object(["text": .string("VERIFIED"), "range": try CopilotInline.rangeJSON(NSRange(location: 0, length: 5), in: targetText)])
-            for excluded in [projectRoot.appendingPathComponent("Sensitive.py"), projectRoot.appendingPathComponent("private/normal.py"), projectRoot.appendingPathComponent(" foo.py"), projectRoot.appendingPathComponent("conditional-excluded.py"), worktreeRoot.appendingPathComponent("outside-open-folder.py")] {
+            for excluded in [projectRoot.appendingPathComponent("Sensitive.py"), projectRoot.appendingPathComponent("private/normal.py"), projectRoot.appendingPathComponent(" foo.py"), projectRoot.appendingPathComponent("conditional-excluded.py"), projectRoot.appendingPathComponent("origin-excluded.py"), worktreeRoot.appendingPathComponent("outside-open-folder.py")] {
                 try FileManager.default.createDirectory(at: excluded.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try "Hello excluded".write(to: excluded, atomically: true, encoding: .utf8)
                 let rejected: LSPJSON = .object(["source": .string(sourceText), "edit": badEdit,
@@ -1121,7 +1133,7 @@ import Testing
                 #expect((state["openedURIs"] as? [String])?.contains(excluded.absoluteString) == false)
                 #expect(try String(contentsOf: excluded, encoding: .utf8) == "Hello excluded")
             }
-            print("NES_GIT_EXCLUSION_PASS relativeExcludesFile=true ancestorRules=true outsideOpenedFolderRejected=true caseFile=true caseParent=true leadingSpace=true conditionalTrailingSpace=true literalCR=true gitdirTrailingSpace=true noNavigation=true noTargetSync=true")
+            print("NES_GIT_EXCLUSION_PASS relativeExcludesFile=true ancestorRules=true outsideOpenedFolderRejected=true caseFile=true caseParent=true leadingSpace=true conditionalTrailingSpace=true literalCR=true gitdirTrailingSpace=true relativeConditionOrigin=true directFormatActivationOnly=true noNavigation=true noTargetSync=true")
             try #require(sourceDocument.isDocumentEdited && !sourceDocument.semanticIsClosed)
             try #require(try String(contentsOf: sourceURI, encoding: .utf8) == diskSourceText)
             let payload: LSPJSON = .object(["cases": .array([
