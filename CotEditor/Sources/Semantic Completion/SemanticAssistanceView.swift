@@ -11,7 +11,7 @@ struct SemanticDiagnostics {
 
 extension EditorTextView {
     func drawSemanticDiagnostics(in dirty: NSRect) {
-        guard let diagnostics = semanticDiagnostics, diagnostics.snapshot == string,
+        guard let diagnostics = semanticDiagnostics, LSPText.sameText(diagnostics.snapshot, string),
               diagnostics.fileURL == semanticDocumentContext?().url,
               layoutOrientation == .horizontal, let layoutManager, let textContainer else { return }
         let visible = layoutManager.glyphRange(forBoundingRect: dirty.offsetBy(dx: -textContainerOrigin.x, dy: -textContainerOrigin.y), in: textContainer)
@@ -50,11 +50,18 @@ final class SemanticSignatureView: SemanticSuggestSurface {
 
 /// One native replacement/Undo operation for an explicitly selected validated action.
 enum SemanticActionApplication {
-    @MainActor static func apply(_ edits: [LSPText.Edit], title: String, to view: EditorTextView) -> Bool {
+    @MainActor static func apply(_ edits: [LSPText.Edit], title: String, to view: EditorTextView, caretAtPrimaryEnd: Bool = false) -> Bool {
         guard view.isEditable, !view.hasMarkedText(), view.selectedRanges.count == 1, view.insertionLocations.allSatisfy({ $0 == view.selectedRange().location }), !edits.isEmpty else { return false }
         let original = view.selectedRange().location
         let normalized = edits.map { LSPText.Edit(range: $0.range, text: $0.text.replacingLineEndings(with: view.lineEnding), primary: $0.primary) }
-        let caret = LSPAssistance.caret(after: normalized, original: original, textLength: (view.string as NSString).length)
+        let primary = normalized.first(where: \.primary)
+        let caret: Int
+        if caretAtPrimaryEnd, let primary {
+            let precedingDelta = normalized.filter { !$0.primary && NSMaxRange($0.range) <= primary.range.location }.reduce(0) { $0 + $1.text.utf16.count - $1.range.length }
+            caret = primary.range.location + primary.text.utf16.count + precedingDelta
+        } else {
+            caret = LSPAssistance.caret(after: normalized, original: original, textLength: (view.string as NSString).length)
+        }
         view.breakUndoCoalescing()
         let result = view.replace(with: normalized.map(\.text), ranges: normalized.map(\.range), selectedRanges: [NSRange(location: caret, length: 0)], actionName: title)
         view.breakUndoCoalescing()

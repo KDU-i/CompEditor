@@ -1,3 +1,4 @@
+// Modified for the unofficial Java/Python semantic fork; see FORK_CHANGES.md.
 //
 //  URLDetectorTests.swift
 //
@@ -160,12 +161,15 @@ import ValueRange
     /// - Returns: `true` if the condition was satisfied; otherwise, `false`.
     private func waitFor(timeout: Duration = .seconds(2), interval: Duration = .milliseconds(20), _ condition: @escaping () -> Bool) async -> Bool {
         
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: timeout)
-        
-        while clock.now < deadline {
+        // These assertions check eventual link contents, not a two-second
+        // wall-clock latency. Allow queued detector work to run after another
+        // concurrent MainActor test occupies the actor beyond that deadline.
+        var remaining = timeout
+        while remaining > .zero {
             if condition() { return true }
+            if Task.isCancelled { return false }
             try? await Task.sleep(for: interval)
+            remaining -= interval
         }
         
         return condition()

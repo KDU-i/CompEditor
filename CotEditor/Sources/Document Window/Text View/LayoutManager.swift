@@ -73,7 +73,7 @@ class LayoutManager: NSLayoutManager, InvisibleDrawing, ValidationIgnorable {
     
     var showsIndentGuides = false  { didSet { self.invalidateDisplay(forCharacterRange: self.attributedString().range) } }
     var tabWidth = 0
-    struct GhostGap: Equatable { let caret: Int; let lines: Int }
+    struct GhostGap: Equatable { let caret: Int; let lines: Int; var extraHeight: CGFloat? = nil }
     var semanticGhostGap: GhostGap? {
         didSet {
             guard oldValue != semanticGhostGap else { return }
@@ -118,7 +118,7 @@ class LayoutManager: NSLayoutManager, InvisibleDrawing, ValidationIgnorable {
         
         // -> The height of the extra line fragment should be the same as other normal fragments that are likewise customized in the delegate.
         var fragmentRect = fragmentRect
-        fragmentRect.size.height = self.lineHeight * CGFloat(1 + ((semanticGhostGap?.caret == textStorage?.length) ? semanticGhostGap?.lines ?? 0 : 0))
+        fragmentRect.size.height = self.lineHeight + ((semanticGhostGap?.caret == textStorage?.length) ? semanticGhostGap?.extraHeight ?? self.lineHeight * CGFloat(semanticGhostGap?.lines ?? 0) : 0)
         var usedRect = usedRect
         usedRect.size.height = self.lineHeight
         
@@ -261,10 +261,10 @@ extension LayoutManager: NSLayoutManagerDelegate {
         // -> NSParagraphStyle's `.lineHeightMultiple` can also control the line height,
         //    but it causes an issue when the first character of the string uses a fallback font.
         lineFragmentRect.pointee.size.height = self.lineHeight
-        if let gap = semanticGhostGap, gap.lines > 0 {
+        if let gap = semanticGhostGap, gap.lines > 0 || gap.extraHeight != nil {
             let characters = characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
             if gap.caret >= characters.location && (gap.caret < NSMaxRange(characters) || gap.caret == textStorage?.length && NSMaxRange(characters) == gap.caret) {
-                lineFragmentRect.pointee.size.height += self.lineHeight * CGFloat(gap.lines)
+                lineFragmentRect.pointee.size.height += gap.extraHeight ?? self.lineHeight * CGFloat(gap.lines)
             }
         }
         lineFragmentUsedRect.pointee.size.height = self.lineHeight

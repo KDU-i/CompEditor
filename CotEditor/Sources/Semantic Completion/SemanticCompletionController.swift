@@ -95,6 +95,10 @@ import LineEnding
         add("Show Parameter Hints", #selector(showParameterHints))
         add("Quick Fix / Add Import…", #selector(quickFix))
         add("Show Diagnostics…", #selector(showDiagnostics))
+        menu.addItem(.separator())
+        let tabFocus = NSMenuItem(title: "Tab Key Moves Focus", action: #selector(EditorTextView.toggleTabFocusMode(_:)), keyEquivalent: "m")
+        tabFocus.keyEquivalentModifierMask = [.control, .shift]
+        menu.addItem(tabFocus)
         root.submenu = menu
         NSApp.mainMenu?.addItem(root)
         observers.append(NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] notification in
@@ -315,7 +319,7 @@ import LineEnding
 
     @objc private func complete() {
         if let view = (NSApp.keyWindow ?? NSApp.mainWindow)?.firstResponder as? EditorTextView {
-            CopilotCompletionController.shared.dismissForInteraction(in: view)
+            view.copilotController.dismissForInteraction(in: view)
         }
         invalidateAutomatic(); requestCompletion(automatic: false)
     }
@@ -324,7 +328,7 @@ import LineEnding
         // Menu accessibility actions may run while the app's main document is not key.
         guard let view = (NSApp.keyWindow ?? NSApp.mainWindow)?.firstResponder as? EditorTextView,
               preferences.globallyEnabled, let language = language(for: view), enabled.contains(language),
-              view.isEditable, !view.hasMarkedText(), !view.hasVisibleCopilotGhost,
+              view.isEditable, !view.hasMarkedText(), !view.hasExclusiveCopilotInlineGhost,
               view.selectedRanges.count == 1, view.insertionLocations.count <= 1,
               view.selectedRange().length == 0 else { if !automatic { NSSound.beep() }; return }
         let fileURL = view.semanticDocumentContext?().url
@@ -354,10 +358,10 @@ import LineEnding
                 let usable = await withTaskCancellationHandler {
                     await preparation.value
                 } onCancel: { preparation.cancel() }
-                guard !Task.isCancelled, self.generation == token, view.string == snapshot,
+                guard !Task.isCancelled, self.generation == token, LSPText.sameText(view.string, snapshot),
                       view.selectedRange() == selection, !view.hasMarkedText(), view.window?.firstResponder === view,
                       (NSApp.keyWindow ?? NSApp.mainWindow) === view.window,
-                      self.language(for: view) == language, !view.hasVisibleCopilotGhost,
+                      self.language(for: view) == language, !view.hasExclusiveCopilotInlineGhost,
                       view.semanticDocumentContext?().url == fileURL else { return }
                 self.lastProblem.removeValue(forKey: language)
                 self.choices = usable.map { Choice(item: $0.item, ghost: $0.ghost, client: client, snapshot: snapshot, selection: selection, fallback: fallback, generation: token, fileURL: fileURL, language: language) }
@@ -391,7 +395,7 @@ import LineEnding
             do {
                 let item = try await choice.client.resolve(choice.item)
                 guard !Task.isCancelled, self.generation == choice.generation,
-                      view.string == choice.snapshot, view.selectedRange() == choice.selection,
+                      LSPText.sameText(view.string, choice.snapshot), view.selectedRange() == choice.selection,
                       view.window?.firstResponder === view,
                       (NSApp.keyWindow ?? NSApp.mainWindow) === view.window, !view.hasMarkedText(),
                       view.selectedRanges.count == 1, view.insertionLocations.count <= 1,
@@ -403,7 +407,7 @@ import LineEnding
                 }.value
                 // Revalidate after worker computation as well as after the server response.
                 guard !Task.isCancelled, self.generation == choice.generation,
-                      view.string == choice.snapshot, view.selectedRange() == choice.selection,
+                      LSPText.sameText(view.string, choice.snapshot), view.selectedRange() == choice.selection,
                       view.selectedRanges.count == 1, view.insertionLocations.count <= 1,
                       view.window?.firstResponder === view,
                       (NSApp.keyWindow ?? NSApp.mainWindow) === view.window, !view.hasMarkedText(),
@@ -423,7 +427,7 @@ import LineEnding
                 let applied = view.replace(with: edits.map(\.text), ranges: edits.map(\.range), selectedRanges: [selection], actionName: "Semantic Completion")
                 if applied { ForkUsageMetrics.shared.record(.semanticCompletionAccepted) }
                 view.breakUndoCoalescing()
-                CopilotCompletionController.shared.documentEdited(in: view)
+                view.copilotController.documentEdited(in: view)
             } catch is CancellationError { }
             catch { if !Task.isCancelled, self.generation == choice.generation { self.showError(error) } }
         }
@@ -519,8 +523,8 @@ import LineEnding
         let item = NSMenuItem(); item.tag = row; insertChoice(item, expectedPreview: preview ? choices[row].ghost : nil)
     }
     private func updateGhost(in view: EditorTextView, selected: Int? = nil) {
-        if CopilotCompletionController.shared.hasSuggestions(in: view) {
-            CopilotCompletionController.shared.ordinarySuggestionChanged(in: view)
+        if view.copilotController.hasSuggestions(in: view) {
+            view.copilotController.ordinarySuggestionChanged(in: view)
             if view.semanticGhost?.copilot == true { ghostRow = nil; return }
         }
         let row = selected ?? choices.indices.first(where: { choices[$0].ghost != nil })
@@ -541,17 +545,20 @@ import LineEnding
         automaticPanel?.orderOut(nil); choices.removeAll()
         if let automaticPanel { automaticPanel.parent?.removeChildWindow(automaticPanel) }
         candidateTable = nil
-        if notifyCopilot, let targetView { CopilotCompletionController.shared.ordinarySuggestionChanged(in: targetView) }
+        if notifyCopilot, let targetView { targetView.copilotController.ordinarySuggestionChanged(in: targetView) }
     }
     func dismissSuggestionsForCopilot(in view: EditorTextView) {
         guard targetView === view else { return }
         invalidateAutomatic(notifyCopilot: false)
     }
+    func isFocusedHoverVisible(in view: EditorTextView) -> Bool {
+        hoverView === view && hoverPanel?.isVisible == true && hoverPanel?.isKeyWindow == true
+    }
     func isSuggestionListVisible(in view: EditorTextView) -> Bool { targetView === view && automaticPanel?.isVisible == true }
     func selectedSuggestion(in view: EditorTextView) -> LSPText.Edit? {
         guard isSuggestionListVisible(in: view), let row = candidateTable?.selectedRow, choices.indices.contains(row) else { return nil }
         let choice = choices[row]
-        guard choice.snapshot == view.string, choice.selection == view.selectedRange() else { return nil }
+        guard LSPText.sameText(choice.snapshot, view.string), choice.selection == view.selectedRange() else { return nil }
         return (try? LSPText.edits(choice.item, text: choice.snapshot, fallback: choice.fallback, caret: choice.selection.location))?.first(where: \.primary)
     }
     func isPresentingSuggestions(in view: EditorTextView) -> Bool {
@@ -564,7 +571,7 @@ import LineEnding
             if event.keyCode == 53 { invalidateAutomatic() }
             return false
         }
-        guard let choice = choices.first, view.string == choice.snapshot, view.selectedRange() == choice.selection,
+        guard let choice = choices.first, LSPText.sameText(view.string, choice.snapshot), view.selectedRange() == choice.selection,
               preferences.globallyEnabled, enabled.contains(choice.language), language(for: view) == choice.language,
               view.semanticDocumentContext?().url == choice.fileURL, view.window?.firstResponder === view else { invalidateAutomatic(); return false }
         guard event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else { invalidateAutomatic(); return false }
@@ -590,7 +597,7 @@ import LineEnding
         defer { if automatic && view.string != previousText && event.modifierFlags.intersection([.command, .control]).isEmpty { scheduleSignature(in: view, delay: 180) } }
         if targetView !== view { invalidateAutomatic(); targetView = view }
         guard preferences.globallyEnabled, automatic, !applyingCompletion, view.string != previousText,
-              !view.hasVisibleCopilotGhost,
+              !view.hasExclusiveCopilotInlineGhost,
               event.modifierFlags.intersection([.command, .control]).isEmpty,
               !view.hasMarkedText(), let language = language(for: view), enabled.contains(language),
               view.selectedRange().length == 0, view.selectedRanges.count == 1,
@@ -644,7 +651,7 @@ private extension SemanticCompletionController {
         guard preferences.globallyEnabled, enabled.contains(language), clients[language] === client else { return }
         let items = await Task.detached { LSPAssistance.diagnostics(batch) }.value
         guard preferences.globallyEnabled, enabled.contains(language), clients[language] === client else { return }
-        for view in trackedViews.allObjects where self.language(for: view) == language && view.string == batch.snapshot {
+        for view in trackedViews.allObjects where self.language(for: view) == language && LSPText.sameText(view.string, batch.snapshot) {
             guard let context = diagnosticContexts[view.semanticBufferID], context.matches(batch: batch, revision: view.semanticRevision) else { continue }
             let key = routingCache[language]
             if (key?.file == view.semanticDocumentContext?().url && key?.buffer == view.semanticBufferID && key?.route.uri == batch.uri) || view.semanticDocumentContext?().url == batch.uri {
@@ -653,11 +660,11 @@ private extension SemanticCompletionController {
         }
     }
     func current(_ view: EditorTextView, snapshot: String, selection: NSRange, file: URL?, token: Int, language: LSPLanguage) -> Bool {
-        !Task.isCancelled && generation == token && activeEditor() === view && view.string == snapshot && view.selectedRange() == selection && view.semanticDocumentContext?().url == file && self.language(for: view) == language
+        !Task.isCancelled && generation == token && activeEditor() === view && LSPText.sameText(view.string, snapshot) && view.selectedRange() == selection && view.semanticDocumentContext?().url == file && self.language(for: view) == language
     }
     @objc func showDiagnostics() {
         guard let view = activeEditor() else { return }
-        let items = view.semanticDiagnostics?.snapshot == view.string ? view.semanticDiagnostics?.items ?? [] : []
+        let items = LSPText.sameText(view.semanticDiagnostics?.snapshot, view.string) ? view.semanticDiagnostics?.items ?? [] : []
         let alert = NSAlert(); alert.messageText = "Diagnostics"
         alert.informativeText = items.isEmpty ? "No current versioned diagnostics. Analysis may still be running." : items.prefix(30).map { "\($0.severity == 1 ? "Error" : $0.severity == 2 ? "Warning" : "Info"): \($0.message)" }.joined(separator: "\n")
         if let window = view.window { alert.beginSheetModal(for: window) }
@@ -748,7 +755,7 @@ private extension SemanticCompletionController {
     @objc func goBack() {
         invalidateAutomatic()
         while let previous = navigationBack.popLast() {
-            guard let view = previous.view.view, view.semanticDocumentContext?().url == previous.file, view.string == previous.snapshot, NSMaxRange(previous.range) <= (view.string as NSString).length, let window = view.window else { continue }
+            guard let view = previous.view.view, view.semanticDocumentContext?().url == previous.file, LSPText.sameText(view.string, previous.snapshot), NSMaxRange(previous.range) <= (view.string as NSString).length, let window = view.window else { continue }
             window.makeKeyAndOrderFront(nil); window.makeFirstResponder(view); view.setSelectedRange(previous.range); view.scrollRangeToVisible(previous.range); break
         }
     }
@@ -810,16 +817,16 @@ extension SemanticCompletionController {
             guard let self, let view else { return }
             do {
                 try await Task.sleep(for: .milliseconds(450))
-                guard !Task.isCancelled, self.preferences.globallyEnabled, self.enabled.contains(language), view.string == snapshot, view.semanticDocumentContext?().url == file, view.window != nil, NSApp.keyWindow === view.window, view.window?.firstResponder === view, self.language(for: view) == language else { return }
+                guard !Task.isCancelled, self.preferences.globallyEnabled, self.enabled.contains(language), LSPText.sameText(view.string, snapshot), view.semanticDocumentContext?().url == file, view.window != nil, NSApp.keyWindow === view.window, view.window?.firstResponder === view, self.language(for: view) == language else { return }
                 // Focus/selection generations can change while diagnostics debounce. Use the current
                 // generation at preparation, then check snapshot/identity again before synchronization.
                 let (client, uri) = try await self.preparedClient(fileURL: file, bufferID: buffer, language: language, allowCachedRoute: true, token: self.generation)
-                guard !Task.isCancelled, view.string == snapshot, view.semanticDocumentContext?().url == file, self.preferences.globallyEnabled, self.enabled.contains(language) else { return }
+                guard !Task.isCancelled, LSPText.sameText(view.string, snapshot), view.semanticDocumentContext?().url == file, self.preferences.globallyEnabled, self.enabled.contains(language) else { return }
                 try await client.synchronizeDocument(uri: uri, language: language, text: snapshot)
-                guard !Task.isCancelled, view.semanticRevision == revision, view.string == snapshot,
+                guard !Task.isCancelled, view.semanticRevision == revision, LSPText.sameText(view.string, snapshot),
                       view.semanticDocumentContext?().url == file, let version = await client.version(of: uri) else { return }
                 self.diagnosticContexts[buffer] = LSPDiagnosticStamp(uri: uri, revision: revision, version: version)
-                if let batch = await client.diagnostics(for: uri), batch.snapshot == snapshot { await self.acceptDiagnostics(batch, language: language, client: client) }
+                if let batch = await client.diagnostics(for: uri), LSPText.sameText(batch.snapshot, snapshot) { await self.acceptDiagnostics(batch, language: language, client: client) }
             } catch { if !Task.isCancelled, self.generation == token { self.lastProblem[language] = error.localizedDescription } }
         }
     }

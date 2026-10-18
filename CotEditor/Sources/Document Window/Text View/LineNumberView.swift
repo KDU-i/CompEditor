@@ -1,3 +1,4 @@
+// Modified for CompEditor NES navigation; see FORK_CHANGES.md.
 //
 //  LineNumberView.swift
 //
@@ -135,18 +136,33 @@ final class LineNumberView: NSRulerView {
         
         NSGraphicsContext.saveGraphicsState()
         
+        bounds.intersection(rect).clip()
+
         // workaround opaque background (2026-08, macOS 27 SDK)
         if let textView, textView.isOpaque {
             textView.backgroundColor.setFill()
             rect.intersection(self.frame).fill()
         }
         
+        // Number drawing translates the graphics context for its glyph baseline.
+        // Keep the navigation indicator in ruler coordinates.
+        NSGraphicsContext.saveGraphicsState()
         self.drawNumbers(in: rect)
-        
+        NSGraphicsContext.restoreGraphicsState()
+        if let indicator = nextEditIndicatorRect {
+            SemanticNextEditPreview.drawArrow(in: indicator)
+        }
         NSGraphicsContext.restoreGraphicsState()
     }
     
     
+    private var nextEditIndicatorRect: NSRect? {
+        guard orientation == .verticalRuler, let editor = textView as? EditorTextView, editor.nextEditUsesGutter, let anchor = editor.nextEditNavigationRect else { return nil }
+        var rect = convert(anchor, from: editor)
+        rect.origin.x = bounds.minX + 2
+        return rect
+    }
+
     // MARK: Private Methods
     
     /// The client text view.
@@ -190,6 +206,8 @@ final class LineNumberView: NSRulerView {
             let context = NSGraphicsContext.current?.cgContext
         else { return assertionFailure() }
         
+        context.textMatrix = .identity
+        context.textPosition = .zero
         context.setFont(self.lineNumberFont)
         context.setFontSize(drawingInfo.fontSize)
         context.setFillColor(self.foregroundColor().cgColor)
@@ -380,7 +398,10 @@ extension LineNumberView {
     
     /// Starts selecting correspondent lines in text view with a dragging / clicking event.
     override func mouseDown(with event: NSEvent) {
-        
+        if let editor = textView as? EditorTextView, nextEditIndicatorRect?.contains(convert(event.locationInWindow, from: nil)) == true {
+            editor.copilotController.jumpToNextEdit(in: editor)
+            return
+        }
         guard
             let textView,
             let window

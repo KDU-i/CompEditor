@@ -37,7 +37,31 @@ import Foundation
         do { _ = try await cancelled.value; fatalError("cancelled returned") } catch is CancellationError { print("PASS: stale inline request cancellation") }
         _ = try await client.inlineCompletion(uri: root.appendingPathComponent("Other.py"), language: .python, text: "other", caret: 5)
         let state = try await client.request("test/state", .object([:]))
-        check(state["opened"].int == 1 && state["shown"].int == 1 && state["accepted"].int == 1 && state["cancelled"].int! >= 2, "close old document, show/accept notifications, protocol cancellation")
+        check(state["opened"].int == 2 && state["shown"].int == 1 && state["accepted"].int == 1 && state["cancelled"].int! >= 2, "retain requested documents, show/accept notifications, protocol cancellation")
+        _ = try await client.inlineCompletion(uri: uri, language: .python, text: "DELAY plus", caret: 10)
+        check(await client.version(of: uri) == 5, "returning document retains real synchronization version")
+        let openDocuments = (0..<40).map { root.appendingPathComponent("Open\($0).py") }
+        for document in openDocuments {
+            _ = try await client.inlineCompletion(uri: document, language: .python, text: "before", caret: 6)
+        }
+        let retained = await client.copilotDocuments()
+        let server = try await client.request("test/state", .object([:]))
+        check(retained.count == 42 && server["opened"].int == 42, "all forty requested open documents retain history without an eight-document cap")
+        check(await client.version(of: uri) == 5, "requesting other open documents does not reset the first document version")
+        for (index, observed) in openDocuments.prefix(4).enumerated() {
+            if index.isMultiple(of: 2) { try await client.synchronizeDocument(uri: observed, language: .python, text: "undo") }
+            else { try await client.synchronizeDocument(uri: observed, languageId: "python", text: "redo") }
+            check(await client.version(of: observed) == 2, "observed Undo/Redo updates the owned baseline without closing/reopening it")
+        }
+        let seeded = root.appendingPathComponent("HistorySeed.py")
+        _ = try await client.prepareNextEditHistory(uri: seeded, languageId: "python", previous: "before", caret: 6)
+        check((await client.copilotDocuments()).count == 43, "history initialization retains all other open baselines")
+        await client.close(openDocuments[0])
+        check((await client.copilotDocuments()).count == 42, "closing a document releases its baseline")
+        check(await client.version(of: openDocuments[0]) == nil, "closed document version is removed")
+        check(await client.version(of: openDocuments[1]) == 2, "closing one document preserves other open history")
+        await client.closeCopilotDocuments()
+        check((try await client.request("test/state", .object([:])))["opened"].int == 0, "permission narrowing closes all retained documents")
         check(CopilotInline.command(.object(["command": .string("arbitrary.command"), "arguments": .array([])]), name: "github.copilot.didAcceptCompletionItem") == nil, "arbitrary commands rejected")
         do { _ = try CopilotInline.edit(.object(["insertText": .object(["value": .string("snippet")])]),text:"x",caret:1); fatalError("snippet accepted") } catch { print("PASS: unsupported snippet rejected") }
         do { _ = try CopilotInline.edit(.object(["insertText":.string("x")]), text:"😀",caret:1); fatalError("surrogate boundary accepted") } catch { print("PASS: split UTF-16 surrogate boundary rejected") }

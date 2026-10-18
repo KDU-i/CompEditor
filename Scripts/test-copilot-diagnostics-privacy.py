@@ -16,9 +16,9 @@ for call in re.findall(r'(?<!func )diagnose\((.*?)\)(?:;|\s*\n|\s*})', controlle
         assert forbidden not in call, (forbidden, call)
 assert 'values.prefix(20)' in controller
 assert 'self.automaticPolicy.needsNextEditFallback(displayableInlineCount: candidates.count, serverAvailable: !self.nextEditsUnavailable)' in controller
-assert 'if !explicit { try await Task.sleep(for: .milliseconds(50)) }' in controller
+assert 'if !explicit, !nextEdit, !self.automaticNextEdits { try await Task.sleep(for: .milliseconds(50)) }' in controller
 assert 'epoch += 1; work?.cancel(); work = nil;' in controller
 assert 'case LSPError.methodNotFound: reason = .methodNotFound' in controller
 assert 'case LSPError.timeout: reason = .timeout' in controller
 assert 'default: reason = .otherError' in controller
-print('Diagnostics privacy boundary and original fallback/debounce/cancellation predicates: PASS')
+print('Diagnostics privacy boundary, inline-only debounce and cancellation predicates: PASS')

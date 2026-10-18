@@ -2,14 +2,16 @@
 # Offline JSON-RPC peer. Synthetic strings only; no network or OAuth.
 import sys, json, threading, time
 import argparse, pathlib, os, hashlib
-parser=argparse.ArgumentParser();parser.add_argument('--session-state');parser.add_argument('--preauthenticated',action='store_true');parser.add_argument('--offline',action='store_true');parser.add_argument('--no-nes',action='store_true');options=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--session-state');parser.add_argument('--preauthenticated',action='store_true');parser.add_argument('--offline',action='store_true');parser.add_argument('--no-nes',action='store_true');parser.add_argument('--nes-fixture');parser.add_argument('--nes-word-fixture',action='store_true');options=parser.parse_args()
 session_path=pathlib.Path(options.session_state) if options.session_state else None
 session=json.loads(session_path.read_text()) if session_path and session_path.exists() else {'authenticated':options.preauthenticated,'methods':{}}
 authenticated=session['authenticated']
 def persist_synthetic_session():
     if session_path:
         session.update(authenticated=authenticated)
-        session_path.write_text(json.dumps(session))
+        if 'opened' in globals(): session['versions']=dict(opened)
+        temporary = session_path.with_suffix('.tmp')
+        temporary.write_text(json.dumps(session)); temporary.replace(session_path)
 def utf16_offset(value, position):
     lines = value.splitlines(keepends=True)
     if position['line'] == len(lines): return len(value)
@@ -18,7 +20,7 @@ def utf16_offset(value, position):
     return prefix + len(tail)
 last_change = None
 lock = threading.Lock()
-text = ''; version = 0; opened = {}; shown = 0; accepted = 0; cancelled = []; trigger=0; language=''; partials=[]; shown_next=0; formatting={}
+text = ''; version = 0; opened = {}; documents = {}; shown = 0; accepted = 0; cancelled = []; trigger=0; language=''; partials=[]; shown_next=0; formatting={}
 def send(value):
     data = json.dumps(value).encode()
     with lock:
@@ -61,13 +63,20 @@ try:
         elif method=='test/session':reply(msg,{'authenticated':authenticated,'homeHash':hashlib.sha256(os.environ['HOME'].encode()).hexdigest(),'methods':session['methods']})
         elif method=='textDocument/didOpen':
             text=p['textDocument']['text']; version=p['textDocument']['version']; opened[p['textDocument']['uri']]=version; language=p['textDocument']['languageId']
+            documents[p['textDocument']['uri']]={'text':text,'language':language}
+            session.setdefault('openedURIs',[]).append(p['textDocument']['uri'])
+            persist_synthetic_session()
         elif method=='textDocument/didChange':
+            text=documents[p['textDocument']['uri']]['text']
             assert 'range' in p['contentChanges'][0]
             last_change=p['contentChanges'][0]
             start=utf16_offset(text,last_change['range']['start']); end=utf16_offset(text,last_change['range']['end'])
             text=text[:start]+last_change['text']+text[end:]
             version=p['textDocument']['version']; opened[p['textDocument']['uri']]=version
-        elif method=='textDocument/didClose': opened.pop(p['textDocument']['uri'],None)
+            documents[p['textDocument']['uri']]['text']=text
+        elif method=='textDocument/didClose': opened.pop(p['textDocument']['uri'],None); documents.pop(p['textDocument']['uri'],None)
+        elif method=='textDocument/didFocus':
+            uri=p['textDocument']['uri']; text=documents[uri]['text']; version=opened[uri]; language=documents[uri]['language']
         elif method=='textDocument/inlineCompletion':
             trigger=p['context']['triggerKind']; assert trigger in [1,2]
             assert p['textDocument']['version']==version
@@ -89,6 +98,24 @@ try:
             assert p['textDocument']['version']==version
             if options.no_nes:persist_synthetic_session()
             if options.no_nes or text=='NO_NES': send({'jsonrpc':'2.0','id':msg['id'],'error':{'code':-32601,'message':'Synthetic missing public method'}})
+            elif options.nes_word_fixture:
+                # Compute the range from the server's actual synchronized bytes,
+                # never from request positions or the client's expected text.
+                start = len(text[:text.index('Hello')].encode('utf-16-le')) // 2
+                edit={'text':'Bye','textDocument':dict(p['textDocument']),'range':{'start':{'line':0,'character':start},'end':{'line':0,'character':start+5}}}
+                result={'edits':[edit]}
+                if 'LATE_AI' in text: threading.Timer(.35,reply,args=(msg,result)).start()
+                else:reply(msg,result)
+            elif options.nes_fixture:
+                persist_synthetic_session()
+                fixture=json.loads(pathlib.Path(options.nes_fixture).read_text())
+                edits=[]
+                for candidate in fixture.get('cases', [fixture]):
+                    if text == candidate['source']:
+                        edits=[dict(candidate['edit'],textDocument=candidate.get('target',dict(p['textDocument'])))]; break
+                result={'edits':edits}
+                if fixture.get('delay'): threading.Timer(fixture['delay'],reply,args=(msg,result)).start()
+                else:reply(msg,result)
             else: reply(msg,{'edits':[{'insertText':'next','textDocument':dict(p['textDocument']),'range':{'start':{'line':0,'character':0},'end':{'line':0,'character':1}},'command':{'command':'github.copilot.didAcceptCompletionItem','arguments':['mock-nes']}}]})
         elif method=='textDocument/didShowCompletion': shown+=1
         elif method=='textDocument/didShowInlineEdit': shown_next+=1

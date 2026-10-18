@@ -125,12 +125,15 @@ import ValueRange
     
     private func waitFor(timeout: Duration = .seconds(2), interval: Duration = .milliseconds(20), _ condition: @escaping () -> Bool) async -> Bool {
         
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: timeout)
-        
-        while clock.now < deadline {
+        // This is a polling budget, not a highlighting latency assertion. Other
+        // concurrent @MainActor tests can occupy the actor beyond a wall-clock
+        // deadline before the parser's queued work gets its first turn.
+        var remaining = timeout
+        while remaining > .zero {
             if condition() { return true }
+            if Task.isCancelled { return false }
             try? await Task.sleep(for: interval)
+            remaining -= interval
         }
         
         return condition()
