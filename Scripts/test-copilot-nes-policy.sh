@@ -8,3 +8,5 @@ swiftc -module-cache-path "${PWD:h}/NES030ModuleCache" -swift-version 5 -parse-a
  'CotEditor/Sources/Semantic Completion/CopilotSession.swift' \
  SemanticTests/CopilotNESPolicyTests.swift -o ../NES030TestBuild/copilot-nes-policy-tests
 ../NES030TestBuild/copilot-nes-policy-tests
+
+python3 Scripts/test-copilot-git-conditions.py ../NES030TestBuild/copilot-nes-policy-tests

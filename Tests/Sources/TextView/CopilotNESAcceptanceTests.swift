@@ -5,6 +5,29 @@ import Testing
 @testable import CotEditor
 
 @MainActor @Suite(.serialized) struct CopilotNESAcceptanceTests {
+    @Test func semanticBuffersUseStorageIdentityAcrossEdits() throws {
+        let document = Document(), otherDocument = Document()
+        let first = EditorTextView(textStorage: document.textStorage, lineEndingScanner: document.lineEndingScanner)
+        let second = EditorTextView(textStorage: otherDocument.textStorage, lineEndingScanner: otherDocument.lineEndingScanner)
+        first.string = "same content"; second.string = "same content"
+        let storage = try #require(first.textStorage)
+        let id = first.semanticBufferID
+        #expect(second.semanticBufferID != id, "Equal text in distinct buffers must not share identity.")
+        first.semanticRevision = 10
+        let sibling = EditorTextView(textStorage: storage, lineEndingScanner: document.lineEndingScanner)
+        #expect(sibling.semanticBufferID == id && sibling.semanticRevision == 10)
+        for (index, text) in [String(repeating: "changed", count: 100), "same content", "different"].enumerated() {
+            storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: text)
+            #expect(first.textStorage === storage && sibling.textStorage === storage)
+            #expect(first.semanticBufferID == id && sibling.semanticBufferID == id)
+            #expect(first.semanticRevision == 10 + index)
+            first.semanticRevision += 1
+            #expect(sibling.semanticRevision == 11 + index)
+        }
+        #expect(second.semanticBufferID != id && second.semanticRevision == 0)
+        print("NES_BUFFER_IDENTITY_PASS equalTextDistinctBuffers=true editStableIdentity=true revisionContinuity=true sharedStorage=true")
+    }
+
     @Test func unsupportedServerStopsAutomaticRPCAndAllowsTurningNESOff() async throws {
         try await CopilotProcessTestLease.acquire()
         defer { CopilotProcessTestLease.release() }
@@ -1008,6 +1031,12 @@ import Testing
         }
         focus()
         do {
+            // Keep this synthetic scenario unsaved even if exclusion checks
+            // outlast AppKit's ordinary autosave timer. Restore runtime state;
+            // do not change persisted application/user preferences.
+            let autosavingDelay = NSDocumentController.shared.autosavingDelay
+            NSDocumentController.shared.autosavingDelay = 3600
+            defer { NSDocumentController.shared.autosavingDelay = autosavingDelay }
             let worktreeRoot = directory.appendingPathComponent("linked-project").resolvingSymlinksInPath()
             let projectRoot = worktreeRoot.appendingPathComponent("ordinary-project")
             let repository = directory.appendingPathComponent("project-admin")
@@ -1024,7 +1053,24 @@ import Testing
             try fixtureGit(["-c", "core.hooksPath=/dev/null", "-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "--allow-empty", "-qm", "fixture"])
             try fixtureGit(["worktree", "add", "-qb", "nes-native", worktreeRoot.path])
             try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+            // Preserve Git's literal whitespace/CR condition semantics in a
+            // real registered worktree. All data here is synthetic and private.
+            let marker = worktreeRoot.appendingPathComponent(".git")
+            let pointer = try String(contentsOf: marker, encoding: .utf8)
+            let oldAdmin = URL(fileURLWithPath: String(pointer.dropFirst(8)).trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")))
+            let spacedAdmin = URL(fileURLWithPath: oldAdmin.path + " ", isDirectory: true)
+            try FileManager.default.moveItem(at: oldAdmin, to: spacedAdmin)
+            try ("gitdir: " + spacedAdmin.path + "\n").write(to: marker, atomically: true, encoding: .utf8)
+            let commonAdmin = repository.appendingPathComponent(".git")
+            try "[core]\nignoreCase=false\n".write(to: commonAdmin.appendingPathComponent("nonmatching.conf"), atomically: true, encoding: .utf8)
+            try "[core]\nexcludesFile=worktree-conditional-excludes\n".write(to: commonAdmin.appendingPathComponent("matching.conf"), atomically: true, encoding: .utf8)
+            try "sensitive.py\nconditional-excluded.py\n".write(to: worktreeRoot.appendingPathComponent("worktree-conditional-excludes"), atomically: true, encoding: .utf8)
             try fixtureGit(["config", "core.excludesFile", "worktree-excludes"])
+            let configURL = commonAdmin.appendingPathComponent("config")
+            var config = try String(contentsOf: configURL, encoding: .utf8)
+            config += "[includeIf \"onbranch:nes-native \"]\npath=nonmatching.conf\n[includeIf \"onbranch:nes-native\r\"]\npath=nonmatching.conf\n"
+            config += "[includeIf \"gitdir:" + spacedAdmin.path + "\"]\npath=matching.conf\n"
+            try config.write(to: configURL, atomically: true, encoding: .utf8)
             try "sensitive.py\n".write(to: worktreeRoot.appendingPathComponent("worktree-excludes"), atomically: true, encoding: .utf8)
             try "PRIVATE/\n foo.py\n".write(to: worktreeRoot.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
             let sourceURI = projectRoot.appendingPathComponent("source.py"), targetURI = projectRoot.appendingPathComponent("unopened.py")
@@ -1053,7 +1099,7 @@ import Testing
             try settleEditorWindow(projectWindow, editor: sourceView)
             let badEdit: LSPJSON = .object(["text": .string("UNVERIFIED"), "range": try CopilotInline.rangeJSON(NSRange(location: 0, length: 5), in: targetText)])
             let freshEdit: LSPJSON = .object(["text": .string("VERIFIED"), "range": try CopilotInline.rangeJSON(NSRange(location: 0, length: 5), in: targetText)])
-            for excluded in [projectRoot.appendingPathComponent("Sensitive.py"), projectRoot.appendingPathComponent("private/normal.py"), projectRoot.appendingPathComponent(" foo.py"), worktreeRoot.appendingPathComponent("outside-open-folder.py")] {
+            for excluded in [projectRoot.appendingPathComponent("Sensitive.py"), projectRoot.appendingPathComponent("private/normal.py"), projectRoot.appendingPathComponent(" foo.py"), projectRoot.appendingPathComponent("conditional-excluded.py"), worktreeRoot.appendingPathComponent("outside-open-folder.py")] {
                 try FileManager.default.createDirectory(at: excluded.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try "Hello excluded".write(to: excluded, atomically: true, encoding: .utf8)
                 let rejected: LSPJSON = .object(["source": .string(sourceText), "edit": badEdit,
@@ -1075,7 +1121,9 @@ import Testing
                 #expect((state["openedURIs"] as? [String])?.contains(excluded.absoluteString) == false)
                 #expect(try String(contentsOf: excluded, encoding: .utf8) == "Hello excluded")
             }
-            print("NES_GIT_EXCLUSION_PASS relativeExcludesFile=true ancestorRules=true outsideOpenedFolderRejected=true caseFile=true caseParent=true leadingSpace=true noNavigation=true noTargetSync=true")
+            print("NES_GIT_EXCLUSION_PASS relativeExcludesFile=true ancestorRules=true outsideOpenedFolderRejected=true caseFile=true caseParent=true leadingSpace=true conditionalTrailingSpace=true literalCR=true gitdirTrailingSpace=true noNavigation=true noTargetSync=true")
+            try #require(sourceDocument.isDocumentEdited && !sourceDocument.semanticIsClosed)
+            try #require(try String(contentsOf: sourceURI, encoding: .utf8) == diskSourceText)
             let payload: LSPJSON = .object(["cases": .array([
                 .object(["source": .string(sourceText), "edit": badEdit, "target": .object(["uri": .string(targetURI.absoluteString), "version": .number(999)])]),
                 .object(["source": .string(targetText), "edit": freshEdit])])])

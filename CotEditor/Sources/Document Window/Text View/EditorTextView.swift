@@ -103,7 +103,10 @@ final class EditorTextView: NSTextView, CurrentLineHighlighting, MultiCursorEdit
         let id = UUID()
         var revision = 0
     }
-    private static let semanticBuffers = NSMapTable<NSTextStorage, SemanticBufferState>.weakToStrongObjects()
+    // NSTextStorage has mutable attributed-string equality/hash. Buffer state
+    // belongs to object identity, never equal text or a content-dependent hash.
+    private static let semanticBuffers = NSMapTable<NSTextStorage, SemanticBufferState>(
+        keyOptions: [.weakMemory, .objectPointerPersonality], valueOptions: .strongMemory)
     private let detachedSemanticBuffer = SemanticBufferState()
     private var semanticBuffer: SemanticBufferState {
         guard let storage = self.textStorage else { return detachedSemanticBuffer }

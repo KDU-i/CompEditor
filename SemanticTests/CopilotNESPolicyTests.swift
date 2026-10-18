@@ -3,6 +3,13 @@ import Darwin
 @main struct CopilotNESPolicyTests {
  static func main() throws {
   setbuf(stdout, nil)
+  if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--probe" {
+   let root = URL(fileURLWithPath: CommandLine.arguments[2])
+   let name = CommandLine.arguments[3]
+   do { _ = try CopilotProjectTargetPolicy.snapshot(root.appendingPathComponent(name), root: root); print("ALLOW") }
+   catch { print("REFUSE") }
+   return
+  }
   func check(_ value: Bool, _ label: String) { precondition(value, label); print("PASS: " + label) }
   let both = CopilotAutomaticPolicy(inline: true, nextEdits: true)
   check(both.request(after: .typing) == .inline, "typing keeps one inline owner")

@@ -912,35 +912,62 @@ enum CopilotProjectTargetPolicy {
         private func quoted(_ value: String) -> String {
             "\"" + value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: "\\n").replacingOccurrences(of: "\t", with: "\\t") + "\""
         }
+        /// Use Git's config-condition wildmatch, not the gitignore file grammar.
+        /// The URL is synthetic local metadata: no real remote/config is used.
         private func matches(_ pattern: String, candidate: String, folded: Bool) throws -> Bool {
-            guard !pattern.contains("\n"), !pattern.contains("\0"), !pattern.hasSuffix("\\") else { throw LSPError.unsupportedEdit }
-            try configure(caseSensitive: !folded)
-            // An anchored ignore rule uses Git's native wildmatch. Explicitly
-            // unignore every proper parent so a parent match cannot stand in
-            // for an exact includeIf match; keep ** at its original boundary.
-            let pieces = candidate.split(separator: "/", omittingEmptySubsequences: false)
-            var rules = "/" + pattern + "\n"
-            for count in 1..<pieces.count {
-                var prefix = pieces.prefix(count).joined(separator: "/")
-                for character in ["\\", "*", "?", "[", "]"] { prefix = prefix.replacingOccurrences(of: character, with: "\\" + character) }
-                rules += "!/" + prefix + "/\n"
+            guard !pattern.contains("\n"), !pattern.contains("\0"), !candidate.contains("\0") else { throw LSPError.unsupportedEdit }
+            // WM_CASEFOLD uses ASCII byte folding. Bracket ranges/classes have
+            // additional case rules; do not approximate those with lowercasing.
+            guard !folded || !pattern.contains("[") else { throw LSPError.unsupportedEdit }
+            func fold(_ value: String) -> String {
+                String(decoding: value.utf8.map { (65...90).contains($0) ? $0 + 32 : $0 }, as: UTF8.self)
             }
-            try Data(rules.utf8).write(to: shadow.appendingPathComponent(".gitignore"))
-            let result = try git(["check-ignore", "--no-index", "--quiet", "--", candidate])
-            guard result.0 == 0 || result.0 == 1 else { throw LSPError.unsupportedEdit }
-            return result.0 == 0
+            let pattern = folded ? fold(pattern) : pattern
+            let candidate = folded ? fold(candidate) : candidate
+            let marker = shadow.appendingPathComponent("condition-match")
+            let query = shadow.appendingPathComponent("condition-query")
+            try Data("[compeditor]\nmatched = true\n".utf8).write(to: marker)
+            func evaluate(_ pattern: String, _ candidate: String) throws -> Bool {
+                // Subsection names escape only quotes/backslashes, unlike
+                // values: a literal tab stays a tab.
+                let condition = "hasconfig:remote.*.url:" + pattern
+                let subsection = "\"" + condition.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+                let config = "[remote \"policy\"]\nurl = \(quoted(candidate))\n[includeIf \(subsection)]\npath = \(quoted(marker.path))\n"
+                // Native hasconfig scans this generated file twice. stdin cannot
+                // be replayed. Never persist the original user's config here.
+                try Data(config.utf8).write(to: query)
+                let result = try git(["config", "--file", query.path, "--includes", "--get", "compeditor.matched"])
+                guard (result.0 == 0 && result.1 == Data("true\n".utf8)) || (result.0 == 1 && result.1.isEmpty) else { throw LSPError.unsupportedEdit }
+                return result.0 == 0
+            }
+            // Unknown hasconfig support must not silently mean false on older
+            // Git. Prove both truth values in the same isolated interpreter.
+            guard try evaluate("policy-probe", "policy-probe"), try !evaluate("policy-probe ", "policy-probe") else { throw LSPError.unsupportedEdit }
+            return try evaluate(pattern, candidate)
         }
         private func includeMatches(_ condition: String, source: URL) throws -> Bool {
             if condition.hasPrefix("gitdir:") || condition.hasPrefix("gitdir/i:") {
                 let folded = condition.hasPrefix("gitdir/i:")
                 var pattern = String(condition.dropFirst(folded ? 9 : 7))
+                guard !pattern.contains("%("), !pattern.hasPrefix("~") || pattern.hasPrefix("~/") else { throw LSPError.unsupportedEdit }
+                var literalPrefix: String?
                 if pattern.hasPrefix("~/") { pattern = home.path + "/" + pattern.dropFirst(2) }
-                else if pattern.hasPrefix("./") { pattern = try realPath(source.deletingLastPathComponent()) + "/" + pattern.dropFirst(2) }
+                else if pattern.hasPrefix("./") {
+                    // Git treats only the including directory prefix literally.
+                    literalPrefix = try realPath(source.deletingLastPathComponent()) + "/"
+                    pattern = String(pattern.dropFirst(2))
+                }
                 else if !pattern.hasPrefix("/") { pattern = "**/" + pattern }
                 if pattern.hasSuffix("/") { pattern += "**" }
-                if pattern.hasPrefix("/") { pattern.removeFirst() }
-                for candidate in aliases {
-                    if try matches(pattern, candidate: String(candidate.dropFirst()), folded: folded) { return true }
+                for original in aliases {
+                    var candidate = original
+                    if let prefix = literalPrefix {
+                        let lhs = Array(candidate.utf8.prefix(prefix.utf8.count)), rhs = Array(prefix.utf8)
+                        func fold(_ bytes: [UInt8]) -> [UInt8] { bytes.map { (65...90).contains($0) ? $0 + 32 : $0 } }
+                        guard folded ? fold(lhs) == fold(rhs) : lhs == rhs else { continue }
+                        candidate = String(decoding: candidate.utf8.dropFirst(prefix.utf8.count), as: UTF8.self)
+                    }
+                    if try matches(pattern, candidate: candidate, folded: folded) { return true }
                 }
                 return false
             }
