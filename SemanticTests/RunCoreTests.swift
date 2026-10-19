@@ -150,6 +150,7 @@ nonisolated final class PhaseRecorder: @unchecked Sendable {
             try fm.createDirectory(at: services, withIntermediateDirectories: true)
             try Data("Processor".utf8).write(to: services.appendingPathComponent("javax.annotation.processing.Processor"))
             let fixtures: [(String, String, Bool, String?)] = [
+                ("LocaleOutput", "", true, "ja-JP|10月"),
                 ("Plain", "", true, "input😀"), ("Packaged", "", true, "helper:日本語😀"),
                 ("Alternate", "Other", true, "other"), ("Mismatch", "", false, nil),
                 ("NoMain", "", false, nil), ("ExceptionMain", "", false, nil),
@@ -162,16 +163,16 @@ nonisolated final class PhaseRecorder: @unchecked Sendable {
                 let fixturePlan = try RunPlanner.plan(source: snapshot, python: nil, jdk: home, main: main, temporaryRoot: root,
                     inherited: ["JAVA_TOOL_OPTIONS": "invalid-injection", "JDK_JAVAC_OPTIONS": "\"" + root.appendingPathComponent("External.java").path + "\"", "CLASSPATH": root.path])
                 precondition(fixturePlan.compile!.arguments.contains("-J-Duser.language=en"))
-                precondition(fixturePlan.execute.arguments.contains("-Duser.language=en"))
+                precondition(!fixturePlan.execute.arguments.contains(where: { $0.hasPrefix("-Duser.language=") || $0.hasPrefix("-Duser.country=") }))
                 let japaneseCompile = RunCommand(executable: fixturePlan.compile!.executable,
                     arguments: ["-J-Duser.language=ja", "-J-Duser.country=JP"] + fixturePlan.compile!.arguments,
                     directory: fixturePlan.compile!.directory, environment: fixturePlan.compile!.environment)
                 let japaneseExecute = RunCommand(executable: fixturePlan.execute.executable,
                     arguments: ["-Duser.language=ja", "-Duser.country=JP"] + fixturePlan.execute.arguments,
                     directory: fixturePlan.execute.directory, environment: fixturePlan.execute.environment)
-                let opposingLocalePlan = RunPlan(compile: japaneseCompile, execute: japaneseExecute, ownedDirectory: fixturePlan.ownedDirectory)
+                let localizedRuntimePlan = RunPlan(compile: japaneseCompile, execute: japaneseExecute, ownedDirectory: fixturePlan.ownedDirectory)
                 let worker = RunWorker()!
-                let outcome = RunPipeline.perform(opposingLocalePlan, input: Data("input😀".utf8), interactive: false, launcher: worker, phase: { _ in })
+                let outcome = RunPipeline.perform(localizedRuntimePlan, input: Data("input😀".utf8), interactive: false, launcher: worker, phase: { _ in })
                 let out = worker.output(0, finished: true), err = worker.output(1, finished: true)
                 precondition(outcome.termination.succeeded == succeeded, "\(name): \(err.text)")
                 if let expected { precondition(out.text == expected, "\(name): \(out.text)") }
@@ -180,7 +181,31 @@ nonisolated final class PhaseRecorder: @unchecked Sendable {
                 fixtureResult.phase = outcome.termination.succeeded ? .finished : .failed
                 fixtureResult.termination = outcome.termination; fixtureResult.compilationFailed = outcome.compilationFailed; fixtureResult.stderr = err
                 if name == "Mismatch" { precondition(fixtureResult.failureKind == .javaFilename) }
-                if name == "NoMain" { precondition(fixtureResult.failureKind == .javaMain) }
+                if name == "NoMain" {
+                    precondition(err.text.contains("メイン・メソッド") && fixtureResult.failureKind == .javaMain)
+                    for (language, country) in [("en", "US"), ("ja", "JP"), ("de", "DE"), ("zh", "CN")] {
+                        let localized = RunCommand(executable: fixturePlan.execute.executable,
+                            arguments: ["-Duser.language=" + language, "-Duser.country=" + country] + fixturePlan.execute.arguments,
+                            directory: fixturePlan.execute.directory, environment: fixturePlan.execute.environment)
+                        let localizedWorker = RunWorker()!
+                        precondition(!localizedWorker.execute(localized, input: Data(), interactive: false).succeeded)
+                        let originalError = localizedWorker.output(1, finished: true)
+                        precondition(JavaLauncherDiagnostic.classify(originalError.text) == .javaMain, "\(language): \(originalError.text)")
+                        precondition(originalError.bytes == Data(originalError.text.utf8), "launcher diagnostics were rewritten")
+                        let missing = RunCommand(executable: localized.executable, arguments: Array(localized.arguments.dropLast()) + ["NoSuchFixtureClass"], directory: localized.directory, environment: localized.environment)
+                        let missingWorker = RunWorker()!
+                        precondition(!missingWorker.execute(missing, input: Data(), interactive: false).succeeded)
+                        precondition(JavaLauncherDiagnostic.classify(missingWorker.output(1, finished: true).text) == .launch)
+                    }
+                }
+                if name == "LocaleOutput" {
+                    let direct = RunCommand(executable: fixturePlan.execute.executable,
+                        arguments: ["-Duser.language=ja", "-Duser.country=JP", "-Dfile.encoding=UTF-8", "-cp", fixturePlan.ownedDirectory!.appendingPathComponent("classes").path, "LocaleOutput"],
+                        directory: fixturePlan.execute.directory, environment: fixturePlan.execute.environment)
+                    let directWorker = RunWorker()!
+                    precondition(directWorker.execute(direct, input: Data(), interactive: false).succeeded)
+                    precondition(out.bytes == directWorker.output(0, finished: true).bytes && out.text == "ja-JP|10月", "planned execution changed program locale/output")
+                }
                 if name == "ExternalDependency" { precondition(fixtureResult.failureKind == .javaDependency) }
                 if ["Mismatch", "CompileError", "ExternalDependency"].contains(name) { precondition(outcome.compilationFailed) }
                 if ["NoMain", "ExceptionMain"].contains(name) { precondition(!outcome.compilationFailed && !err.text.isEmpty) }

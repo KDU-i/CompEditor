@@ -46,8 +46,7 @@ struct RunResult: Sendable {
                 if error.contains("does not exist") || error.contains("cannot find symbol") { return .javaDependency }
                 return .javaCompile
             }
-            if error.contains("Main method not found") || error.contains("Main method is not static") || error.contains("Main method must return") { return .javaMain }
-            if error.contains("Could not find or load main class") || error.contains("Could not create the Java Virtual Machine") { return .launch }
+            if let launcherFailure = JavaLauncherDiagnostic.classify(error) { return launcherFailure }
             return .javaRuntime
         }
         return .program
@@ -107,7 +106,7 @@ nonisolated enum RunPlanner {
         try FileManager.default.createDirectory(at: classes, withIntermediateDirectories: true)
         do { try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true) }
         catch { try? FileManager.default.removeItem(at: owned); throw error }
-        return RunPlan(compile: RunCommand(executable: javac, arguments: ["-J-Duser.language=en", "-J-Duser.country=US", "-encoding", "UTF-8", "-proc:none", "-implicit:none", "-sourcepath", empty.path, "-classpath", classes.path, "-d", classes.path, source.url.path], directory: source.directory, environment: env), execute: RunCommand(executable: java, arguments: ["-Duser.language=en", "-Duser.country=US", "-Dfile.encoding=UTF-8", "-cp", classes.path, name], directory: source.directory, environment: env), ownedDirectory: owned)
+        return RunPlan(compile: RunCommand(executable: javac, arguments: ["-J-Duser.language=en", "-J-Duser.country=US", "-encoding", "UTF-8", "-proc:none", "-implicit:none", "-sourcepath", empty.path, "-classpath", classes.path, "-d", classes.path, source.url.path], directory: source.directory, environment: env), execute: RunCommand(executable: java, arguments: ["-Dfile.encoding=UTF-8", "-cp", classes.path, name], directory: source.directory, environment: env), ownedDirectory: owned)
     }
 }
 
@@ -242,5 +241,20 @@ nonisolated enum RunSourceLines {
             ranges.append(NSRange(location: text.length, length: 0))
         }
         return ranges
+    }
+}
+
+/// Launcher diagnostics keep the user's locale. Recognize OpenJDK's shipped
+/// English/Japanese/German/Simplified-Chinese messages without rewriting stderr
+/// or changing the user program's default Locale. Unknown messages stay generic.
+nonisolated enum JavaLauncherDiagnostic {
+    static func classify(_ stderr: String) -> RunFailureKind? {
+        let first = stderr.components(separatedBy: .newlines).first ?? ""
+        let methodMarkers = ["Error: Main method", "エラー: メイン・メソッド", "Fehler: Hauptmethode", "错误: main 方法", "错误: 在类 "]
+        if stderr.contains("public static void main(String[] args)"), methodMarkers.contains(where: first.hasPrefix) { return .javaMain }
+        let loadMarkers = ["Error: Could not find or load main class", "Error: Unable to initialize main class", "Error: LinkageError occurred while loading main class",
+                           "エラー: メイン・クラス", "Fehler: Hauptklasse", "Fehler: Beim Laden der Klasse", "错误: 找不到或无法加载主类", "错误: 无法初始化主类", "错误: 加载主类"]
+        if loadMarkers.contains(where: first.hasPrefix) || first.contains("Could not create the Java Virtual Machine") { return .launch }
+        return nil
     }
 }

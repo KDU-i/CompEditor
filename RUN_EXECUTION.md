@@ -55,10 +55,12 @@ directory with empty sourcepath and isolated classes, using `-encoding UTF-8`,
 compile exit 0, using `-Dfile.encoding=UTF-8 -cp <classes> <qualified-main>`. Java
 tool-injection variables (`JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, `JDK_JAVAC_OPTIONS`,
 `_JAVA_OPTIONS`) and `CLASSPATH` are removed. Missing locale gets a UTF-8 fallback.
-Java compiler and launcher use a controlled `en_US` default Locale so diagnostic
-classification does not depend on the host language. This also affects user code
-that calls `Locale.getDefault()`; localized pane help explicitly discloses it.
-Program output is never translated by the app. Java source must
+Only javac uses a controlled `en_US` diagnostic locale. The Java execution command
+sets no `user.language` or `user.country`, preserving the user program's default
+Locale and locale-dependent output. Launcher errors are classified separately
+using recognized OpenJDK English/Japanese/German/Simplified-Chinese messages;
+unrecognized diagnostics retain a generic explanation. Raw launcher stderr and
+program output are never translated or rewritten by the app. Java source must
 already be saved as UTF-8; the existing encoding UI performs any user-approved
 conversion. No user source, existing classes or existing directories are removed.
 
@@ -143,12 +145,15 @@ python3 Scripts/test-run-localization.py
   matching, fake-launcher compile/run/cancellation gating and result completeness. CR, CRLF
   and LF share exact navigation ranges. A closed-document owner is retained through
   Stop/KILL and background directory cleanup when shutdown runs immediately.
-  Four real Python fixtures and eight real Java fixtures pass. Java tests also
+  Four real Python fixtures and nine real Java fixtures pass. Java tests also
   place an annotation processor/service registration, another source and existing
   classes in cwd; these are not used or removed. A failed second compile cannot
   run a previous successful class. `JDK_JAVAC_OPTIONS` attempts to inject a real
-  sibling source are rejected. Java failure categories are exercised with an
-  opposing Japanese JVM locale preceding the configured diagnostic locale.
+  sibling source are rejected. Compiler failure categories are exercised with an opposing Japanese compiler
+  locale preceding the javac-only controlled locale. Missing-main and class-load
+  launcher errors run under English, Japanese, German and Simplified Chinese.
+  A real LocaleOutput fixture matches direct execution byte for byte as
+  `ja-JP|10月`, proving the execution plan preserves the program's locale.
 - Localization: two tests pass for complete English/Japanese resources, standard
   Japanese terminology and independence from semantic/telemetry controllers.
 - All modified Swift files parse with Swift 6.2.1; portable Swift/C type checking
