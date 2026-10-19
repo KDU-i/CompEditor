@@ -141,7 +141,11 @@ python3 Scripts/test-run-localization.py
   races, TERM ignoring, input backpressure, Unicode/space cwd and parent-first
   child/grandchild cleanup. A test-only injected monotonic clock verifies no KILL
   at 299 ms and escalation at 300 ms. Exited Linux zombies awaiting container init's reaper
-  are distinguished from live processes.
+  are distinguished from live processes. TERM-ignoring tests wait for a PID
+  acknowledgement emitted after the handler is installed, rather than sleeping
+  for presumed startup time. Descendants acknowledge readiness through a pipe
+  before their parent exits. Exact SIGKILL and bounded Stop assertions are kept. Twenty repetitions each
+  of the Stop/backpressure and parent-first descendant tests pass (40 checks).
 - Swift core: passes runtime priority/no-fallback, PATH independence, argv/cwd/env,
   lexical masking, source/stale identity, incremental decoding, source-only error
   matching, fake-launcher compile/run/cancellation gating and result completeness. CR, CRLF
@@ -179,7 +183,16 @@ warning under `-Werror`, a correct 2 MiB transfer taking 4.402 seconds (longer t
 its former four-second test budget), and Japanese diagnostic classification test
 failures. Those findings are addressed in this revision, but require a new-head
 Mac rerun. The prior Mac transport disconnected during Xcode dependency resolution;
-that full build's outcome is unknown and provides no AppKit/UI pass.
+that full build's outcome is unknown and provides no AppKit/UI pass. Later Mac
+Debug and Release-Sparkle builds on `4e621be` exited 65: Observation transformed
+an unignored lazy session property, RunSession lacked an explicit FileEncoding
+module import, and NSToolbar.Identifier is a String alias without rawValue. The
+current revision marks the stable lazy reference @ObservationIgnored, imports the
+defining module and uses the toolbar identifier directly. New-head Mac builds
+remain required; Cloud syntax/macro type checks are not an AppKit build pass. The temporary Linux
+Swift toolchain cannot link the standalone Observation runtime probe (undefined
+`swift::threading::fatal` in libswiftObservation); macro type checking succeeds,
+but this is not represented as a runtime or native-build pass.
 
 Before marking the draft ready:
 

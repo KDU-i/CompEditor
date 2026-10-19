@@ -30,14 +30,24 @@ elif mode == 'ignore-term':
     while True: time.sleep(.1)
 elif mode == 'descendants':
     # Parent exits first. Child and grandchild keep pipes open and ignore TERM.
+    ready_read, ready_write = os.pipe()
     child = os.fork()
     if child == 0:
+        os.close(ready_read)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         grandchild = os.fork()
         print(os.getpid(), flush=True)
+        os.write(ready_write, b'1')
+        os.close(ready_write)
         while True: time.sleep(.1)
+    os.close(ready_write)
     print(os.getpid(), flush=True)
-    time.sleep(.1)
+    ready = b''
+    while len(ready) < 2:
+        part = os.read(ready_read, 2 - len(ready))
+        if not part: raise RuntimeError('descendant readiness pipe closed early')
+        ready += part
+    os.close(ready_read)
 elif mode == 'backpressure':
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     print(os.getpid(), flush=True)

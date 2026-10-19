@@ -145,7 +145,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         window.toolbar = toolbar
         // Add the new standard controls once to pre-existing saved layouts,
         // preserving their other items and subsequent user customization.
-        let runToolbarKey = "RunToolbarAdded." + toolbar.identifier.rawValue
+        let runToolbarKey = "RunToolbarAdded." + toolbar.identifier
         if !UserDefaults.standard.bool(forKey: runToolbarKey) {
             var insertionIndex = toolbar.items.firstIndex(where: { $0.itemIdentifier == .syntax }).map { $0 + 1 } ?? toolbar.items.count
             for identifier in [NSToolbarItem.Identifier.runSource, .stopSource] where !toolbar.items.contains(where: { $0.itemIdentifier == identifier }) {

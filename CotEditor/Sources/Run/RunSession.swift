@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import AppKit
 import Observation
+import FileEncoding
 
 func runText(_ key: String.LocalizationValue) -> String { String(localized: key, table: "Run") }
 

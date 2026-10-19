@@ -679,7 +679,7 @@ extension NSTextView: EditorCounter.Source { }
     }
     
     
-    lazy var runSession = RunSession(document: self)
+    @ObservationIgnored lazy var runSession = RunSession(document: self)
 
     /// Compare the last successfully read/saved bytes without invoking the save
     /// serializer (which also changes pending-save state).
