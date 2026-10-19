@@ -5,6 +5,7 @@ import errno
 import os
 from pathlib import Path
 import signal
+import select
 import subprocess
 import sys
 import tempfile
@@ -74,14 +75,105 @@ class Run:
     def __enter__(self): return self
     def __exit__(self, *args): self.close()
 
-def alive(pid):
-    # Linux zombies are exited processes awaiting the container init's reaper.
-    stat = Path(f'/proc/{pid}/stat')
-    if stat.exists() and stat.read_text().split()[2] == 'Z': return False
-    try: os.kill(pid, 0); return True
-    except ProcessLookupError: return False
+def classify_process_status(status):
+    status = status.strip()
+    if not status: return 'unknown'
+    if status[0] == 'Z': return 'zombie'
+    if status[0] == 'X': return 'exited'
+    return 'live'
+
+def fixture_process_states(pids, probe_timeout):
+    if sys.platform.startswith('linux'):
+        states = {}
+        for pid in pids:
+            try:
+                # comm can contain spaces; the state follows its final ')'.
+                status = Path(f'/proc/{pid}/stat').read_text().rpartition(')')[2].split()[0]
+                states[pid] = classify_process_status(status)
+            except FileNotFoundError: states[pid] = 'gone'
+            except (OSError, IndexError): states[pid] = 'unknown'
+        return states
+    return ps_process_states(pids, probe_timeout)
+
+def ps_process_states(pids, probe_timeout):
+    # Darwin has no /proc. Batch-query only repository fixture PIDs, recording
+    # zombies separately from live processes; kill(pid, 0) cannot distinguish them.
+    try:
+        result = subprocess.run(['/bin/ps', '-o', 'pid=,stat=', '-p', ','.join(map(str, pids))],
+            capture_output=True, text=True, timeout=probe_timeout, check=False)
+        if result.returncode not in (0, 1) or result.stderr.strip(): return dict.fromkeys(pids, 'unknown')
+        states = dict.fromkeys(pids, 'gone')
+        for row in result.stdout.splitlines():
+            fields = row.split()
+            if len(fields) != 2: return dict.fromkeys(pids, 'unknown')
+            pid = int(fields[0])
+            if pid in states: states[pid] = classify_process_status(fields[1])
+        return states
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return dict.fromkeys(pids, 'unknown')
+
+def wait_for_fixture_exit(pids, timeout=1.0, probe=fixture_process_states,
+                          clock=time.monotonic, pause=time.sleep):
+    # SIGKILL delivery and orphan reaping are asynchronous. Allow a bounded OS
+    # settling interval, but fail closed if any fixture remains live/unknown.
+    started = clock(); deadline = started + timeout; initial = None; states = {}
+    while True:
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise AssertionError(f'fixture live/unknown after {timeout}s settling: initial={initial}, final={states}')
+        states = probe(pids, min(.1, remaining))
+        if initial is None: initial = dict(states)
+        if all(states.get(pid, 'unknown') in ('gone', 'zombie', 'exited') for pid in pids):
+            observation = {'initial': initial, 'final': states, 'elapsed': clock() - started}
+            if any(status != 'gone' for status in initial.values()): print('fixture cleanup:', observation)
+            return observation
+        pause(min(.01, max(0, deadline - clock())))
 
 class ProcessTests(unittest.TestCase):
+    def test_exit_observer_rejects_actual_live_fixture_within_budget(self):
+        process = subprocess.Popen([sys.executable, str(FIXTURE), 'ignore-term'], stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            self.assertTrue(select.select([process.stdout], [], [], 4)[0], 'fixture never became ready')
+            self.assertEqual(int(process.stdout.readline()), process.pid)
+            self.assertEqual(ps_process_states([process.pid], .5)[process.pid], 'live')
+            started = time.monotonic()
+            with self.assertRaisesRegex(AssertionError, 'live/unknown'):
+                wait_for_fixture_exit([process.pid], timeout=.15)
+            self.assertLess(time.monotonic() - started, .75)
+            self.assertIsNone(process.poll(), 'negative regression fixture exited unexpectedly')
+        finally:
+            process.kill(); process.wait(timeout=2)
+            process.stdout.close(); process.stderr.close()
+
+    def test_exit_observer_distinguishes_unreaped_zombie(self):
+        pid = os.fork()
+        if pid == 0: os._exit(0)
+        try:
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                if fixture_process_states([pid], .1)[pid] == 'zombie': break
+                time.sleep(.005)
+            else: self.fail('owned child did not enter observable zombie state')
+            self.assertEqual(ps_process_states([pid], .5)[pid], 'zombie')
+            os.kill(pid, 0)  # PID existence alone would incorrectly call it live.
+            observation = wait_for_fixture_exit([pid])
+            self.assertEqual(observation['final'][pid], 'zombie')
+        finally: os.waitpid(pid, 0)
+
+    def test_exit_observer_bounded_settling_and_unknown_failure(self):
+        ticks = [0.0]
+        def clock(): return ticks[0]
+        def pause(delay): ticks[0] += delay
+        def settling(pids, budget): return {pid: ('live' if clock() < .02 else 'zombie') for pid in pids}
+        observation = wait_for_fixture_exit([123], timeout=.05, probe=settling, clock=clock, pause=pause)
+        self.assertEqual(observation['initial'][123], 'live')
+        self.assertEqual(observation['final'][123], 'zombie')
+        ticks[0] = 0
+        with self.assertRaisesRegex(AssertionError, 'live/unknown'):
+            wait_for_fixture_exit([123], timeout=.05, probe=lambda pids, budget: {123:'unknown'}, clock=clock, pause=pause)
+        self.assertLessEqual(clock(), .050001)
+
     def test_exact_stdin_and_eof(self):
         for data in (b'', '日本語😀 without newline'.encode(), b'x' * (2 * 1024 * 1024)):
             with Run('echo', data).start() as run:
@@ -130,11 +222,11 @@ class ProcessTests(unittest.TestCase):
             started = time.monotonic(); lib.ce_run_stop(run.owner); run.wait(2)
             self.assertLess(time.monotonic() - started, 1.5)
             self.assertEqual(os.waitstatus_to_exitcode(run.status), -signal.SIGKILL)
-            self.assertFalse(any(alive(int(pid)) for pid in run.output()[0].split()))
+            wait_for_fixture_exit(list(map(int, run.output()[0].split())))
     def test_parent_exits_first_descendants_are_cleaned(self):
         with Run('descendants').start() as run:
             run.wait(2); pids = list(map(int, run.output()[0].split())); self.assertGreaterEqual(len(pids), 3)
-            self.assertFalse(any(alive(pid) for pid in pids), pids)
+            wait_for_fixture_exit(pids)
     def test_interactive_and_eof(self):
         with Run('echo', b'initial', True).start() as run:
             time.sleep(.1); self.assertEqual(lib.ce_run_send(run.owner, b' next\n', 6), 6)
