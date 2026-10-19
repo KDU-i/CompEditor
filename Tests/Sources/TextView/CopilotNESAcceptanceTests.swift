@@ -364,8 +364,10 @@ import Testing
                     let editRange = NSRange(location: visualRange.location, length: insertion ? 0 : visualRange.length)
                     let item: LSPJSON = .object(["text": .string(replacement), "range": try CopilotInline.rangeJSON(editRange, in: visualSource)])
                     try JSONEncoder().encode(LSPJSON.object(["source": .string(visualSource), "edit": item])).write(to: fixture)
+                    let previousDisplayDiff = view.semanticGhost?.displayDiff
                     _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
                     try await waitFor("visual " + label) { copilot.hasVisibleSuggestion(in: view) }
+                    #expect(view.semanticGhost?.displayDiff !== previousDisplayDiff)
                     view.scrollRangeToVisible(editRange)
                     view.updateSemanticGhostPresentation()
                     #expect(view.string == visualSource)
@@ -375,6 +377,30 @@ import Testing
                         #expect(view.semanticGhostPanel === panel && panel.windowNumber == number)
                         #expect(panel.parent === window && NSApp.keyWindow === window)
                     }
+                    #if DEBUG
+                    if label == "multiline", dark, width == 800 {
+                        let displayDiff = try #require(view.semanticGhost?.displayDiff)
+                        #expect(displayDiff.preparationCount == 1)
+                        let candidateRPCs = rpcCount()
+                        for index in 0..<100 {
+                            window.setContentSize(NSSize(width: index.isMultiple(of: 2) ? 360 : 1000, height: 300))
+                            NotificationCenter.default.post(name: NSWindow.didResizeNotification, object: window)
+                            let clip = try #require(view.enclosingScrollView?.contentView)
+                            clip.scroll(to: NSPoint(x: 0, y: index.isMultiple(of: 2) ? 1 : 0))
+                            NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: clip)
+                            NotificationCenter.default.post(name: NSWindow.didMoveNotification, object: window)
+                            view.updateSemanticGhostPresentation()
+                            #expect(view.semanticGhost?.displayDiff === displayDiff)
+                            #expect(displayDiff.preparationCount == 1)
+                            #expect(view.semanticGhostPanel != nil)
+                        }
+                        #expect(rpcCount() == candidateRPCs)
+                        window.setContentSize(NSSize(width: width, height: 300))
+                        view.scrollRangeToVisible(editRange)
+                        view.updateSemanticGhostPresentation()
+                        print("NES_DISPLAY_CACHE_PASS presentationUpdates=100 displayPreparations=1 additionalCandidateRPCs=0")
+                    }
+                    #endif
                     if label == "overflow" {
                         let panel = try #require(view.semanticGhostPanel)
                         #expect(panel.frame.width <= view.visibleRect.width)
@@ -729,7 +755,14 @@ import Testing
         try setFixture(source: source, text: "Goodbye")
         _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
         try await waitFor("rebase original") { view.semanticGhost?.text == "Goodbye" }
+        let originalDisplayDiff = try #require(view.semanticGhost?.displayDiff)
         view.insertText("# 😀\n", replacementRange: NSRange(location: 0, length: 0))
+        let rebasedDisplayDiff = try #require(view.semanticGhost?.displayDiff)
+        #expect(rebasedDisplayDiff !== originalDisplayDiff)
+        _ = rebasedDisplayDiff.prepare(before: view.semanticGhost?.replacedText ?? "", after: view.semanticGhost?.text ?? "")
+        #if DEBUG
+        #expect(rebasedDisplayDiff.preparationCount == 1)
+        #endif
         // Non-key input posts AppKit notifications without a keyDown/typed repair.
         #expect(view.semanticGhost?.revision == view.semanticRevision)
         #expect(copilot.hasVisibleSuggestion(in: view))
@@ -738,6 +771,7 @@ import Testing
         view.selectedRange = NSRange(location: view.string.utf16.count, length: 0)
         NotificationCenter.default.post(name: NSTextView.didChangeSelectionNotification, object: view)
         #expect(copilot.hasSuggestions(in: view))
+        #expect(view.semanticGhost?.displayDiff === rebasedDisplayDiff)
         #expect(copilot.handleKey(try key(53), in: view))
         #expect(view.semanticGhost == nil)
         view.string = source; view.selectedRange = NSRange(location: 1, length: 0)
