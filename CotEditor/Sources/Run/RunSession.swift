@@ -6,7 +6,8 @@ func runText(_ key: String.LocalizationValue) -> String { String(localized: key,
 
 @MainActor @Observable final class RunSession: NSObject {
     weak var document: Document?
-    var result: RunResult?
+    let expectedOutput = ExpectedOutputSession()
+    var result: RunResult? { didSet { expectedOutput.update(result: result, active: active) } }
     var diagnostics: [RunDiagnostic] = []
     var input = ""
     var interactive = false
@@ -14,7 +15,7 @@ func runText(_ key: String.LocalizationValue) -> String { String(localized: key,
     var message = ""
     var inputOpen = false
     var revision: UInt64 = 0
-    var active = false
+    var active = false { didSet { expectedOutput.update(result: result, active: active) } }
     private var worker: RunWorker?
     private var ownedDirectory: URL?
     private var inspectingRuntime = false
