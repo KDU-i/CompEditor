@@ -134,8 +134,23 @@ struct RunOutputText: NSViewRepresentable {
 
 @MainActor final class RunActions: NSObject, NSMenuItemValidation, NSToolbarItemValidation {
     static let shared = RunActions()
-    private var controller: DocumentWindowController? { NSApp.mainWindow?.windowController as? DocumentWindowController }
-    private var session: RunSession? { (controller?.fileDocument as? Document)?.runSession }
+    private func controller(for sender: Any?) -> DocumentWindowController? {
+        if let item = sender as? NSToolbarItem {
+            // A toolbar belongs to its own document even before that window is
+            // main (and while another document's window is main).
+            return NSApp.windows.first(where: { window in
+                window.toolbar?.items.contains(where: { $0 === item }) == true
+            })?.windowController as? DocumentWindowController
+        }
+        return NSApp.mainWindow?.windowController as? DocumentWindowController
+    }
+    private func session(for sender: Any?) -> RunSession? { (controller(for: sender)?.fileDocument as? Document)?.runSession }
+    func revalidateToolbars(for document: Document?) {
+        guard let document else { return }
+        for window in NSApp.windows where (window.windowController as? DocumentWindowController)?.fileDocument === document {
+            window.toolbar?.validateVisibleItems()
+        }
+    }
     func installMenu() {
         let menu = NSMenu(title: runText("Run"))
         for (key, selector, shortcut) in [("Run", #selector(runSource(_:)), "r"), ("Stop", #selector(stopSource(_:)), "."), ("ShowResults", #selector(showResults(_:)), "")] {
@@ -145,18 +160,20 @@ struct RunOutputText: NSViewRepresentable {
         let root = NSMenuItem(title: runText("Run"), action: nil, keyEquivalent: ""); root.submenu = menu
         NSApp.mainMenu?.addItem(root)
     }
-    @objc func runSource(_ sender: Any?) { showResults(sender); session?.run() }
-    @objc func stopSource(_ sender: Any?) { session?.stop() }
+    @objc func runSource(_ sender: Any?) { showResults(sender); session(for: sender)?.run() }
+    @objc func stopSource(_ sender: Any?) { session(for: sender)?.stop() }
     @objc func showResults(_ sender: Any?) {
-        let content = (controller?.window?.contentViewController as? WindowContentViewController)?.documentViewController?.parent as? ContentViewController
+        let content = (controller(for: sender)?.window?.contentViewController as? WindowContentViewController)?.documentViewController?.parent as? ContentViewController
         content?.showRunPane()
     }
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        let session = session(for: item)
         if item.action == #selector(stopSource(_:)) { return session?.active == true }
         if item.action == #selector(runSource(_:)) { return session != nil && session?.active == false }
         return session != nil
     }
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+        let session = session(for: item)
         if item.action == #selector(stopSource(_:)) { return session?.active == true }
         return session != nil && session?.active == false
     }

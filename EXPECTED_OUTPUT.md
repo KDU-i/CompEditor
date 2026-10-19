@@ -2,7 +2,7 @@
 
 This change stacks on #11 / `feature/8-single-file-run`, initially exactly
 `2a63e87ac6c159533076c6425cd412aad5df3ef7`. Incorporates reviewed #8 update
-`99e7934de10bc2aeccbcfe62b68e0ed900dd4a99` without duplicating its fixes.
+`ad340bac0df8d226b9a560bd84dfa9e49bfb4662` without duplicating its fixes.
 Java execution keeps the program locale; javac diagnostic localization and
 localized launcher classification (including warnings before launcher errors)
 remain upstream responsibilities. Run's process ownership, save/runtime
@@ -88,6 +88,11 @@ comparison fixtures (Python/Java match and mismatch), the inherited RunCore suit
 with four Python/ten Java fixtures, 17 process tests and two localization tests
 passed. New UI Swift syntax parsing and `git diff --check` passed. No Xcode build
 or native UI/device pass is claimed.
+
+The toolbar-update merge combines both `active.didSet` hooks: comparison state
+updates keep their previous behavior, followed by upstream toolbar revalidation
+only when `active` changes. Upstream toolbar/window ownership behavior and its
+native `RunToolbarValidationTests` are preserved; those AppKit tests require Mac QA.
 
 ## Required macOS gates (parent-owned)
 

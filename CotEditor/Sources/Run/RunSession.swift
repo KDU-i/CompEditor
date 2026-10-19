@@ -16,7 +16,13 @@ func runText(_ key: String.LocalizationValue) -> String { String(localized: key,
     var message = ""
     var inputOpen = false
     var revision: UInt64 = 0
-    var active = false { didSet { expectedOutput.update(result: result, active: active) } }
+    var active = false {
+        didSet {
+            expectedOutput.update(result: result, active: active)
+            guard active != oldValue else { return }
+            RunActions.shared.revalidateToolbars(for: document)
+        }
+    }
     private var worker: RunWorker?
     private var activity: RunActivity?
     private var ownedDirectory: URL?
