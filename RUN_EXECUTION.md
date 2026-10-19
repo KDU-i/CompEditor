@@ -261,3 +261,29 @@ on Linux, without claiming a macOS run. Production process termination is unchan
 Parent's Mac transport disconnected
 mid Release build; its outcome and process state remain unknown. Re-run the new
 head on Mac with isolated identity/preferences and retain its state observations.
+
+### Toolbar invalidation correction
+
+Mac QA on `99e7934` confirms Debug/Release-Sparkle builds, all 17 process tests,
+packaged Java and native Run/stdin/EOF/keyboard Stop/navigation pass, while toolbar
+Run can initially be disabled and completed runs can leave Stop enabled until a
+pane interaction. The code had no bridge from observable `RunSession.active`
+changes to AppKit toolbar validation, and the shared target validated toolbar
+items against `NSApp.mainWindow` rather than their owning document window.
+
+`active` transitions now synchronously call `validateVisibleItems()` for the
+corresponding document's toolbars, following the existing native Touch Bar refresh
+pattern. Toolbar creation and displayed-document changes also validate explicitly.
+Toolbar actions/validation resolve their own window; menus retain main-window
+routing. This covers initialization before a main window, asynchronous completion,
+and independent document windows without polling, forced focus or extra UI input.
+
+Two native `RunToolbarValidationTests` regressions check real NSToolbar item enabled
+states immediately after asynchronous active/inactive changes without another UI
+event, and ensure separate documents' toolbar states remain independent. They
+require Mac execution; Cloud syntax/macro checks do not claim AppKit test passes.
+Run these with an isolated QA identity/preferences domain, for example the same
+parent-approved build overrides plus `-parallel-testing-enabled NO` and
+`-only-testing:Tests/RunToolbarValidationTests` on the CotEditor scheme. Recheck the
+initial saved-file toolbar and short-run completion without switching pane tabs.
+The separately reported NES hosted-test issues are outside this change.

@@ -154,6 +154,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
             }
             UserDefaults.standard.set(true, forKey: runToolbarKey)
         }
+        toolbar.validateVisibleItems()
         
         // observe opacity setting change
         // -> Keep opaque when the window was created as a browsing window (the right side ones in the browsing mode).
@@ -380,6 +381,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         } else {
             self.syntaxPopUpButton?.isEnabled = false
         }
+        self.window?.toolbar?.validateVisibleItems()
     }
     
     
