@@ -1091,6 +1091,9 @@ enum CopilotBundledServer {
             editor.scrollRangeToVisible(editor.selectedRange()); applying = false
             guard eligible(editor) == target.languageId else { return true }
             var transplanted = candidate; transplanted.target = nil
+            // Navigation text and the destination edit have different preview
+            // inputs even though the underlying edit itself has not changed.
+            transplanted.displayDiff = SemanticNextEditDisplayCache()
             self.view = editor
             self.suggestions = Suggestions(candidates: [transplanted], snapshot: target.snapshot, caret: editor.selectedRange().location,
                                            revision: target.revision, file: target.uri, uri: target.uri, languageId: target.languageId,

@@ -1038,10 +1038,31 @@ import Testing
             try JSONEncoder().encode(payload).write(to: fixture)
             _ = copilot.perform(NSSelectorFromString("triggerNextEdit"))
             try await waitFor("cross-file navigation hint") { view.semanticGhost?.text.contains("target.py") == true && copilot.hasVisibleSuggestion(in: view) }
+            func crossFilePreviewTexts(_ surface: NSView) -> [String] {
+                (surface as? NSTextView).map { [$0.string] } ?? surface.subviews.flatMap(crossFilePreviewTexts)
+            }
+            let navigationGhost = try #require(view.semanticGhost)
+            let navigationContent = try #require(view.semanticGhostPanel?.contentView)
+            #expect(crossFilePreviewTexts(navigationContent).contains { $0.contains("target.py") })
+            let navigationData = navigationGhost.displayDiff.prepare(before: navigationGhost.replacedText ?? "", after: navigationGhost.text)
+            #expect(navigationData.before.isEmpty && navigationData.after.contains("target.py"))
             window.sendEvent(try key(48))
             #expect(NSApp.keyWindow === targetWindow && targetWindow.firstResponder === targetView)
             #expect(view.string == source && targetView.string == targetSource)
             try #require(copilot.hasVisibleSuggestion(in: targetView))
+            let destinationGhost = try #require(targetView.semanticGhost)
+            #expect(destinationGhost.displayDiff !== navigationGhost.displayDiff)
+            let destinationData = destinationGhost.displayDiff.prepare(before: destinationGhost.replacedText ?? "", after: destinationGhost.text)
+            #expect(destinationData.before == "Hello" && destinationData.after == "Bye")
+            for _ in 0..<3 {
+                targetView.updateSemanticGhostPresentation()
+                let destinationContent = try #require(targetView.semanticGhostPanel?.contentView)
+                #expect(crossFilePreviewTexts(destinationContent) == ["Bye"])
+            }
+            #if DEBUG
+            #expect(navigationGhost.displayDiff.preparationCount == 1)
+            #expect(destinationGhost.displayDiff.preparationCount == 1)
+            #endif
             let acceptKey = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: targetWindow.windowNumber, context: nil, characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48))
             targetWindow.sendEvent(acceptKey)
@@ -1064,7 +1085,7 @@ import Testing
             try await waitFor("unknown cross-file target rejected") { copilot.connectionPresentation.detail.contains("表示できるAI候補") }
             #expect(view.semanticGhost == nil && view.string == source)
             #expect(try String(contentsOf: unknown, encoding: .utf8) == targetSource)
-            print("NES_CROSS_FILE_PASS knownOpenTarget=true firstTabNavigationOnly=true secondTabAccept=true sourceUnchanged=true targetUndo=true staleTargetRejected=true existingUnknownTargetRejected=true siblingClosePreservesBaseline=true")
+            print("NES_CROSS_FILE_PASS knownOpenTarget=true firstTabNavigationOnly=true destinationPreviewText=true destinationPreviewData=true destinationPreparations=1 secondTabAccept=true sourceUnchanged=true targetUndo=true staleTargetRejected=true existingUnknownTargetRejected=true siblingClosePreservesBaseline=true")
         }
         focus()
         do {
