@@ -6,6 +6,8 @@ The standalone release is for Apple Silicon (arm64), macOS26 or later; build/run
 
 CompEditor is the standard app/Finder/Dock name. Settings → General → Use CotEditor for in-app labels changes About/application-menu labels; the unofficial notice remains visible in both modes. Install in a separate folder without replacing the official CotEditor.
 
+Single-file Python/Java Run, Stop, standard input and document-owned results are described in [RUN_EXECUTION.md](RUN_EXECUTION.md), including runtime selection and validation limits.
+
 For build/configuration instructions and known limits see [SEMANTIC_COMPLETION.md](SEMANTIC_COMPLETION.md) and [Release/README.md](Release/README.md). For fork support use [KDU-i/CompEditor](https://github.com/KDU-i/CompEditor). Links below describe the upstream application.
 
 Version 0.2.3 adds a background stable-update notice and a bounded usage-statistics client. Installation still requires the existing signed Sparkle update flow. Launching this version creates a local random installation identity and bounded queue and attempts background delivery to the public receiver. The isolated native QA round trip and owner dashboard were verified before release. See the [usage disclosure](Release/USAGE_STATISTICS.md) and [receiver contract and release operations](Release/TELEMETRY_API.md) for collected fields, storage and retention. Active installation counts are estimates, not counts of individual people.

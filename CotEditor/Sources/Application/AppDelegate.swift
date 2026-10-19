@@ -172,6 +172,7 @@ extension Logger {
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         
+        RunActions.shared.installMenu()
         SemanticCompletionController.shared.installMenu()
         RemoteEditingController.shared.start()
         KeyBindingManager.shared.applyShortcutsToMainMenu()
@@ -211,6 +212,7 @@ extension Logger {
     
     
     func applicationWillTerminate(_ notification: Notification) {
+        RunActions.shared.shutdown()
         SemanticCompletionController.shared.shutdown()
         
         if self.needsRelaunch {
