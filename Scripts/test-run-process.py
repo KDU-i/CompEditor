@@ -18,13 +18,16 @@ BUILD = tempfile.TemporaryDirectory(prefix='compeditor-run-tests-')
 LIB = Path(BUILD.name) / ('runner.dylib' if sys.platform == 'darwin' else 'runner.so')
 subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pthread', '-shared', '-fPIC', str(ROOT / 'CotEditor/Sources/Run/RunProcess.c'), '-o', str(LIB)], check=True)
 lib = C.CDLL(str(LIB))
-lib.ce_run_create.restype = C.c_void_p
-lib.ce_run_execute.argtypes = [C.c_void_p, C.c_char_p, C.POINTER(C.c_char_p), C.POINTER(C.c_char_p), C.c_char_p, C.c_void_p, C.c_size_t, C.c_int, C.POINTER(C.c_int)]
-lib.ce_run_stop.argtypes = lib.ce_run_destroy.argtypes = lib.ce_run_eof.argtypes = [C.c_void_p]
-lib.ce_run_send.argtypes = [C.c_void_p, C.c_void_p, C.c_size_t]
-lib.ce_run_send.restype = C.c_long
-lib.ce_run_copy.argtypes = [C.c_void_p, C.c_int, C.c_void_p, C.c_size_t, C.POINTER(C.c_size_t)]
-lib.ce_run_copy.restype = C.c_size_t
+def configure(lib):
+    lib.ce_run_create.restype = C.c_void_p
+    lib.ce_run_execute.argtypes = [C.c_void_p, C.c_char_p, C.POINTER(C.c_char_p), C.POINTER(C.c_char_p), C.c_char_p, C.c_void_p, C.c_size_t, C.c_int, C.POINTER(C.c_int)]
+    lib.ce_run_stop.argtypes = lib.ce_run_destroy.argtypes = lib.ce_run_eof.argtypes = [C.c_void_p]
+    lib.ce_run_send.argtypes = [C.c_void_p, C.c_void_p, C.c_size_t]
+    lib.ce_run_send.restype = C.c_long
+    lib.ce_run_copy.argtypes = [C.c_void_p, C.c_int, C.c_void_p, C.c_size_t, C.POINTER(C.c_size_t)]
+    lib.ce_run_copy.restype = C.c_size_t
+
+configure(lib)
 
 class Run:
     def __init__(self, mode, data=b'', interactive=False, executable=None, cwd=None):
@@ -120,6 +123,29 @@ class ProcessTests(unittest.TestCase):
             time.sleep(.1); self.assertEqual(lib.ce_run_send(run.owner, b' next\n', 6), 6)
             lib.ce_run_eof(run.owner); lib.ce_run_eof(run.owner); run.wait()
             self.assertEqual(run.output()[0], b'initial next\n')
+    def test_escalation_uses_injected_monotonic_clock(self):
+        global lib
+        original = lib
+        clock_lib = Path(BUILD.name) / ('clock.dylib' if sys.platform == 'darwin' else 'clock.so')
+        subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pthread', '-shared', '-fPIC', '-DCE_RUN_TEST_CLOCK',
+            str(ROOT / 'CotEditor/Sources/Run/RunProcess.c'), str(ROOT / 'Scripts/Fixtures/Run/clock.c'), '-o', str(clock_lib)], check=True)
+        lib = C.CDLL(str(clock_lib)); configure(lib)
+        lib.ce_run_test_advance.argtypes = [C.c_long]
+        lib.ce_run_test_reads.restype = C.c_long
+        try:
+            with Run('ignore-term').start() as run:
+                deadline = time.monotonic() + 2
+                while not run.output()[0] and time.monotonic() < deadline: time.sleep(.01)
+                self.assertTrue(run.output()[0], 'fixture did not become ready')
+                lib.ce_run_stop(run.owner)
+                while not lib.ce_run_test_reads() and time.monotonic() < deadline: time.sleep(.01)
+                self.assertGreater(lib.ce_run_test_reads(), 0)
+                lib.ce_run_test_advance(299)
+                run.thread.join(.05); self.assertTrue(run.thread.is_alive(), 'escalated before grace period')
+                lib.ce_run_test_advance(1)
+                run.wait(2)
+                self.assertEqual(os.waitstatus_to_exitcode(run.status), -signal.SIGKILL)
+        finally: lib = original
     def test_unicode_space_cwd(self):
         with tempfile.TemporaryDirectory(prefix='実行 space ') as directory:
             with Run('echo', b'ok', cwd=directory).start() as run:

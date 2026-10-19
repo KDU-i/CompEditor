@@ -10,6 +10,11 @@ nonisolated final class FakeLauncher: RunLaunching, @unchecked Sendable {
         commands.append(command); inputs.append(input); return responses.removeFirst()
     }
 }
+nonisolated final class PhaseRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var phases: [RunPhase] = []
+    func append(_ phase: RunPhase) { lock.lock(); phases.append(phase); lock.unlock() }
+}
 @main struct RunCoreTests {
     static func main() throws {
         let fm = FileManager.default
@@ -67,14 +72,18 @@ nonisolated final class FakeLauncher: RunLaunching, @unchecked Sendable {
         let command = plan.execute
         let javaPlan = RunPlan(compile: command, execute: command, ownedDirectory: nil)
         let failed = FakeLauncher([.exit(1)])
-        let failResult = RunPipeline.perform(javaPlan, input: Data("hello".utf8), interactive: false, launcher: failed, phase: { _ in })
+        let failPhases = PhaseRecorder()
+        let failResult = RunPipeline.perform(javaPlan, input: Data("hello".utf8), interactive: false, launcher: failed, phase: { failPhases.append($0) })
+        precondition(failPhases.phases == [.compiling])
         precondition(failResult.compilationFailed && failed.commands.count == 1 && failed.inputs == [Data()])
         let cancelled = FakeLauncher([.cancelled])
         precondition(RunPipeline.perform(javaPlan, input: Data(), interactive: false, launcher: cancelled, phase: { _ in }).termination == .cancelled)
         precondition(cancelled.commands.count == 1)
         let success = FakeLauncher([.exit(0), .exit(0)])
         let input = Data("日本語😀".utf8)
-        precondition(RunPipeline.perform(javaPlan, input: input, interactive: false, launcher: success, phase: { _ in }).termination.succeeded)
+        let successPhases = PhaseRecorder()
+        precondition(RunPipeline.perform(javaPlan, input: input, interactive: false, launcher: success, phase: { successPhases.append($0) }).termination.succeeded)
+        precondition(successPhases.phases == [.compiling, .running])
         precondition(success.inputs == [Data(), input])
         var result = RunResult(id: UUID(), source: source)
         result.phase = .finished; result.termination = .exit(0)

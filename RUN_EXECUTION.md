@@ -118,11 +118,12 @@ SWIFTC=/tmp/ce-swift/usr/bin/swiftc RUN_TEST_JDK=/tmp/ce-jdk bash Scripts/test-r
 python3 Scripts/test-run-localization.py
 ```
 
-- Process suite: 12 tests pass, including exact/empty/large stdin and EOF, interactive
+- Process suite: 13 tests pass, including exact/empty/large stdin and EOF, interactive
   sends, repeated EOF, EPIPE, split UTF-8, invalid bytes, simultaneous stream floods
   with exact cap/omission counts, exit/nonzero/signal/launch failure, spawn/Stop
   races, TERM ignoring, input backpressure, Unicode/space cwd and parent-first
-  child/grandchild cleanup. Exited Linux zombies awaiting container init's reaper
+  child/grandchild cleanup. A test-only injected monotonic clock verifies no KILL
+  at 299 ms and escalation at 300 ms. Exited Linux zombies awaiting container init's reaper
   are distinguished from live processes.
 - Swift core: passes runtime priority/no-fallback, PATH independence, argv/cwd/env,
   lexical masking, source/stale identity, incremental decoding, source-only error

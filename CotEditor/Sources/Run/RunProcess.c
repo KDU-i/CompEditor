@@ -24,10 +24,15 @@ struct CERunProcess {
     unsigned char *output[2];
     size_t count[2], omitted[2];
 };
+#ifdef CE_RUN_TEST_CLOCK
+extern double ce_run_test_now(void);
+#define now ce_run_test_now
+#else
 static double now(void) {
     struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
     return t.tv_sec + t.tv_nsec / 1e9;
 }
+#endif
 CERunProcess *ce_run_create(void) {
     CERunProcess *r = calloc(1, sizeof(*r));
     if (!r) return NULL;
