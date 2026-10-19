@@ -60,7 +60,9 @@ sets no `user.language` or `user.country`, preserving the user program's default
 Locale and locale-dependent output. Launcher errors are classified separately
 using recognized OpenJDK English/Japanese/German/Simplified-Chinese messages;
 unrecognized diagnostics retain a generic explanation. Raw launcher stderr and
-program output are never translated or rewritten by the app. Java source must
+program output are never translated or rewritten by the app. Launcher recognition
+scans anchored diagnostic lines beyond any preceding successful-compile warnings,
+associating a missing-main message with its following signature advice. Java source must
 already be saved as UTF-8; the existing encoding UI performs any user-approved
 conversion. No user source, existing classes or existing directories are removed.
 
@@ -145,7 +147,7 @@ python3 Scripts/test-run-localization.py
   matching, fake-launcher compile/run/cancellation gating and result completeness. CR, CRLF
   and LF share exact navigation ranges. A closed-document owner is retained through
   Stop/KILL and background directory cleanup when shutdown runs immediately.
-  Four real Python fixtures and nine real Java fixtures pass. Java tests also
+  Four real Python fixtures and ten real Java fixtures pass. Java tests also
   place an annotation processor/service registration, another source and existing
   classes in cwd; these are not used or removed. A failed second compile cannot
   run a previous successful class. `JDK_JAVAC_OPTIONS` attempts to inject a real
@@ -154,6 +156,9 @@ python3 Scripts/test-run-localization.py
   launcher errors run under English, Japanese, German and Simplified Chinese.
   A real LocaleOutput fixture matches direct execution byte for byte as
   `ja-JP|10月`, proving the execution plan preserves the program's locale.
+  A successful unchecked-warning compile followed by missing-main execution is
+  classified in both English and Japanese. Its complete retained stderr is checked
+  byte for byte against compiler warnings plus an independent launcher-only run.
 - Localization: two tests pass for complete English/Japanese resources, standard
   Japanese terminology and independence from semantic/telemetry controllers.
 - All modified Swift files parse with Swift 6.2.1; portable Swift/C type checking

@@ -153,6 +153,7 @@ nonisolated final class PhaseRecorder: @unchecked Sendable {
                 ("LocaleOutput", "", true, "ja-JP|10月"),
                 ("Plain", "", true, "input😀"), ("Packaged", "", true, "helper:日本語😀"),
                 ("Alternate", "Other", true, "other"), ("Mismatch", "", false, nil),
+                ("WarningNoMain", "", false, nil),
                 ("NoMain", "", false, nil), ("ExceptionMain", "", false, nil),
                 ("CompileError", "", false, nil), ("ExternalDependency", "", false, nil)
             ]
@@ -196,6 +197,28 @@ nonisolated final class PhaseRecorder: @unchecked Sendable {
                         let missingWorker = RunWorker()!
                         precondition(!missingWorker.execute(missing, input: Data(), interactive: false).succeeded)
                         precondition(JavaLauncherDiagnostic.classify(missingWorker.output(1, finished: true).text) == .launch)
+                    }
+                }
+                if name == "WarningNoMain" {
+                    precondition(fixtureResult.failureKind == .javaMain && !outcome.compilationFailed)
+                    for (language, country) in [("en", "US"), ("ja", "JP")] {
+                        let retainedWorker = RunWorker()!
+                        precondition(retainedWorker.execute(fixturePlan.compile!, input: Data(), interactive: false).succeeded)
+                        let warning = retainedWorker.output(1, finished: false)
+                        precondition(!warning.bytes.isEmpty && warning.text.contains("unchecked"), "fixture did not produce a successful-compile warning")
+                        let launch = RunCommand(executable: fixturePlan.execute.executable,
+                            arguments: ["-Duser.language=" + language, "-Duser.country=" + country] + fixturePlan.execute.arguments,
+                            directory: fixturePlan.execute.directory, environment: fixturePlan.execute.environment)
+                        let termination = retainedWorker.execute(launch, input: Data(), interactive: false)
+                        precondition(!termination.succeeded)
+                        let combined = retainedWorker.output(1, finished: true)
+                        var combinedResult = RunResult(id: UUID(), source: snapshot)
+                        combinedResult.phase = .failed; combinedResult.termination = termination; combinedResult.stderr = combined
+                        precondition(combinedResult.failureKind == .javaMain, "warning masked \(language) launcher error: \(combined.text)")
+                        let launcherOnly = RunWorker()!
+                        precondition(!launcherOnly.execute(launch, input: Data(), interactive: false).succeeded)
+                        precondition(combined.bytes == warning.bytes + launcherOnly.output(1, finished: true).bytes, "full raw warning/launcher log was changed")
+                        if language == "ja" { precondition(combined.text.contains("メイン・メソッド")) }
                     }
                 }
                 if name == "LocaleOutput" {
