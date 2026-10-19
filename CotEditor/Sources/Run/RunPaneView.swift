@@ -20,6 +20,8 @@ struct RunPaneView: View {
                 }
                 if !session.message.isEmpty { Text(session.message).font(.callout).textSelection(.enabled) }
                 if let result = session.result {
+                    Text("Run ID: " + result.id.uuidString).font(.caption).textSelection(.enabled)
+                    if !result.stderr.bytes.isEmpty { Label(runText("StderrPresent"), systemImage: "exclamationmark.bubble") }
                     Text(result.source.url.path).lineLimit(1).truncationMode(.middle).help(result.source.url.path)
                     LabeledContent(runText("Directory")) { Text(result.source.directory.path).lineLimit(1).truncationMode(.middle).help(result.source.directory.path).textSelection(.enabled) }
                     LabeledContent(runText("Runtime")) { Text(result.runtime).lineLimit(1).truncationMode(.middle).help(result.runtime).textSelection(.enabled) }
@@ -49,6 +51,7 @@ struct RunPaneView: View {
                     }
                     Text(runText("SendHelp")).font(.caption)
                 } else { Text(runText("SnapshotInputHelp")).font(.caption) }
+                ExpectedOutputView(model: session.expectedOutput, window: session.document?.windowControllers.first?.window)
                 Picker(runText("Output"), selection: $outputTab) {
                     Text(runText("Stdout")).tag(0); Text(runText("Stderr")).tag(1)
                 }.pickerStyle(.segmented)
@@ -110,7 +113,7 @@ struct RunPaneView: View {
     }
 }
 
-private struct RunOutputText: NSViewRepresentable {
+struct RunOutputText: NSViewRepresentable {
     let text: String
     let label: String
     func makeNSView(context: Context) -> NSScrollView {
@@ -124,7 +127,7 @@ private struct RunOutputText: NSViewRepresentable {
     }
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
-        if view.string != text { view.string = text }
+        if !view.string.utf8.elementsEqual(text.utf8) { view.string = text }
         view.setAccessibilityLabel(label)
     }
 }
