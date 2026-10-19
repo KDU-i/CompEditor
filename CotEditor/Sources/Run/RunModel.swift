@@ -249,12 +249,20 @@ nonisolated enum RunSourceLines {
 /// or changing the user program's default Locale. Unknown messages stay generic.
 nonisolated enum JavaLauncherDiagnostic {
     static func classify(_ stderr: String) -> RunFailureKind? {
-        let first = stderr.components(separatedBy: .newlines).first ?? ""
+        let lines = stderr.components(separatedBy: .newlines)
         let methodMarkers = ["Error: Main method", "エラー: メイン・メソッド", "Fehler: Hauptmethode", "错误: main 方法", "错误: 在类 "]
-        if stderr.contains("public static void main(String[] args)"), methodMarkers.contains(where: first.hasPrefix) { return .javaMain }
         let loadMarkers = ["Error: Could not find or load main class", "Error: Unable to initialize main class", "Error: LinkageError occurred while loading main class",
                            "エラー: メイン・クラス", "Fehler: Hauptklasse", "Fehler: Beim Laden der Klasse", "错误: 找不到或无法加载主类", "错误: 无法初始化主类", "错误: 加载主类"]
-        if loadMarkers.contains(where: first.hasPrefix) || first.contains("Could not create the Java Virtual Machine") { return .launch }
+        // Successful compilation can leave warnings before launcher output in
+        // the retained stderr. Match anchored diagnostic lines anywhere, tying
+        // the main-method signature to that diagnostic's following lines.
+        for (index, line) in lines.enumerated() {
+            if methodMarkers.contains(where: line.hasPrefix) {
+                let end = min(index + 8, lines.count)
+                if lines[index..<end].contains(where: { $0.contains("public static void main(String[] args)") }) { return .javaMain }
+            }
+            if loadMarkers.contains(where: line.hasPrefix) || line.hasPrefix("Error: Could not create the Java Virtual Machine") { return .launch }
+        }
         return nil
     }
 }
