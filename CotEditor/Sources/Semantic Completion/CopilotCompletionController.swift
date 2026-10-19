@@ -129,7 +129,9 @@ enum CopilotBundledServer {
     private var projectNavigationID = UUID()
     private struct Candidate {
         let reference: Int; let item: LSPJSON; var local: LSPJSON
-        var edit: LSPText.Edit; var plan: CopilotInline.Plan?; let nextEdit: Bool
+        var edit: LSPText.Edit { didSet { displayDiff = SemanticNextEditDisplayCache() } }
+        var plan: CopilotInline.Plan?; let nextEdit: Bool
+        var displayDiff = SemanticNextEditDisplayCache()
         var projectTarget: ProjectTarget? = nil
         var target: ForeignTarget? = nil
         var hunks: [LSPText.Edit]? = nil
@@ -962,7 +964,9 @@ enum CopilotBundledServer {
         guard var state = suggestions, view === editor, state.candidates[state.index].nextEdit,
               eligible(editor) == state.languageId, editor.semanticDocumentContext?().url == state.file else { return false }
         state.candidates = state.candidates.compactMap { candidate in
-            if candidate.target != nil || candidate.projectTarget != nil { return candidate }
+            if candidate.target != nil || candidate.projectTarget != nil {
+                var result = candidate; result.displayDiff = SemanticNextEditDisplayCache(); return result
+            }
             guard let hunks = CopilotNextEditPolicy.rebasedHunks(candidate.hunks ?? [candidate.edit], from: state.snapshot, to: editor.string),
                   let edit = CopilotNextEditPolicy.combined(hunks, in: editor.string) else { return nil }
             var result = candidate; result.edit = edit; result.hunks = hunks; return result
@@ -980,7 +984,7 @@ enum CopilotBundledServer {
         let old = candidate.nextEdit && candidate.target == nil && candidate.projectTarget == nil ? (state.snapshot as NSString).substring(with: candidate.edit.range) : nil
         let targetText = candidate.projectTarget.map { "→ \($0.uri.lastPathComponent)\nTab: 文書へ移動して候補を再確認" } ?? candidate.target.map { "→ \($0.uri.lastPathComponent)\n\(candidate.edit.text)" }
         applying = true
-        editor.semanticGhost = SemanticGhostPreview(text: targetText ?? candidate.plan?.text ?? candidate.edit.text, snapshot: state.snapshot, caret: state.caret, fileURL: state.file, language: language, copilot: true, languageId: state.languageId, parts: candidate.plan?.parts ?? [], nextEdit: candidate.nextEdit, replacementRange: candidate.target == nil && candidate.projectTarget == nil ? candidate.edit.range : NSRange(location: state.caret, length: 0), replacedText: old, revision: state.revision, replacementHunks: candidate.target == nil && candidate.projectTarget == nil ? candidate.hunks ?? [] : [])
+        editor.semanticGhost = SemanticGhostPreview(text: targetText ?? candidate.plan?.text ?? candidate.edit.text, snapshot: state.snapshot, caret: state.caret, fileURL: state.file, language: language, copilot: true, languageId: state.languageId, parts: candidate.plan?.parts ?? [], nextEdit: candidate.nextEdit, replacementRange: candidate.target == nil && candidate.projectTarget == nil ? candidate.edit.range : NSRange(location: state.caret, length: 0), replacedText: old, revision: state.revision, replacementHunks: candidate.target == nil && candidate.projectTarget == nil ? candidate.hunks ?? [] : [], displayDiff: candidate.displayDiff)
         applying = false
         guard editor.semanticGhostIsCurrent else {
             if let ticket = diagnosticRequest { diagnose(ticket, .excluded, reason: .ghostNotCurrent) }
@@ -1087,6 +1091,9 @@ enum CopilotBundledServer {
             editor.scrollRangeToVisible(editor.selectedRange()); applying = false
             guard eligible(editor) == target.languageId else { return true }
             var transplanted = candidate; transplanted.target = nil
+            // Navigation text and the destination edit have different preview
+            // inputs even though the underlying edit itself has not changed.
+            transplanted.displayDiff = SemanticNextEditDisplayCache()
             self.view = editor
             self.suggestions = Suggestions(candidates: [transplanted], snapshot: target.snapshot, caret: editor.selectedRange().location,
                                            revision: target.revision, file: target.uri, uri: target.uri, languageId: target.languageId,

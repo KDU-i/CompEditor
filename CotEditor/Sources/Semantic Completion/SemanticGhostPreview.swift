@@ -16,6 +16,7 @@ struct SemanticGhostPreview {
     var replacedText: String? = nil
     var revision: Int? = nil
     var replacementHunks: [LSPText.Edit] = []
+    var displayDiff = SemanticNextEditDisplayCache()
 }
 
 extension EditorTextView {
@@ -47,7 +48,7 @@ extension EditorTextView {
     private func nextEditSurface(for ghost: SemanticGhostPreview) -> SemanticNextEditPreview {
         let previewFont = font ?? .monospacedSystemFont(ofSize: 13, weight: .regular)
         let height = (layoutManager as? LayoutManager)?.lineHeight ?? previewFont.boundingRectForFont.height
-        return SemanticNextEditPreview(before: ghost.replacedText ?? "", after: ghost.text,
+        return SemanticNextEditPreview(diff: ghost.displayDiff.prepare(before: ghost.replacedText ?? "", after: ghost.text),
             maximumWidth: max(32, visibleRect.width - 8), font: previewFont, lineHeight: height,
             baseline: (layoutManager as? LayoutManager)?.baselineOffset(for: .horizontal) ?? previewFont.ascender,
             foreground: textColor ?? .labelColor, background: backgroundColor)
@@ -345,23 +346,15 @@ final class SemanticNextEditPreview: NSView {
         arrow.move(to: .init(x: box.midX, y: box.midY - 3)); arrow.line(to: .init(x: box.maxX - 3, y: box.midY)); arrow.line(to: .init(x: box.midX, y: box.midY + 3))
         NSColor.white.setStroke(); arrow.stroke()
     }
-    init(before: String, after: String, maximumWidth: CGFloat, font: NSFont, lineHeight: CGFloat, baseline: CGFloat, foreground: NSColor, background: NSColor) {
-        let before = before.replacingOccurrences(of: "\r\n", with: "\n")
-        let after = after.replacingOccurrences(of: "\r\n", with: "\n")
-        let hunks = CopilotNextEditPolicy.hunks(.init(range: NSRange(location: 0, length: before.utf16.count), text: after, primary: true), in: before)
-        var delta = 0
-        let insertedRanges = hunks.map { edit -> NSRange in
-            let range = NSRange(location: edit.range.location + delta, length: edit.text.utf16.count)
-            delta += edit.text.utf16.count - edit.range.length
-            return range
-        }
+    init(diff: SemanticNextEditDisplayData, maximumWidth: CGFloat, font: NSFont, lineHeight: CGFloat, baseline: CGFloat, foreground: NSColor, background: NSColor) {
+        let before = diff.before, after = diff.after
         let multiline = before.contains(where: { $0.isNewline }) || after.contains(where: { $0.isNewline })
         let naturalWidth = max((before as NSString).size(withAttributes: [.font: font]).width, (after as NSString).size(withAttributes: [.font: font]).width)
         let sideBySide = multiline && !before.isEmpty && maximumWidth >= 740
         let width = min(maximumWidth, max(24, naturalWidth + 24) * (sideBySide ? 2 : 1))
         let column = sideBySide ? width / 2 : width
-        let inserted = SemanticNextEditBlock(text: after, width: column, font: font, lineHeight: lineHeight, baseline: baseline, foreground: foreground, background: background, tint: Self.insertedColor(background: background), connector: !multiline, tintRanges: hunks.count > 1 ? insertedRanges : nil)
-        let removed = multiline && !before.isEmpty ? SemanticNextEditBlock(text: before, width: column, font: font, lineHeight: lineHeight, baseline: baseline, foreground: foreground, background: background, tint: Self.removedColor(background: background), connector: false, tintRanges: hunks.count > 1 ? hunks.map(\.range) : nil) : nil
+        let inserted = SemanticNextEditBlock(text: after, width: column, font: font, lineHeight: lineHeight, baseline: baseline, foreground: foreground, background: background, tint: Self.insertedColor(background: background), connector: !multiline, tintRanges: diff.insertedRanges.count > 1 ? diff.insertedRanges : nil)
+        let removed = multiline && !before.isEmpty ? SemanticNextEditBlock(text: before, width: column, font: font, lineHeight: lineHeight, baseline: baseline, foreground: foreground, background: background, tint: Self.removedColor(background: background), connector: false, tintRanges: diff.removedRanges.count > 1 ? diff.removedRanges : nil) : nil
         fullHeight = sideBySide ? max(removed?.frame.height ?? 0, inserted.frame.height) : (removed?.frame.height ?? 0) + inserted.frame.height
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: fullHeight))
         if let removed { removed.frame.origin = .zero; addSubview(removed) }
@@ -384,7 +377,7 @@ private final class SemanticNextEditBlock: NSView {
         let paragraph = NSMutableParagraphStyle()
         paragraph.minimumLineHeight = lineHeight; paragraph.maximumLineHeight = lineHeight
         paragraph.lineBreakMode = .byCharWrapping
-        let storage = NSTextStorage(string: text.replacingOccurrences(of: "\r\n", with: "\n"), attributes: [.font: font, .foregroundColor: foreground, .paragraphStyle: paragraph])
+        let storage = NSTextStorage(string: text, attributes: [.font: font, .foregroundColor: foreground, .paragraphStyle: paragraph])
         for range in tintRanges ?? [] where range.length > 0 { storage.addAttribute(.backgroundColor, value: tint, range: range) }
         let layout = SemanticPreviewLayoutManager(lineHeight: lineHeight, baseline: baseline), container = NSTextContainer(size: NSSize(width: contentWidth, height: .greatestFiniteMagnitude))
         container.lineFragmentPadding = 0
