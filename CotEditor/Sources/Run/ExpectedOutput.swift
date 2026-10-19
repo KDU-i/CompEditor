@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 
 struct ExpectedOutput: Sendable {
     let id: UUID
@@ -11,11 +16,26 @@ enum ExpectedOutputError: Error { case notRegular, tooLarge, invalidUTF8, unread
 nonisolated enum ExpectedOutputReader {
     static let limit = 10 * 1024 * 1024
     static func read(_ url: URL) throws -> ExpectedOutput {
+        #if os(macOS)
+        // Match CotEditor's existing explicit file-import pattern. Keep access
+        // scoped to this snapshot read; reload reopens the selected URL.
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        #endif
         do {
             let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isPackageKey])
             guard values.isRegularFile == true, values.isPackage != true else { throw ExpectedOutputError.notRegular }
-            let handle = try FileHandle(forReadingFrom: url)
+            // Nonblocking open plus descriptor-level type validation prevents a
+            // regular-file→FIFO/device replacement from hanging the work actor.
+            let descriptor = url.withUnsafeFileSystemRepresentation { path in
+                path.map { open($0, O_RDONLY | O_NONBLOCK | O_CLOEXEC) } ?? -1
+            }
+            guard descriptor >= 0 else { throw ExpectedOutputError.unreadable }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
             defer { try? handle.close() }
+            var metadata = stat()
+            guard fstat(descriptor, &metadata) == 0 else { throw ExpectedOutputError.unreadable }
+            guard metadata.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else { throw ExpectedOutputError.notRegular }
             // Bounded even if a file grows after selection. Never read a FIFO/device.
             var bytes = Data()
             while bytes.count <= limit {
@@ -46,6 +66,8 @@ struct OutputDifference: Sendable {
     let column: Int
     let actualLines: Int
     let expectedLines: Int
+    let actualByte: UInt8?
+    let expectedByte: UInt8?
     let actualEOF: Bool
     let expectedEOF: Bool
     let actualFinalNewline: Bool
@@ -69,7 +91,7 @@ nonisolated enum OutputComparator {
             case .cancelled: return .stopped
             case .failed: return .failed
             case .finished:
-                guard result.termination?.succeeded == true else { return .failed }
+                guard !result.compilationFailed, result.termination?.succeeded == true else { return .failed }
                 guard result.comparable else { return .indeterminate }
                 return .comparing
         }
@@ -119,6 +141,7 @@ nonisolated enum OutputComparator {
         }
         return OutputComparison(key: key, difference: OutputDifference(line: line, column: column,
             actualLines: lineCount(a), expectedLines: lineCount(e),
+            actualByte: offset < a.count ? a[offset] : nil, expectedByte: offset < e.count ? e[offset] : nil,
             actualEOF: offset == a.count, expectedEOF: offset == e.count,
             actualFinalNewline: a.last == 10 || a.last == 13, expectedFinalNewline: e.last == 10 || e.last == 13,
             actual: excerpt(a), expected: excerpt(e), abbreviated: start > 0 || offset + budget < max(a.count, e.count)))

@@ -15,8 +15,14 @@ nonisolated final class PhaseRecorder: @unchecked Sendable {
     private(set) var phases: [RunPhase] = []
     func append(_ phase: RunPhase) { lock.lock(); phases.append(phase); lock.unlock() }
 }
+@MainActor final class ClosedDocumentSession: RunOwnedSession {
+    let activity: RunActivity
+    init(_ activity: RunActivity) { self.activity = activity }
+    func close() { activity.worker.stop() }
+    func waitForStop() { activity.stopAndWait() }
+}
 @main struct RunCoreTests {
-    static func main() throws {
+    @MainActor static func main() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("実行 tests " + UUID().uuidString)
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
@@ -45,8 +51,8 @@ nonisolated final class PhaseRecorder: @unchecked Sendable {
         precondition(candidates == [root.appendingPathComponent(".venv/bin/python").path] + RunPlanner.knownPython)
         precondition(RunPlanner.pythonCandidates(source: url, explicit: "/broken", exists: { _ in false }).isEmpty)
         precondition(RunPlanner.pythonCandidates(source: url, explicit: "/selected", exists: { _ in true }) == ["/selected"])
-        let env = RunPlanner.environment(["PATH":"/untrusted", "JAVA_TOOL_OPTIONS":"bad", "CLASSPATH":"bad", "PYTHONHOME":"bad"])
-        precondition(env["JAVA_TOOL_OPTIONS"] == nil && env["CLASSPATH"] == nil && env["PYTHONHOME"] == nil && env["PYTHONIOENCODING"] == "utf-8")
+        let env = RunPlanner.environment(["PATH":"/untrusted", "JAVA_TOOL_OPTIONS":"bad", "JDK_JAVAC_OPTIONS":"injected.java", "CLASSPATH":"bad", "PYTHONHOME":"bad"])
+        precondition(env["JDK_JAVAC_OPTIONS"] == nil && env["JAVA_TOOL_OPTIONS"] == nil && env["CLASSPATH"] == nil && env["PYTHONHOME"] == nil && env["PYTHONIOENCODING"] == "utf-8")
         let lexical = JavaRunSource(#"""
         /* package fake; class Fake {} */
         package 実例;
@@ -65,6 +71,18 @@ nonisolated final class PhaseRecorder: @unchecked Sendable {
         precondition(JavaRunSource("class Other {}").defaultMain(filename: "Missing").isEmpty)
         precondition(RunDiagnostics.parse("at p.Main$Inner.f(Main.java:1)\nat p.Helper.f(Main.java:1)\nat other.Main.f(Main.java:1)\n\(url.path):1: error", source: source).count == 3)
         precondition(RunDiagnostics.parse("File \"/unverified.py\", line 1", source: source).isEmpty)
+        for separator in ["\r", "\r\n", "\n"] {
+            let text = "一😀" + separator + "二" + separator
+            let snapshot = RunSource(url: root.appendingPathComponent("lines.py"), revision: 1, text: text, diskBytes: Data(text.utf8), modificationDate: nil)
+            let ranges = RunSourceLines.ranges(in: text)
+            precondition(ranges.count == 3)
+            precondition((text as NSString).substring(with: ranges[1]) == "二" + separator)
+            precondition(ranges[2] == NSRange(location: text.utf16.count, length: 0))
+            let error = "File \"\(snapshot.url.path)\", line 2\nFile \"\(snapshot.url.path)\", line 3\nFile \"\(snapshot.url.path)\", line 4"
+            precondition(RunDiagnostics.parse(error, source: snapshot).map(\.line) == [2, 3])
+        }
+        precondition(RunSourceLines.ranges(in: "").count == 1)
+        precondition(RunSourceLines.ranges(in: "a\rb").count == 2)
         let pythonSource = RunSource(url: root.appendingPathComponent("空 白.py"), revision: 5, text: "print(1)", diskBytes: Data(), modificationDate: nil)
         let plan = try RunPlanner.plan(source: pythonSource, python: py, jdk: nil, main: "", temporaryRoot: root)
         precondition(plan.execute.arguments == ["-u", pythonSource.url.path] && plan.execute.directory.path == root.path)
@@ -142,9 +160,18 @@ nonisolated final class PhaseRecorder: @unchecked Sendable {
                 try fm.copyItem(at: fixtureRoot.appendingPathComponent(name + ".java"), to: file)
                 let snapshot = RunSource(url: file, revision: 1, text: try String(contentsOf: file, encoding: .utf8), diskBytes: try Data(contentsOf: file), modificationDate: nil)
                 let fixturePlan = try RunPlanner.plan(source: snapshot, python: nil, jdk: home, main: main, temporaryRoot: root,
-                    inherited: ["JAVA_TOOL_OPTIONS": "invalid-injection", "CLASSPATH": root.path])
+                    inherited: ["JAVA_TOOL_OPTIONS": "invalid-injection", "JDK_JAVAC_OPTIONS": "\"" + root.appendingPathComponent("External.java").path + "\"", "CLASSPATH": root.path])
+                precondition(fixturePlan.compile!.arguments.contains("-J-Duser.language=en"))
+                precondition(fixturePlan.execute.arguments.contains("-Duser.language=en"))
+                let japaneseCompile = RunCommand(executable: fixturePlan.compile!.executable,
+                    arguments: ["-J-Duser.language=ja", "-J-Duser.country=JP"] + fixturePlan.compile!.arguments,
+                    directory: fixturePlan.compile!.directory, environment: fixturePlan.compile!.environment)
+                let japaneseExecute = RunCommand(executable: fixturePlan.execute.executable,
+                    arguments: ["-Duser.language=ja", "-Duser.country=JP"] + fixturePlan.execute.arguments,
+                    directory: fixturePlan.execute.directory, environment: fixturePlan.execute.environment)
+                let opposingLocalePlan = RunPlan(compile: japaneseCompile, execute: japaneseExecute, ownedDirectory: fixturePlan.ownedDirectory)
                 let worker = RunWorker()!
-                let outcome = RunPipeline.perform(fixturePlan, input: Data("input😀".utf8), interactive: false, launcher: worker, phase: { _ in })
+                let outcome = RunPipeline.perform(opposingLocalePlan, input: Data("input😀".utf8), interactive: false, launcher: worker, phase: { _ in })
                 let out = worker.output(0, finished: true), err = worker.output(1, finished: true)
                 precondition(outcome.termination.succeeded == succeeded, "\(name): \(err.text)")
                 if let expected { precondition(out.text == expected, "\(name): \(out.text)") }
@@ -181,6 +208,30 @@ nonisolated final class PhaseRecorder: @unchecked Sendable {
                 print("PASS Java fixture: \(name)")
             }
         } else { print("SKIP Java plan executable checks: set RUN_TEST_JDK to an installed JDK") }
+        let cleanup = root.appendingPathComponent("closed-document-output")
+        try fm.createDirectory(at: cleanup, withIntermediateDirectories: true)
+        try Data("owned".utf8).write(to: cleanup.appendingPathComponent("marker"))
+        let cleanupWorker = RunWorker()!
+        let activity = RunActivity(worker: cleanupWorker, ownedDirectory: cleanup)
+        let registry = RunSessionRegistry()
+        var closed: ClosedDocumentSession? = ClosedDocumentSession(activity)
+        weak var retainedSession = closed
+        _ = registry.retain(closed!)
+        let fixture = URL(fileURLWithPath: fm.currentDirectoryPath).appendingPathComponent("Scripts/Fixtures/Run/process.py")
+        let commandForClose = RunCommand(executable: URL(fileURLWithPath: py), arguments: ["-u", fixture.path, "ignore-term"], directory: root, environment: RunPlanner.environment([:]))
+        DispatchQueue.global().async {
+            _ = cleanupWorker.execute(commandForClose, input: Data(), interactive: true)
+            activity.finish()
+        }
+        let readyDeadline = Date().addingTimeInterval(3)
+        while cleanupWorker.output(0, finished: false).bytes.isEmpty && Date() < readyDeadline { Thread.sleep(forTimeInterval: 0.01) }
+        precondition(!cleanupWorker.output(0, finished: false).bytes.isEmpty)
+        closed!.close(); closed = nil
+        precondition(retainedSession != nil, "closed document's stopping session lost ownership")
+        registry.shutdown()
+        precondition(!fm.fileExists(atPath: cleanup.path), "quit returned before owned-directory cleanup")
+        precondition(retainedSession == nil, "completed closed-document session was retained")
+        print("PASS ownership: closed document retained through Stop/KILL and background cleanup at quit")
         print("PASS RunCore: runtime precedence, argv/cwd/environment, Java lexical masking, diagnostics, fake pipeline, result completeness")
     }
 }

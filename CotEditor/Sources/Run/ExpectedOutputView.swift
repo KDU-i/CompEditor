@@ -29,6 +29,8 @@ struct ExpectedOutputView: View {
             if let difference = model.comparison?.difference {
                 Text(runText("FirstDifference") + " \(difference.line):\(difference.column) (" + runText("UTF8Column") + ")")
                     .textSelection(.enabled)
+                Text(runText("DifferenceBytes") + " " + byte(difference.actualByte) + " / " + byte(difference.expectedByte))
+                    .textSelection(.enabled)
                 Text(runText("LineCounts") + " \(difference.actualLines) / \(difference.expectedLines)")
                 if difference.actualLines > difference.expectedLines {
                     Text(runText("ExtraActualLines") + " \(difference.actualLines - difference.expectedLines)")
@@ -68,6 +70,7 @@ struct ExpectedOutputView: View {
             RunOutputText(text: model.showWhitespace ? OutputComparator.visible(text) : text, label: label).frame(height: 120)
         }
     }
+    private func byte(_ value: UInt8?) -> String { value.map { String(format: "0x%02X", $0) } ?? "EOF" }
     private func yesNo(_ value: Bool) -> String { runText(value ? "Present" : "Absent") }
     private var stateText: String {
         switch model.state {

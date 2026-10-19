@@ -4,7 +4,7 @@ import Observation
 
 func runText(_ key: String.LocalizationValue) -> String { String(localized: key, table: "Run") }
 
-@MainActor @Observable final class RunSession: NSObject {
+@MainActor @Observable final class RunSession: NSObject, RunOwnedSession {
     weak var document: Document?
     let expectedOutput = ExpectedOutputSession()
     var result: RunResult? { didSet { expectedOutput.update(result: result, active: active) } }
@@ -17,6 +17,7 @@ func runText(_ key: String.LocalizationValue) -> String { String(localized: key,
     var revision: UInt64 = 0
     var active = false { didSet { expectedOutput.update(result: result, active: active) } }
     private var worker: RunWorker?
+    private var activity: RunActivity?
     private var ownedDirectory: URL?
     private var inspectingRuntime = false
     private var eofSent = false
@@ -80,8 +81,7 @@ func runText(_ key: String.LocalizationValue) -> String { String(localized: key,
     }
     func close() { stop(); worker?.stop() }
     func waitForStop() {
-        worker?.waitForStop()
-        if let ownedDirectory { try? FileManager.default.removeItem(at: ownedDirectory) }
+        activity?.stopAndWait()
     }
     func send() {
         guard inputOpen, result?.phase == .running else { return }
@@ -107,6 +107,9 @@ func runText(_ key: String.LocalizationValue) -> String { String(localized: key,
             ownedDirectory = plan.ownedDirectory
             guard let worker = RunWorker() else { throw CocoaError(.fileReadUnknown) }
             self.worker = worker
+            let activity = RunActivity(worker: worker, ownedDirectory: plan.ownedDirectory)
+            self.activity = activity
+            let ownership = RunSessionRegistry.shared.retain(self)
             let id = UUID(), initial = Data(input.utf8), interactive = interactive
             result = RunResult(id: id, source: source, runtime: plan.execute.executable.path)
             message = ""
@@ -126,9 +129,10 @@ func runText(_ key: String.LocalizationValue) -> String { String(localized: key,
                         if session.active && session.result?.id == id && session.result?.phase != .stopping { session.result?.phase = phase }
                     }
                 }
-                if let owned = plan.ownedDirectory { try? FileManager.default.removeItem(at: owned) }
+                activity.finish()
                 let finalTermination = outcome.termination, finalCompileFailed = outcome.compilationFailed
                 Task { @MainActor in
+                    RunSessionRegistry.shared.release(ownership)
                     guard session.result?.id == id else { return }
                     let stopped = session.result?.phase == .stopping || finalTermination == .cancelled
                     session.result?.stdout = worker.output(0, finished: true)
@@ -137,7 +141,7 @@ func runText(_ key: String.LocalizationValue) -> String { String(localized: key,
                     session.result?.termination = stopped ? .cancelled : finalTermination
                     session.result?.compilationFailed = finalCompileFailed
                     session.result?.phase = stopped ? .cancelled : (finalTermination.succeeded ? .finished : .failed)
-                    session.active = false; session.inputOpen = false; session.refresh?.cancel(); session.worker = nil; session.ownedDirectory = nil
+                    session.active = false; session.inputOpen = false; session.refresh?.cancel(); session.worker = nil; session.activity = nil; session.ownedDirectory = nil
                 }
             }
         } catch RunPlanningError.invalidMain { fail("InvalidMain") }
@@ -187,6 +191,9 @@ func runText(_ key: String.LocalizationValue) -> String { String(localized: key,
         let executable = python ? path : URL(fileURLWithPath: path).appendingPathComponent("bin/java").path
         let command = RunCommand(executable: URL(fileURLWithPath: executable), arguments: [python ? "--version" : "-version"], directory: URL(fileURLWithPath: NSTemporaryDirectory()), environment: RunPlanner.environment(ProcessInfo.processInfo.environment))
         cancelled = false; inspectingRuntime = true; active = true; self.worker = worker; message = runText("CheckingRuntime")
+        let activity = RunActivity(worker: worker)
+        self.activity = activity
+        let ownership = RunSessionRegistry.shared.retain(self)
         DispatchQueue.global().async {
             let timeout = DispatchWorkItem { worker.stop() }
             DispatchQueue.global().asyncAfter(deadline: .now() + 3, execute: timeout)
@@ -198,10 +205,12 @@ func runText(_ key: String.LocalizationValue) -> String { String(localized: key,
             timeout.cancel()
             let finalStatus = status
             let text = worker.output(0, finished: true).text + worker.output(1, finished: true).text
+            activity.finish()
             Task { @MainActor [weak self] in
+                RunSessionRegistry.shared.release(ownership)
                 guard let self else { return }
                 let cancelled = self.cancelled
-                self.active = false; self.worker = nil; self.inspectingRuntime = false
+                self.active = false; self.worker = nil; self.activity = nil; self.inspectingRuntime = false
                 guard finalStatus.succeeded, (!python || text.hasPrefix("Python 3.")), !cancelled, !document.semanticIsClosed else { self.message = runText("MissingRuntime"); return }
                 let alert = NSAlert(); alert.messageText = runText("ConfirmRuntime"); alert.informativeText = path + "\n" + String(text.prefix(2048))
                 alert.addButton(withTitle: runText("UseRuntime")); alert.addButton(withTitle: runText("Cancel"))
@@ -218,12 +227,10 @@ func runText(_ key: String.LocalizationValue) -> String { String(localized: key,
     func navigate(_ diagnostic: RunDiagnostic, view: EditorTextView?) {
         guard !stale, let view, let result,
               (try? Data(contentsOf: result.source.url)) == result.source.diskBytes else { return }
-        let text = result.source.text as NSString
-        var range = NSRange(location: 0, length: 0)
-        for _ in 1..<diagnostic.line { range.location = NSMaxRange(text.lineRange(for: range)); range.length = 0 }
-        guard range.location <= text.length else { return }
+        let lines = RunSourceLines.ranges(in: result.source.text)
+        guard lines.indices.contains(diagnostic.line - 1) else { return }
         oldSelection = (view.selectedRange(), revision)
-        range = text.lineRange(for: range)
+        let range = lines[diagnostic.line - 1]
         view.setSelectedRange(range); view.scrollRangeToVisible(range); view.window?.makeFirstResponder(view)
     }
     func back(view: EditorTextView?) {

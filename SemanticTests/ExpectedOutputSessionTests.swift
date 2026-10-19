@@ -77,6 +77,22 @@ actor PendingOutputs {
         await pending.finishRead(b); await until { await pending.hasComparison(strictKey) }
         await pending.finishComparison(strictKey); await until { model.state == .match }
         check(model.expected?.id == b.id && model.state == .match, "explicit reload")
-        print("Expected output session: \(checks) async race checks passed")
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".anything")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try! Data().write(to: file)
+        let smoke = ExpectedOutputSession()
+        smoke.load(file)
+        await until { smoke.expected != nil }
+        smoke.update(result: new, active: false)
+        await until { smoke.state == .match }
+        check(smoke.state == .match, "production background reader/comparator")
+        let importedID = smoke.expected!.id
+        try! Data("changed".utf8).write(to: file)
+        check(smoke.expected!.bytes.isEmpty && smoke.state == .match, "external edit preserves snapshot/verdict")
+        smoke.reload()
+        check(smoke.comparison == nil && smoke.loading, "reload clears immediately")
+        await until { smoke.state == .mismatch }
+        check(smoke.expected!.id != importedID && smoke.expected!.bytes == Data("changed".utf8), "reload gets new snapshot and verdict")
+        print("Expected output session: \(checks) async coordinator checks passed")
     }
 }

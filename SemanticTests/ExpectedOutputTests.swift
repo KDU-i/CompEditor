@@ -82,6 +82,9 @@ import Foundation
             }
         }
         result.phase = .finished; result.termination = .exit(0)
+        result.compilationFailed = true
+        check(OutputComparator.state(expected: true, result: result, active: false) == .failed, "failed compilation cannot match")
+        result.compilationFailed = false
         result.stderr.bytes = Data("warning".utf8)
         check(OutputComparator.state(expected: true, result: result, active: false) == .comparing, "stderr warning allowed")
         for stream in [0,1] {
@@ -100,6 +103,8 @@ import Foundation
         check(diff.line == 2 && diff.column == 2 && diff.actualEOF && !diff.expectedEOF, "EOF position")
         check(diff.actualLines == 2 && diff.expectedLines == 3 && diff.expected.contains("EOF"), "line counts")
         check(!diff.actualFinalNewline, "missing LF")
+        let nfc = compare("é", "e\u{301}", .strict).difference!
+        check(nfc.actualByte == 0xc3 && nfc.expectedByte == 0x65, "Unicode mismatch byte evidence")
         let cr = compare("a\rb", "a\rc", .strict).difference!
         check(cr.line == 2 && cr.column == 1 && cr.actualLines == 2, "strict CR coordinates")
         let crlf = compare("a\r\nb", "a\r\nc", .strict).difference!

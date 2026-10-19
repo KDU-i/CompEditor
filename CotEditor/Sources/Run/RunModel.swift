@@ -76,7 +76,7 @@ nonisolated enum RunPlanner {
     }
     static func environment(_ inherited: [String: String]) -> [String: String] {
         var env = inherited
-        for key in ["JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP"] { env[key] = nil }
+        for key in ["JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "JDK_JAVAC_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP"] { env[key] = nil }
         env["PYTHONIOENCODING"] = "utf-8"; env["PYTHONUTF8"] = "1"
         // Finder may supply no locale. A UTF-8 fallback also preserves Unicode
         // filesystem arguments when exercising the portable runner on Linux.
@@ -107,7 +107,7 @@ nonisolated enum RunPlanner {
         try FileManager.default.createDirectory(at: classes, withIntermediateDirectories: true)
         do { try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true) }
         catch { try? FileManager.default.removeItem(at: owned); throw error }
-        return RunPlan(compile: RunCommand(executable: javac, arguments: ["-encoding", "UTF-8", "-proc:none", "-implicit:none", "-sourcepath", empty.path, "-classpath", classes.path, "-d", classes.path, source.url.path], directory: source.directory, environment: env), execute: RunCommand(executable: java, arguments: ["-Dfile.encoding=UTF-8", "-cp", classes.path, name], directory: source.directory, environment: env), ownedDirectory: owned)
+        return RunPlan(compile: RunCommand(executable: javac, arguments: ["-J-Duser.language=en", "-J-Duser.country=US", "-encoding", "UTF-8", "-proc:none", "-implicit:none", "-sourcepath", empty.path, "-classpath", classes.path, "-d", classes.path, source.url.path], directory: source.directory, environment: env), execute: RunCommand(executable: java, arguments: ["-Duser.language=en", "-Duser.country=US", "-Dfile.encoding=UTF-8", "-cp", classes.path, name], directory: source.directory, environment: env), ownedDirectory: owned)
     }
 }
 
@@ -156,7 +156,7 @@ struct RunDiagnostic: Identifiable {
 nonisolated enum RunDiagnostics {
     static func parse(_ stderr: String, source: RunSource) -> [RunDiagnostic] {
         let java = JavaRunSource(source.text)
-        let maximumLine = source.text.components(separatedBy: "\n").count
+        let maximumLine = RunSourceLines.ranges(in: source.text).count
         var found: [RunDiagnostic] = []
         for message in stderr.components(separatedBy: .newlines) {
             if found.count >= 200 { break }
@@ -225,4 +225,22 @@ struct RunUTF8Decoder: Sendable {
 
 enum RunFailureKind: Sendable {
     case launch, javaFilename, javaDependency, javaCompile, javaMain, javaRuntime, program
+}
+
+/// Share Foundation's line boundaries with navigation: CRLF is one separator,
+/// while lone CR, LF and other NSString line separators also start a new line.
+nonisolated enum RunSourceLines {
+    static func ranges(in source: String) -> [NSRange] {
+        let text = source as NSString
+        var ranges: [NSRange] = [], location = 0
+        while location < text.length {
+            let range = text.lineRange(for: NSRange(location: location, length: 0))
+            ranges.append(range); location = NSMaxRange(range)
+        }
+        // An empty source or a final line separator supplies an empty last line.
+        if text.length == 0 || text.rangeOfCharacter(from: .newlines, options: .backwards).location == text.length - 1 {
+            ranges.append(NSRange(location: text.length, length: 0))
+        }
+        return ranges
+    }
 }

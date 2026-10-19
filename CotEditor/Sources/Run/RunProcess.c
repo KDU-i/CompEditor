@@ -16,6 +16,9 @@
 #include <unistd.h>
 
 #define CE_LIMIT (10u * 1024u * 1024u)
+// Shared across every runner, not per document. Covers descriptor creation,
+// fallback CLOEXEC flagging, spawn and closure of the child-only endpoints.
+static pthread_mutex_t ce_spawn_lock = PTHREAD_MUTEX_INITIALIZER;
 struct CERunProcess {
     pthread_mutex_t lock;
     pid_t group;
@@ -118,14 +121,27 @@ static void retain(CERunProcess *r, int stream, unsigned char *bytes, size_t n) 
 int ce_run_execute(CERunProcess *r, const char *executable, char *const argv[],
                    char *const envp[], const char *cwd, const void *initial, size_t initial_count, int keep_open, int *status) {
     int input[2] = {-1, -1}, pipes[2][2] = {{-1, -1}, {-1, -1}};
-    int error = 0; pid_t pid = 0;
+    int error = 0; pid_t pid = 0; bool spawn_locked = false;
     posix_spawn_file_actions_t actions; posix_spawnattr_t attrs;
     posix_spawn_file_actions_init(&actions); posix_spawnattr_init(&attrs);
+    pthread_mutex_lock(&ce_spawn_lock); spawn_locked = true;
+#if defined(__linux__) && !defined(CE_RUN_FORCE_FD_FALLBACK)
+    // Linux can create all endpoints atomically close-on-exec.
+    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, input) ||
+        pipe2(pipes[0], O_CLOEXEC) || pipe2(pipes[1], O_CLOEXEC)) { error = errno; goto cleanup; }
+#else
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, input) || pipe(pipes[0]) || pipe(pipes[1])) { error = errno; goto cleanup; }
-    // Mark every parent/child endpoint close-on-exec before spawning.
+#endif
+#ifdef CE_RUN_TEST_FD_WINDOW
+    extern void ce_run_test_descriptors_created(void);
+    ce_run_test_descriptors_created();
+#endif
+    // The process-wide spawn lock closes the fallback's creation/flag race.
     for (int i = 0; i < 2; i++) {
-        fcntl(input[i], F_SETFD, FD_CLOEXEC);
-        for (int j = 0; j < 2; j++) fcntl(pipes[i][j], F_SETFD, FD_CLOEXEC);
+        if (fcntl(input[i], F_SETFD, FD_CLOEXEC) < 0) { error = errno; goto cleanup; }
+        for (int j = 0; j < 2; j++) {
+            if (fcntl(pipes[i][j], F_SETFD, FD_CLOEXEC) < 0) { error = errno; goto cleanup; }
+        }
     }
 #ifdef SO_NOSIGPIPE
     int one = 1; setsockopt(input[0], SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
@@ -136,13 +152,25 @@ int ce_run_execute(CERunProcess *r, const char *executable, char *const argv[],
     CE_ACTION(posix_spawn_file_actions_adddup2(&actions, input[1], STDIN_FILENO));
     CE_ACTION(posix_spawn_file_actions_adddup2(&actions, pipes[0][1], STDOUT_FILENO));
     CE_ACTION(posix_spawn_file_actions_adddup2(&actions, pipes[1][1], STDERR_FILENO));
+#ifdef __APPLE__
+    // Deployment target is macOS 26+. Apple replaced the deprecated _np name:
+    // https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/spawn/spawn.h
+    CE_ACTION(posix_spawn_file_actions_addchdir(&actions, cwd));
+#else
     CE_ACTION(posix_spawn_file_actions_addchdir_np(&actions, cwd));
+#endif
     sigset_t empty, defaults; sigemptyset(&empty); sigemptyset(&defaults);
     sigaddset(&defaults, SIGPIPE); sigaddset(&defaults, SIGTERM); sigaddset(&defaults, SIGINT);
     CE_ACTION(posix_spawnattr_setsigmask(&attrs, &empty));
     CE_ACTION(posix_spawnattr_setsigdefault(&attrs, &defaults));
     CE_ACTION(posix_spawnattr_setpgroup(&attrs, 0));
-    CE_ACTION(posix_spawnattr_setflags(&attrs, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF));
+    short flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;
+#ifdef POSIX_SPAWN_CLOEXEC_DEFAULT
+    // Darwin also closes any unrelated descriptor not explicitly duplicated by
+    // these file actions, including one concurrently opened outside this runner.
+    flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+#endif
+    CE_ACTION(posix_spawnattr_setflags(&attrs, flags));
     pthread_mutex_lock(&r->lock);
     if (r->stopped) error = ECANCELED;
     else error = posix_spawn(&pid, executable, &actions, &attrs, argv, envp);
@@ -151,6 +179,7 @@ int ce_run_execute(CERunProcess *r, const char *executable, char *const argv[],
     if (error) goto cleanup;
     close(input[1]); input[1] = -1;
     for (int i = 0; i < 2; i++) { close(pipes[i][1]); pipes[i][1] = -1; }
+    pthread_mutex_unlock(&ce_spawn_lock); spawn_locked = false;
     bool exited = false; double deadline = 0; size_t sent = 0;
     while (true) {
         if (sent < initial_count) {
@@ -173,8 +202,13 @@ int ce_run_execute(CERunProcess *r, const char *executable, char *const argv[],
             kill(-pid, SIGKILL);
             if (exited) break;
         }
-        struct pollfd fds[2] = {{pipes[0][0], POLLIN, 0}, {pipes[1][0], POLLIN, 0}};
-        poll(fds, 2, 15);
+        pthread_mutex_lock(&r->lock);
+        int writable_input = sent < initial_count ? r->input : -1;
+        pthread_mutex_unlock(&r->lock);
+        // Wake on input capacity as well as output: a small Darwin socket buffer
+        // must not impose a fixed 15 ms delay on every partial initial write.
+        struct pollfd fds[3] = {{pipes[0][0], POLLIN, 0}, {pipes[1][0], POLLIN, 0}, {writable_input, POLLOUT, 0}};
+        poll(fds, 3, 15);
         for (int i = 0; i < 2; i++) {
             unsigned char bytes[16384]; ssize_t n;
             // Bound each turn so one flooding stream cannot starve the other or Stop.
@@ -204,5 +238,6 @@ cleanup:
         if (input[i] >= 0) close(input[i]);
         for (int j = 0; j < 2; j++) if (pipes[i][j] >= 0) close(pipes[i][j]);
     }
+    if (spawn_locked) pthread_mutex_unlock(&ce_spawn_lock);
     return error;
 }

@@ -73,7 +73,11 @@ class ProcessTests(unittest.TestCase):
     def test_exact_stdin_and_eof(self):
         for data in (b'', '日本語😀 without newline'.encode(), b'x' * (2 * 1024 * 1024)):
             with Run('echo', data).start() as run:
-                run.wait(); self.assertEqual(run.output(), (data, 0)); self.assertEqual(run.status, 0)
+                # Large I/O gets a separate bounded budget from Stop's strict
+                # two-second deadline. Mac QA measured 4.402 s with the old
+                # polling cadence; scheduling variance is not an EOF failure.
+                run.wait(10 if len(data) >= 1024 * 1024 else 4)
+                self.assertEqual(run.output(), (data, 0)); self.assertEqual(run.status, 0)
     def test_parallel_streams_and_split_utf8(self):
         with Run('streams').start() as run:
             run.wait(); self.assertEqual(run.output()[0].decode(), '日😀'); self.assertEqual(run.output(1)[0].decode(), '警告'); self.assertEqual(run.status, 0)
@@ -146,6 +150,34 @@ class ProcessTests(unittest.TestCase):
                 run.wait(2)
                 self.assertEqual(os.waitstatus_to_exitcode(run.status), -signal.SIGKILL)
         finally: lib = original
+    def test_concurrent_fallback_creation_cannot_leak_stdin_endpoints(self):
+        global lib
+        original = lib
+        fallback = Path(BUILD.name) / ('fallback.dylib' if sys.platform == 'darwin' else 'fallback.so')
+        subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pthread', '-shared', '-fPIC',
+            '-DCE_RUN_FORCE_FD_FALLBACK', '-DCE_RUN_TEST_FD_WINDOW', str(ROOT / 'CotEditor/Sources/Run/RunProcess.c'),
+            str(ROOT / 'Scripts/Fixtures/Run/fd-window.c'), '-o', str(fallback)], check=True)
+        lib = C.CDLL(str(fallback)); configure(lib)
+        lib.ce_run_test_fd_arrivals.restype = C.c_int
+        try:
+            with Run('echo', b'exact EOF').start() as first:
+                deadline = time.monotonic() + 2
+                while lib.ce_run_test_fd_arrivals() == 0 and time.monotonic() < deadline: time.sleep(.005)
+                with Run('ignore-term').start() as second:
+                    try:
+                        time.sleep(.05)
+                        self.assertEqual(lib.ce_run_test_fd_arrivals(), 1, 'other runner crossed the unflagged-descriptor window')
+                    finally: lib.ce_run_test_release_fds()
+                    # The long-running second child must not hold first's stdin
+                    # peer alive: first observes EOF and finishes independently.
+                    first.wait(2)
+                    self.assertEqual(first.output()[0], b'exact EOF')
+                    self.assertTrue(second.thread.is_alive())
+                    lib.ce_run_stop(second.owner); second.wait(2)
+        finally:
+            lib.ce_run_test_release_fds()
+            lib = original
+
     def test_unicode_space_cwd(self):
         with tempfile.TemporaryDirectory(prefix='実行 space ') as directory:
             with Run('echo', b'ok', cwd=directory).start() as run:
