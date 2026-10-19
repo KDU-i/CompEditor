@@ -32,6 +32,9 @@ final class ContentViewController: NSViewController {
     
     var document: DataDocument?  { didSet { self.updateDocument(from: oldValue) } }
     
+    private var runSplit: NSSplitView?
+    private var runPaneController: NSViewController?
+
     private(set) var hostedViewController: NSViewController
     
     
@@ -64,6 +67,33 @@ final class ContentViewController: NSViewController {
     }
     
     
+    func showRunPane() {
+        guard runSplit == nil, let document = self.document as? Document,
+              let editorController = hostedViewController as? DocumentViewController else { return }
+        let split = NSSplitView()
+        split.isVertical = false; split.dividerStyle = .thin
+        hostedViewController.view.removeFromSuperview()
+        hostedViewController.view.translatesAutoresizingMaskIntoConstraints = true
+        let pane = NSHostingController(rootView: RunPaneView(session: document.runSession, editor: { [weak editorController] in editorController?.focusedTextView }, close: { [weak self] in self?.hideRunPane() }))
+        pane.sizingOptions = []
+        addChild(pane)
+        runPaneController = pane
+        split.addArrangedSubview(hostedViewController.view)
+        split.addArrangedSubview(pane.view)
+        view.embedSubview(split)
+        split.adjustSubviews()
+        split.setPosition(max(160, view.bounds.height * 0.55), ofDividerAt: 0)
+        runSplit = split
+    }
+
+    private func hideRunPane() {
+        guard let runSplit else { return }
+        hostedViewController.view.removeFromSuperview()
+        runSplit.removeFromSuperview(); self.runSplit = nil
+        runPaneController?.removeFromParent(); runPaneController = nil
+        view.embedSubview(hostedViewController.view)
+    }
+
     // MARK: Private Methods
     
     /// Updates the hosted view controller when the document changes.
@@ -75,6 +105,10 @@ final class ContentViewController: NSViewController {
         
         // remove only the hosted view controller to preserve accessories such as the status bar
         // -> Split view item accessory controllers can be attached as children (2026-05, macOS 26).
+        if let runSplit {
+            runSplit.removeFromSuperview(); self.runSplit = nil
+            runPaneController?.removeFromParent(); runPaneController = nil
+        }
         self.hostedViewController.viewIfLoaded?.removeFromSuperview()
         self.hostedViewController.removeFromParent()
         

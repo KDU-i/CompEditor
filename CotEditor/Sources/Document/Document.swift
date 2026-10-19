@@ -679,7 +679,14 @@ extension NSTextView: EditorCounter.Source { }
     }
     
     
+    lazy var runSession = RunSession(document: self)
+
+    /// Compare the last successfully read/saved bytes without invoking the save
+    /// serializer (which also changes pending-save state).
+    func runSavedBytesMatch(_ data: Data) -> Bool { self.fileData.withLock { $0 == data } }
+
     override func close() {
+        self.runSession.close()
         self.semanticIsClosed = true
         NotificationCenter.default.post(name: Self.semanticDidClose, object: self)
         

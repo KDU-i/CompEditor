@@ -23,3 +23,6 @@ COMPEDITOR_USAGE_ENDPOINT = https:$(COMPEDITOR_USAGE_URL_SLASH)$(COMPEDITOR_USAG
 
 // Dedicated owner-approved public key is in Info.plist; signing secret remains in Keychain.
 // HTTPS feed URL embedding approved; hosting/publication remains a separate action.
+
+// Native single-file Run process ownership bridge.
+SWIFT_OBJC_BRIDGING_HEADER = $(SRCROOT)/CotEditor/Sources/Run/RunProcess.h

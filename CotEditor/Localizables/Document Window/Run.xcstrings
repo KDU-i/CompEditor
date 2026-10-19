@@ -1,0 +1,1077 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "Run": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行"
+          }
+        }
+      }
+    },
+    "Stop": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止"
+          }
+        }
+      }
+    },
+    "ShowResults": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show Run Results"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行結果を表示"
+          }
+        }
+      }
+    },
+    "Preparing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "準備中…"
+          }
+        }
+      }
+    },
+    "Idle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ready"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行可能"
+          }
+        }
+      }
+    },
+    "Compiling": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compiling…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コンパイル中…"
+          }
+        }
+      }
+    },
+    "Running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Running"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行中"
+          }
+        }
+      }
+    },
+    "Stopping": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stopping…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止中…"
+          }
+        }
+      }
+    },
+    "Cancelled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stopped"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止しました"
+          }
+        }
+      }
+    },
+    "SaveCancelled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not started: saving was cancelled or failed."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存が取り消されたか失敗したため、実行しませんでした。"
+          }
+        }
+      }
+    },
+    "Unsupported": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save a single Python (.py) or Java (.java) file first."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Python（.py）または Java（.java）の単一ファイルとして保存してください。"
+          }
+        }
+      }
+    },
+    "JavaUTF8": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Java requires UTF-8. Choose UTF-8 using the existing encoding controls, save, then run again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Java の実行には UTF-8 が必要です。既存のエンコーディング設定で UTF-8 を選び、保存してから再実行してください。"
+          }
+        }
+      }
+    },
+    "InvalidMain": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Specify a fully qualified top-level class from this source. Compact source, modules, other sources and external dependencies are unsupported."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このソース内のトップレベルクラスを完全修飾名で指定してください。compact source、module、別ソースや外部ライブラリには対応していません。"
+          }
+        }
+      }
+    },
+    "MissingRuntime": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime unavailable or invalid. Install Python 3 or select an existing interpreter / complete JDK. An explicit selection is never silently replaced."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ランタイムが見つからないか、使用できません。Python 3 をインストールするか、既存のインタープリタ／完全な JDK を選択してください。明示した設定は自動で置き換えません。"
+          }
+        }
+      }
+    },
+    "PreparationFailed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not prepare this run. Check source access and temporary storage."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行を準備できませんでした。ソースのアクセス権と一時保存先を確認してください。"
+          }
+        }
+      }
+    },
+    "ChoosePython": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Python 3 Interpreter…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Python 3 インタープリタを選択…"
+          }
+        }
+      }
+    },
+    "ChooseJDK": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose JDK Home…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "JDK Home を選択…"
+          }
+        }
+      }
+    },
+    "PythonGuidance": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Python 3 is required; Node/Pyright is not an interpreter. Candidates below are checked only in the source directory’s .venv/bin/python, then /opt/homebrew/bin/python3, /usr/local/bin/python3 and /usr/bin/python3, in that order. Select a candidate to inspect its version. Nothing is installed automatically."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Python 3 が必要です。Node／Pyright はインタープリタではありません。候補はソースと同じフォルダの .venv/bin/python、/opt/homebrew/bin/python3、/usr/local/bin/python3、/usr/bin/python3 の順に探します。候補を選ぶとバージョンを確認します。自動インストールは行いません。"
+          }
+        }
+      }
+    },
+    "UseCandidate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inspect Candidate"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "候補を確認"
+          }
+        }
+      }
+    },
+    "ChooseExisting": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Existing…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既存のランタイムを選択…"
+          }
+        }
+      }
+    },
+    "Cancel": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キャンセル"
+          }
+        }
+      }
+    },
+    "CheckingRuntime": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking selected runtime…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選択したランタイムを確認中…"
+          }
+        }
+      }
+    },
+    "ConfirmRuntime": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use This Runtime?"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このランタイムを使用しますか？"
+          }
+        }
+      }
+    },
+    "UseRuntime": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use and Run"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用して実行"
+          }
+        }
+      }
+    },
+    "Directory": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Working Directory"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "作業フォルダ"
+          }
+        }
+      }
+    },
+    "Runtime": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ランタイム"
+          }
+        }
+      }
+    },
+    "SourceChanged": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Source changed since this run; error navigation is disabled."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行後に変更されています。エラー行への移動は無効です。"
+          }
+        }
+      }
+    },
+    "RuntimeSettings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime Settings"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ランタイム設定"
+          }
+        }
+      }
+    },
+    "PythonUnconfigured": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Python is not configured. First run offers detected candidates."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Python は未設定です。初回実行時に候補を確認します。"
+          }
+        }
+      }
+    },
+    "BundledJDK": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bundled JDK"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同梱 JDK"
+          }
+        }
+      }
+    },
+    "MainClass": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Java Main Class (optional)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Java メインクラス（任意）"
+          }
+        }
+      }
+    },
+    "MainClassHelp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Default: top-level class matching the filename. Specify another top-level class from this source by fully qualified name."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既定はファイル名と同名のトップレベルクラスです。同じソース内の別クラスは完全修飾名で指定できます。"
+          }
+        }
+      }
+    },
+    "Interactive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep Standard Input Open"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "標準入力を開いたままにする"
+          }
+        }
+      }
+    },
+    "Stdin": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Standard Input"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "標準入力"
+          }
+        }
+      }
+    },
+    "Send": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send + Newline"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "送信＋改行"
+          }
+        }
+      }
+    },
+    "EOF": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send EOF"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "EOF を送信"
+          }
+        }
+      }
+    },
+    "InputOpen": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accepting input"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "入力受付中"
+          }
+        }
+      }
+    },
+    "InputClosed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Input closed"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "入力は閉じています"
+          }
+        }
+      }
+    },
+    "SendHelp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run sends the initial input unchanged. Each later Send appends one LF. This does not detect whether the program is waiting for input."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行時の入力はそのまま送信します。その後の「送信」では末尾に改行（LF）を1つ追加します。プログラムが入力待ちかどうかは検出しません。"
+          }
+        }
+      }
+    },
+    "SnapshotInputHelp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run sends this text as UTF-8, unchanged, then EOF. Empty input sends EOF immediately; no newline is added."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行時の内容を UTF-8 でそのまま送り、EOF で閉じます。空欄なら直ちに EOF を送信し、改行は追加しません。"
+          }
+        }
+      }
+    },
+    "Output": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Output"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "出力"
+          }
+        }
+      }
+    },
+    "Stdout": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Standard Output"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "標準出力"
+          }
+        }
+      }
+    },
+    "Stderr": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Standard Error"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "標準エラー"
+          }
+        }
+      }
+    },
+    "OutputOmitted": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Output omitted:"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "出力省略："
+          }
+        }
+      }
+    },
+    "DecodeError": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invalid UTF-8 bytes were replaced for display."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不正な UTF-8 バイトを表示上で置き換えました。"
+          }
+        }
+      }
+    },
+    "ErrorLocations": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Error Locations"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エラーの位置"
+          }
+        }
+      }
+    },
+    "Back": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Go Back"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "戻る"
+          }
+        }
+      }
+    },
+    "CompileFailed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compilation failed. "
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コンパイル失敗。"
+          }
+        }
+      }
+    },
+    "ExitCode": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exit Code"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "終了コード"
+          }
+        }
+      }
+    },
+    "Signal": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terminated by Signal"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "シグナル終了"
+          }
+        }
+      }
+    },
+    "LaunchFailed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not launch process"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロセスを起動できませんでした"
+          }
+        }
+      }
+    },
+    "Help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run Help"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行について"
+          }
+        }
+      }
+    },
+    "HelpBody": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only saved single-file Python and ordinary Java classes are supported. Java uses isolated per-run classes and disables annotation processors, implicit source compilation, CLASSPATH, JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS and _JAVA_OPTIONS. PYTHONPATH, PYTHONHOME and PYTHONSTARTUP are removed while the selected interpreter and venv are preserved. Source paths are passed directly, without a shell; cwd is always the source’s parent. Python discovery does not search ancestors or shell profiles. stdout and stderr are independent, not a chronological merged log; each retains at most 10 MiB and continues draining. Stderr alone does not mean failure. Java compiler errors, missing main / invalid signatures and runtime exceptions remain visible in original stderr. Missing external sources/jars are outside single-file scope. Stop closes stdin, signals the owned process group with TERM, then KILL after 0.3 seconds. Closing the document or quitting also stops it. Ordinary descendants are cleaned up, including when the parent exits first. This is not a sandbox: daemons that deliberately leave the group are outside its control. PTY programs, REPL and debugging are unsupported. Source or output is never added to telemetry."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存済みの Python 単一ファイルと通常の Java クラスに対応します。Java は実行ごとの独立したクラス出力を使い、annotation processor、暗黙の別ソースのコンパイル、CLASSPATH、JAVA_TOOL_OPTIONS、JDK_JAVA_OPTIONS、_JAVA_OPTIONS を無効にします。PYTHONPATH、PYTHONHOME、PYTHONSTARTUP は除外しますが、選択したインタープリタと venv は維持します。ソースのパスはシェルを使わずに渡し、作業フォルダは常にソースの親です。Python の候補探索で祖先フォルダやシェル設定は調べません。標準出力と標準エラーは独立したログで、相互の時系列は保証しません。各10 MiBまで保持し、その後も読み捨てを続けます。標準エラーがあるだけでは失敗とは判定しません。Java のコンパイルエラー、main 不在・署名不正、実行時例外は元の標準エラーで確認できます。外部ソースや jar が必要なプログラムは対象外です。停止は標準入力を閉じ、所有プロセスグループに TERM、0.3秒後に KILL を送信します。文書を閉じる場合やアプリ終了時にも停止します。親が先に終了した場合を含め通常の子孫プロセスを終了します。これは sandbox ではなく、意図的にグループを離脱する daemon は制御できません。PTY、REPL、デバッグには対応しません。ソースや入出力をテレメトリーに追加しません。"
+          }
+        }
+      }
+    },
+    "HideResults": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide Run Results"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行結果を非表示"
+          }
+        }
+      }
+    },
+    "LaunchExplanation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The process could not start. Check the selected runtime and permissions; see standard error for details."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロセスを起動できませんでした。選択したランタイムとアクセス権を確認してください。詳細は標準エラーに表示します。"
+          }
+        }
+      }
+    },
+    "JavaFilenameExplanation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The public class name and filename differ. Rename the source or the class and save again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "public クラス名とファイル名が一致しません。ソースまたはクラスの名前を変更して保存してください。"
+          }
+        }
+      }
+    },
+    "JavaDependencyExplanation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Java compilation failed to resolve a symbol or package. Other source files and external jars are outside single-file scope. See the original compiler diagnostic."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Java のシンボルまたは package を解決できず、コンパイルに失敗しました。別ソースや外部 jar が必要な場合は単一ファイル実行の対象外です。元のコンパイラ診断を確認してください。"
+          }
+        }
+      }
+    },
+    "JavaCompileExplanation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Java compilation failed; execution did not start. See standard error."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Java のコンパイルに失敗したため実行しませんでした。標準エラーを確認してください。"
+          }
+        }
+      }
+    },
+    "JavaMainExplanation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The selected Java class has no usable public static void main(String[] args). Specify another top-level class from this source or correct the signature."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選択した Java クラスに有効な public static void main(String[] args) がありません。このソース内の別のトップレベルクラスを指定するか、main の署名を修正してください。"
+          }
+        }
+      }
+    },
+    "JavaRuntimeExplanation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Java exited unsuccessfully. The original exception or runtime diagnostic is shown in standard error."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Java が正常終了しませんでした。元の例外または実行時診断は標準エラーに表示します。"
+          }
+        }
+      }
+    },
+    "ProgramExplanation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The program exited unsuccessfully. See its exit code / signal and original standard error."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プログラムが正常終了しませんでした。終了コード／シグナルと元の標準エラーを確認してください。"
+          }
+        }
+      }
+    },
+    "SourceChangedBeforeRun": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The source changed while preparing. Review the document and disk version, save, then run again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "準備中にソースが変更されました。文書とディスク上の内容を確認し、保存してから再実行してください。"
+          }
+        }
+      }
+    },
+    "LocationsLimit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Up to 200 confirmed locations are listed after execution. Original diagnostics remain in standard error."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行後、確認できた位置を最大200件表示します。元の診断は標準エラーで確認できます。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

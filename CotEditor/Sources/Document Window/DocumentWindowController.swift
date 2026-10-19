@@ -143,6 +143,17 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         toolbar.autosavesConfiguration = true
         toolbar.delegate = self
         window.toolbar = toolbar
+        // Add the new standard controls once to pre-existing saved layouts,
+        // preserving their other items and subsequent user customization.
+        let runToolbarKey = "RunToolbarAdded." + toolbar.identifier.rawValue
+        if !UserDefaults.standard.bool(forKey: runToolbarKey) {
+            var insertionIndex = toolbar.items.firstIndex(where: { $0.itemIdentifier == .syntax }).map { $0 + 1 } ?? toolbar.items.count
+            for identifier in [NSToolbarItem.Identifier.runSource, .stopSource] where !toolbar.items.contains(where: { $0.itemIdentifier == identifier }) {
+                toolbar.insertItem(withItemIdentifier: identifier, at: insertionIndex)
+                insertionIndex += 1
+            }
+            UserDefaults.standard.set(true, forKey: runToolbarKey)
+        }
         
         // observe opacity setting change
         // -> Keep opaque when the window was created as a browsing window (the right side ones in the browsing mode).
@@ -566,6 +577,8 @@ private extension NSToolbarItem.Identifier {
     static let backDocumentHistory = Self(Self.prefix + "backDocumentHistory")
     static let forwardDocumentHistory = Self(Self.prefix + "forwardDocumentHistory")
     
+    static let runSource = Self(Self.prefix + "runSource")
+    static let stopSource = Self(Self.prefix + "stopSource")
     static let syntax = Self(Self.prefix + "syntaxStyle")
     
     static let textSize = Self(Self.prefix + "textSize")
@@ -634,6 +647,8 @@ extension DocumentWindowController: NSToolbarDelegate {
         
         return directoryIdentifiers + [
             .syntax,
+            .runSource,
+            .stopSource,
             .inspectorTrackingSeparator,
             .flexibleSpace,
             .toggleInspector,
@@ -647,6 +662,8 @@ extension DocumentWindowController: NSToolbarDelegate {
         
         var identifiers = directoryIdentifiers + [
             .syntax,
+            .runSource,
+            .stopSource,
             .toggleInspector,
             .textSize,
             .writingDirection,
@@ -680,6 +697,15 @@ extension DocumentWindowController: NSToolbarDelegate {
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         
         switch itemIdentifier {
+            case .runSource, .stopSource:
+                let running = itemIdentifier == .runSource
+                let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+                item.label = runText(running ? "Run" : "Stop")
+                item.toolTip = item.label
+                item.image = NSImage(systemSymbolName: running ? "play.fill" : "stop.fill", accessibilityDescription: item.label)
+                item.target = RunActions.shared
+                item.action = running ? #selector(RunActions.runSource(_:)) : #selector(RunActions.stopSource(_:))
+                return item
             case .documentHistory:
                 let previousMenu = NSMenu()
                 previousMenu.identifier = .backDocumentHistoryMenu
