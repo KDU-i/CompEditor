@@ -56,6 +56,18 @@ class Run:
         omitted = C.c_size_t()
         n = lib.ce_run_copy(self.owner, stream, data, len(data), C.byref(omitted))
         return data.raw[:n], omitted.value
+    def wait_for_pid(self, timeout=4):
+        # Fixtures print only after SIGTERM is ignored. The deadline concerns
+        # startup readiness, and is separate from the bounded Stop assertion.
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            prefix = C.create_string_buffer(64)
+            count = lib.ce_run_copy(self.owner, 0, prefix, len(prefix), None)
+            first = prefix.raw[:count].splitlines()
+            if first and first[0].isdigit(): return int(first[0])
+            if not self.thread.is_alive(): break
+            time.sleep(.005)
+        raise AssertionError('fixture did not acknowledge installed signal handler')
     def close(self):
         if self.thread.is_alive(): lib.ce_run_stop(self.owner); self.wait()
         lib.ce_run_destroy(self.owner)
@@ -114,7 +126,8 @@ class ProcessTests(unittest.TestCase):
                 self.assertIn(run.code, (0, errno.ECANCELED))
     def test_stop_backpressure_and_term_ignore(self):
         with Run('backpressure', b'x' * (4 * 1024 * 1024), True).start() as run:
-            time.sleep(.15); started = time.monotonic(); lib.ce_run_stop(run.owner); run.wait(2)
+            run.wait_for_pid()
+            started = time.monotonic(); lib.ce_run_stop(run.owner); run.wait(2)
             self.assertLess(time.monotonic() - started, 1.5)
             self.assertEqual(os.waitstatus_to_exitcode(run.status), -signal.SIGKILL)
             self.assertFalse(any(alive(int(pid)) for pid in run.output()[0].split()))
@@ -138,9 +151,8 @@ class ProcessTests(unittest.TestCase):
         lib.ce_run_test_reads.restype = C.c_long
         try:
             with Run('ignore-term').start() as run:
+                run.wait_for_pid()
                 deadline = time.monotonic() + 2
-                while not run.output()[0] and time.monotonic() < deadline: time.sleep(.01)
-                self.assertTrue(run.output()[0], 'fixture did not become ready')
                 lib.ce_run_stop(run.owner)
                 while not lib.ce_run_test_reads() and time.monotonic() < deadline: time.sleep(.01)
                 self.assertGreater(lib.ce_run_test_reads(), 0)
