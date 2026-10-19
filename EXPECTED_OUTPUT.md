@@ -2,7 +2,7 @@
 
 This change stacks on #11 / `feature/8-single-file-run`, initially exactly
 `2a63e87ac6c159533076c6425cd412aad5df3ef7`. Incorporates reviewed #8 update
-`cffa9dd804db50b6677475fca2e10f5bb063ecb5` without duplicating its fixes.
+`99e7934de10bc2aeccbcfe62b68e0ed900dd4a99` without duplicating its fixes.
 Java execution keeps the program locale; javac diagnostic localization and
 localized launcher classification (including warnings before launcher errors)
 remain upstream responsibilities. Run's process ownership, save/runtime
@@ -85,7 +85,7 @@ Portable type checking and parsing cannot establish AppKit/SwiftUI SDK correctne
 
 Validated in Cloud Linux: 84 pure checks, 12 async coordinator checks (forced races and production background snapshots), four real
 comparison fixtures (Python/Java match and mismatch), the inherited RunCore suite
-with four Python/ten Java fixtures, 14 process tests and two localization tests
+with four Python/ten Java fixtures, 17 process tests and two localization tests
 passed. New UI Swift syntax parsing and `git diff --check` passed. No Xcode build
 or native UI/device pass is claimed.
 

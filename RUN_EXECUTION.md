@@ -134,14 +134,22 @@ SWIFTC=/tmp/ce-swift/usr/bin/swiftc RUN_TEST_JDK=/tmp/ce-jdk bash Scripts/test-r
 python3 Scripts/test-run-localization.py
 ```
 
-- Process suite: 14 tests pass, including exact/empty/large stdin and EOF, interactive
+- Process suite: 17 tests pass, including exact/empty/large stdin and EOF, interactive
   sends, repeated EOF, EPIPE, split UTF-8, invalid bytes, simultaneous stream floods
   with exact cap/omission counts, a paused fallback CLOEXEC/concurrent-spawn
   regression, exit/nonzero/signal/launch failure, spawn/Stop
   races, TERM ignoring, input backpressure, Unicode/space cwd and parent-first
   child/grandchild cleanup. A test-only injected monotonic clock verifies no KILL
   at 299 ms and escalation at 300 ms. Exited Linux zombies awaiting container init's reaper
-  are distinguished from live processes. TERM-ignoring tests wait for a PID
+  are distinguished from live processes. Darwin fixture observation uses a bounded
+  batch `ps` state query instead of PID existence alone. After runner completion,
+  the test allows at most one second for asynchronous SIGKILL delivery to leave
+  no live fixture process; any still-live or unobservable PID fails closed.
+  Zombies are already exited and need OS reaping, so they do not count as live.
+  Initial/final states and elapsed settling time are recorded when needed.
+  Regression tests keep a real owned zombie unreaped, reject a real still-live
+  TERM-ignoring fixture within a short budget, and exercise bounded live→zombie
+  settling / unknown-state failure with a fake clock. TERM-ignoring tests wait for a PID
   acknowledgement emitted after the handler is installed, rather than sleeping
   for presumed startup time. Descendants acknowledge readiness through a pipe
   before their parent exits. Exact SIGKILL and bounded Stop assertions are kept. Twenty repetitions each
@@ -235,3 +243,21 @@ Before marking the draft ready:
 
 The integration task owns the single coordinated v0.4.0 version/build bump. This
 change intentionally does not alter release metadata, tags, releases or packaging.
+
+### Parent-reported Mac checkpoint on cffa9dd
+
+The isolated-identity Debug build succeeds. The portable core suite (four Python,
+ten Java, locale/warning and ownership regressions) passes on that head. The
+process suite passed 13/14: its immediate descendant PID-existence assertion failed,
+then all three fixture PIDs were absent on subsequent inspection. The exact states
+at that first observation are unavailable; this does not prove whether they were
+zombies or briefly awaiting SIGKILL delivery. The revised test records actual states
+and enforces the bounded no-live-process guarantee above. A real-live-process
+negative regression prevents a persistent leak from being accepted as settling.
+Cloud observations show the leader gone and descendants already zombies; the
+separate zombie regression confirms PID existence still succeeds after exit.
+The ps-based observer path is also exercised against real live/zombie fixtures
+on Linux, without claiming a macOS run. Production process termination is unchanged.
+Parent's Mac transport disconnected
+mid Release build; its outcome and process state remain unknown. Re-run the new
+head on Mac with isolated identity/preferences and retain its state observations.
