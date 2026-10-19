@@ -10,10 +10,11 @@ trap 'rm -rf "$build"' EXIT
 # Swift 6.2.1 Linux's dynamic Observation library has an unresolved internal
 # runtime symbol. Static stdlib uses the matching shipped runtime. macOS keeps
 # the normal SDK/runtime linkage.
-link_flags=()
-if [[ "$(uname -s)" == Linux ]]; then link_flags+=(-static-stdlib); fi
+# Positional arguments expand safely when empty under Bash 3.2 + nounset.
+set --
+if [[ "$(uname -s)" == Linux ]]; then set -- -static-stdlib; fi
 # AppKit picker is conditionally omitted on Linux; coordinator itself is production code.
-"${SWIFTC:-swiftc}" -module-cache-path "$build/cache" "${link_flags[@]}" -swift-version 6 -enable-bare-slash-regex -parse-as-library \
+"${SWIFTC:-swiftc}" -module-cache-path "$build/cache" "$@" -swift-version 6 -enable-bare-slash-regex -parse-as-library \
     CotEditor/Sources/Run/RunModel.swift CotEditor/Sources/Run/ExpectedOutput.swift \
     CotEditor/Sources/Run/ExpectedOutputSession.swift SemanticTests/ExpectedOutputSessionTests.swift -o "$build/session-tests"
 "$build/session-tests"

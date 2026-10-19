@@ -64,6 +64,7 @@ SWIFTC=/tmp/ce-swift/usr/bin/swiftc RUN_TEST_JDK=/tmp/ce-jdk bash Scripts/test-e
 SWIFTC=/tmp/ce-swift/usr/bin/swiftc RUN_TEST_JDK=/tmp/ce-jdk bash Scripts/test-run-core.sh
 python3 Scripts/test-run-process.py
 python3 Scripts/test-run-localization.py
+python3 Scripts/test-expected-output-harness.py
 ```
 
 The new suite covers extension-independent imports and invalid UTF-8 rejection,
@@ -81,6 +82,19 @@ Linux's downloaded Swift 6.2.1 dynamic Observation library has an unresolved
 internal runtime symbol. The script links its shipped static stdlib on Linux;
 macOS uses normal SDK/runtime linkage. The static Linux Foundation library emits
 an upstream `mktemp` linker warning; the test does not call that routine directly.
+`test-expected-output.sh` uses positional arguments for its optional Linux
+linker flag so the empty macOS path remains compatible with Bash 3.2 and
+`set -u`. The harness regression stubs the compiler for Darwin and Linux,
+verifying all three compile/test stages, no empty compiler argument, Linux-only
+static linkage and temporary-directory cleanup. Set `BASH_UNDER_TEST` to a
+specific Bash executable to repeat the harness regression with that shell.
+Cloud validation built Apple's Bash 3.2.57 sources for Linux: the original
+empty-array/nounset reproducer exits 127 with `link_flags[@]: unbound variable`.
+The fixed harness regression passes its Darwin/Linux cases under Bash 3.2.57
+and host Bash 5.2; the real comparison suite passes under both shells. This is
+Linux shell validation, not native macOS execution. Production code and
+comparison coverage are unchanged by this shell fix.
+
 Portable type checking and parsing cannot establish AppKit/SwiftUI SDK correctness.
 
 Validated in Cloud Linux: 84 pure checks, 12 async coordinator checks (forced races and production background snapshots), four real
