@@ -158,8 +158,6 @@ private struct RunOutputText: NSViewRepresentable {
         return session != nil && session?.active == false
     }
     func shutdown() {
-        let sessions = NSDocumentController.shared.documents.compactMap { ($0 as? Document)?.runSession }
-        sessions.forEach { $0.close() }
-        sessions.forEach { $0.waitForStop() }
+        RunSessionRegistry.shared.shutdown()
     }
 }
